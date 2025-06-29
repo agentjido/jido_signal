@@ -11,11 +11,12 @@ Mix.install([
 Welcome to the Jido Signal interactive guide! This Livebook will walk you through the core concepts and basic usage of Jido Signal, a powerful toolkit for building event-driven and agent-based systems in Elixir.
 
 Jido Signal provides:
-- **Standardized messaging** using CloudEvents v1.0.2 specification
-- **High-performance Signal Bus** for pub/sub communication
-- **Advanced routing** with pattern matching and wildcards
-- **Flexible dispatch** to multiple destinations
-- **Causality tracking** for complete system observability
+
+* **Standardized messaging** using CloudEvents v1.0.2 specification
+* **High-performance Signal Bus** for pub/sub communication
+* **Advanced routing** with pattern matching and wildcards
+* **Flexible dispatch** to multiple destinations
+* **Causality tracking** for complete system observability
 
 Let's dive in and explore these concepts with hands-on examples!
 
@@ -35,11 +36,12 @@ IO.inspect(basic_signal, label: "Basic Signal")
 ```
 
 Every signal has essential fields:
-- `id`: Unique identifier (auto-generated)
-- `type`: Event type (e.g., "user.created")
-- `source`: Where the event originated
-- `time`: When the event occurred (auto-generated)
-- `data`: The actual event payload
+
+* `id`: Unique identifier (auto-generated)
+* `type`: Event type (e.g., "user.created")
+* `source`: Where the event originated
+* `time`: When the event occurred (auto-generated)
+* `data`: The actual event payload
 
 ```elixir
 # Explore signal structure
@@ -61,7 +63,7 @@ defmodule UserCreated do
     default_source: "/auth/users",
     schema: [
       user_id: [type: :string, required: true],
-      email: [type: :string, required: true, format: ~r/@/],
+      email: [type: :string, required: true],
       name: [type: :string, required: true]
     ]
 end
@@ -265,7 +267,7 @@ You can also replay signals matching specific patterns:
 
 IO.puts("\nUser signals:")
 Enum.each(user_signals, fn signal ->
-  IO.puts("- #{signal.type}: #{inspect(signal.data)}")
+  IO.puts("- #{signal.type}: #{inspect(signal.signal.data)}")
 end)
 ```
 
@@ -416,12 +418,12 @@ Congratulations! You've learned the basics of Jido Signal:
 
 Now that you understand the basics, you can explore:
 
-- **Persistent Subscriptions** - For reliable delivery with acknowledgments
-- **Middleware** - Adding cross-cutting concerns like logging and metrics
-- **Snapshots** - Creating point-in-time views of your signal log
-- **Journal System** - Advanced causality tracking and analysis
-- **HTTP Webhooks** - Dispatching signals to external services
-- **Integration Patterns** - Using Jido Signal in real applications
+* **Persistent Subscriptions** - For reliable delivery with acknowledgments
+* **Middleware** - Adding cross-cutting concerns like logging and metrics
+* **Snapshots** - Creating point-in-time views of your signal log
+* **Journal System** - Advanced causality tracking and analysis
+* **HTTP Webhooks** - Dispatching signals to external services
+* **Integration Patterns** - Using Jido Signal in real applications
 
 Check out the [full documentation](https://hexdocs.pm/jido_signal) for more advanced features and patterns!
 

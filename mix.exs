@@ -108,6 +108,7 @@ defmodule Jido.Signal.MixProject do
       {:telemetry_metrics, "~> 1.1"},
       {:typed_struct, "~> 0.3.0"},
       {:uniq, "~> 0.6.1"},
+      {:libgraph, "~> 0.16"},
 
       # Development & Test Dependencies
       {:credo, "~> 1.7", only: [:dev, :test]},
