@@ -43,6 +43,7 @@ defmodule Jido.Signal.Bus.Snapshot do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.ID
+  alias Jido.Signal
   require Logger
 
   typedstruct module: SnapshotRef do
@@ -75,7 +76,7 @@ defmodule Jido.Signal.Bus.Snapshot do
     """
     field(:id, String.t(), enforce: true)
     field(:path, String.t(), enforce: true)
-    field(:signals, %{String.t() => Jido.Signal.Bus.Signal.t()}, enforce: true)
+    field(:signals, %{String.t() => Jido.Signal.t()}, enforce: true)
     field(:created_at, DateTime.t(), enforce: true)
   end
 

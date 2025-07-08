@@ -60,6 +60,7 @@ defmodule Jido.Signal.Error do
   """
   @type error_type ::
           :validation_error
+          | :bad_request
           | :execution_error
           | :planning_error
           | :timeout

@@ -696,10 +696,10 @@ defmodule Jido.Signal.Router do
   """
   @spec has_route?(Router.t(), String.t()) :: boolean()
   def has_route?(%Router{} = router, route_path) when is_binary(route_path) do
-    case list(router) do
-      {:ok, routes} -> Enum.any?(routes, fn route -> route.path == route_path end)
-      _ -> false
-    end
+    # Router.list/1 only returns `{:ok, routes}`.
+    # Match directly and avoid an unreachable fallback clause.
+    {:ok, routes} = list(router)
+    Enum.any?(routes, fn route -> route.path == route_path end)
   end
 
   def has_route?(_router, _route_id), do: false
