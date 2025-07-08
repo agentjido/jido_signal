@@ -20,7 +20,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     field(:bus_subscription, Subscriber.t())
 
     # Persistent subscription state
-    field(:client_pid, pid(), enforce: true)
+    # May temporarily be `nil` until the client process reconnects
+    field(:client_pid, pid() | nil, enforce: true)
     field(:checkpoint, non_neg_integer(), default: 0)
     field(:max_in_flight, pos_integer(), default: 1000)
     field(:in_flight_signals, map(), default: %{})
@@ -305,8 +306,11 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   @impl GenServer
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, %{client_pid: client_pid} = state)
-      when pid == client_pid do
+  def handle_info(
+        {:DOWN, _ref, :process, pid, _reason},
+        %{client_pid: client_pid} = state
+      )
+      when is_pid(client_pid) and pid == client_pid do
     dbug("Client process down",
       client_pid: client_pid,
       reason: _reason,

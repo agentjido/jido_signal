@@ -20,7 +20,9 @@ defmodule Jido.Signal.Bus.Subscriber do
     field(:path, String.t(), enforce: true)
     field(:dispatch, term(), enforce: true)
     field(:persistent?, boolean(), default: false)
-    field(:persistence_pid, pid(), default: nil)
+    # `persistence_pid` starts as `nil` until the persistent subscription
+    # process is spawned; therefore the type must allow `nil`.
+    field(:persistence_pid, pid() | nil, default: nil)
     field(:disconnected?, boolean(), default: false)
     field(:created_at, DateTime.t(), default: DateTime.utc_now())
   end
@@ -131,9 +133,6 @@ defmodule Jido.Signal.Bus.Subscriber do
         {:error,
          Error.validation_error("Subscription does not exist", %{subscription_id: subscription_id})}
 
-      {:error, reason} ->
-        dbug("failed to remove subscription", reason: reason)
-        {:error, Error.execution_error("Failed to remove subscription", reason)}
     end
   end
 

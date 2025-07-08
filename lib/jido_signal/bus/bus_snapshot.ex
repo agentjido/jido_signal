@@ -43,7 +43,6 @@ defmodule Jido.Signal.Bus.Snapshot do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.ID
-  alias Jido.Signal
   require Logger
 
   typedstruct module: SnapshotRef do

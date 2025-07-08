@@ -70,49 +70,32 @@ defmodule Jido.Signal.Router.Validator do
 
   # Private helpers for normalization
   defp normalize_route_spec({path, target}) when is_binary(path) do
-    case normalize_target(target) do
-      {:ok, normalized_target} -> {:ok, %Route{path: path, target: normalized_target}}
-      error -> error
-    end
+    {:ok, normalized_target} = normalize_target(target)
+    {:ok, %Route{path: path, target: normalized_target}}
   end
 
   defp normalize_route_spec({path, target, priority})
        when is_binary(path) and is_integer(priority) do
-    case normalize_target(target) do
-      {:ok, normalized_target} ->
-        {:ok, %Route{path: path, target: normalized_target, priority: priority}}
-
-      error ->
-        error
-    end
+    {:ok, normalized_target} = normalize_target(target)
+    {:ok, %Route{path: path, target: normalized_target, priority: priority}}
   end
 
   defp normalize_route_spec({path, match_fn, target})
        when is_binary(path) and is_function(match_fn, 1) do
-    case normalize_target(target) do
-      {:ok, normalized_target} ->
-        {:ok, %Route{path: path, target: normalized_target, match: match_fn}}
-
-      error ->
-        error
-    end
+    {:ok, normalized_target} = normalize_target(target)
+    {:ok, %Route{path: path, target: normalized_target, match: match_fn}}
   end
 
   defp normalize_route_spec({path, match_fn, target, priority})
        when is_binary(path) and is_function(match_fn, 1) and is_integer(priority) do
-    case normalize_target(target) do
-      {:ok, normalized_target} ->
-        {:ok,
-         %Route{
-           path: path,
-           target: normalized_target,
-           match: match_fn,
-           priority: priority
-         }}
-
-      error ->
-        error
-    end
+    {:ok, normalized_target} = normalize_target(target)
+    {:ok,
+     %Route{
+       path: path,
+       target: normalized_target,
+       match: match_fn,
+       priority: priority
+     }}
   end
 
   defp normalize_route_spec(invalid) do
