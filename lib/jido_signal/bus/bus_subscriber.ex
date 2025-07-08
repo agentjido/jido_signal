@@ -20,17 +20,20 @@ defmodule Jido.Signal.Bus.Subscriber do
     field(:path, String.t(), enforce: true)
     field(:dispatch, term(), enforce: true)
     field(:persistent?, boolean(), default: false)
-    field(:persistence_pid, pid(), default: nil)
+    field(:persistence_pid, pid() | nil, default: nil)
     field(:disconnected?, boolean(), default: false)
     field(:created_at, DateTime.t(), default: DateTime.utc_now())
   end
 
   @spec subscribe(BusState.t(), String.t(), String.t(), keyword()) ::
           {:ok, BusState.t()} | {:error, Error.t()}
-  def subscribe(%BusState{} = state, subscription_id, path, opts) do
+  def subscribe(%BusState{} = state, subscription_id, path, opts) when is_binary(path) do
     dbug("subscribe", state: state, subscription_id: subscription_id, path: path, opts: opts)
     persistent? = Keyword.get(opts, :persistent?, false)
     dispatch = Keyword.get(opts, :dispatch)
+
+    # Ensure types are properly inferred
+    persistent? = if is_boolean(persistent?), do: persistent?, else: false
 
     # Check if subscription already exists
     if BusState.has_subscription?(state, subscription_id) do
@@ -48,6 +51,7 @@ defmodule Jido.Signal.Bus.Subscriber do
         dispatch: dispatch,
         persistent?: persistent?,
         persistence_pid: nil,
+        disconnected?: false,
         created_at: DateTime.utc_now()
       }
 
@@ -73,8 +77,15 @@ defmodule Jido.Signal.Bus.Subscriber do
           {:ok, pid} ->
             dbug("persistent subscription started", pid: pid)
             # Update subscription with persistence pid
-            subscription = %{subscription | persistence_pid: pid}
-            BusState.add_subscription(state, subscription_id, subscription)
+            subscription = %Subscriber{subscription | persistence_pid: pid}
+
+            case BusState.add_subscription(state, subscription_id, subscription) do
+              {:ok, new_state} ->
+                {:ok, new_state}
+
+              {:error, reason} ->
+                {:error, Error.execution_error("Failed to add subscription", reason)}
+            end
 
           {:error, reason} ->
             dbug("failed to start persistent subscription", reason: reason)
@@ -82,7 +93,14 @@ defmodule Jido.Signal.Bus.Subscriber do
         end
       else
         dbug("creating non-persistent subscription", subscription: subscription)
-        BusState.add_subscription(state, subscription_id, subscription)
+
+        case BusState.add_subscription(state, subscription_id, subscription) do
+          {:ok, new_state} ->
+            {:ok, new_state}
+
+          {:error, reason} ->
+            {:error, Error.execution_error("Failed to add subscription", reason)}
+        end
       end
     end
   end
@@ -130,10 +148,6 @@ defmodule Jido.Signal.Bus.Subscriber do
 
         {:error,
          Error.validation_error("Subscription does not exist", %{subscription_id: subscription_id})}
-
-      {:error, reason} ->
-        dbug("failed to remove subscription", reason: reason)
-        {:error, Error.execution_error("Failed to remove subscription", reason)}
     end
   end
 

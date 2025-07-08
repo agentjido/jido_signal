@@ -171,7 +171,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
 
       # Dispatch according to subscription dispatch configuration
-      if state.bus_subscription.dispatch do
+      if state.bus_subscription.dispatch != nil do
         # Perform the actual dispatch
         dispatch_result = Dispatch.dispatch(signal, state.bus_subscription.dispatch)
 
@@ -281,7 +281,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
 
       # Dispatch according to subscription dispatch configuration
-      if state.bus_subscription.dispatch do
+      if state.bus_subscription.dispatch != nil do
         # Perform the actual dispatch
         dispatch_result = Dispatch.dispatch(signal, state.bus_subscription.dispatch)
 
@@ -361,7 +361,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       case DateTime.from_iso8601(signal.time) do
         {:ok, timestamp, _offset} ->
           if DateTime.to_unix(timestamp) > state.checkpoint do
-            if state.bus_subscription.dispatch do
+            if state.bus_subscription.dispatch != nil do
               dispatch_result = Dispatch.dispatch(signal, state.bus_subscription.dispatch)
 
               if dispatch_result != :ok do
@@ -428,7 +428,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       new_in_flight = Map.put(state.in_flight_signals, signal_id, signal)
 
       # Dispatch the signal using the configured dispatch mechanism
-      if state.bus_subscription.dispatch do
+      if state.bus_subscription.dispatch != nil do
         dispatch_result = Dispatch.dispatch(signal, state.bus_subscription.dispatch)
 
         if dispatch_result != :ok do

@@ -72,7 +72,6 @@ defmodule Jido.Signal.Router.Validator do
   defp normalize_route_spec({path, target}) when is_binary(path) do
     case normalize_target(target) do
       {:ok, normalized_target} -> {:ok, %Route{path: path, target: normalized_target}}
-      error -> error
     end
   end
 
@@ -81,9 +80,6 @@ defmodule Jido.Signal.Router.Validator do
     case normalize_target(target) do
       {:ok, normalized_target} ->
         {:ok, %Route{path: path, target: normalized_target, priority: priority}}
-
-      error ->
-        error
     end
   end
 
@@ -92,9 +88,6 @@ defmodule Jido.Signal.Router.Validator do
     case normalize_target(target) do
       {:ok, normalized_target} ->
         {:ok, %Route{path: path, target: normalized_target, match: match_fn}}
-
-      error ->
-        error
     end
   end
 
@@ -109,9 +102,6 @@ defmodule Jido.Signal.Router.Validator do
            match: match_fn,
            priority: priority
          }}
-
-      error ->
-        error
     end
   end
 

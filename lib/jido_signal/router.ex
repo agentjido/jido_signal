@@ -698,7 +698,6 @@ defmodule Jido.Signal.Router do
   def has_route?(%Router{} = router, route_path) when is_binary(route_path) do
     case list(router) do
       {:ok, routes} -> Enum.any?(routes, fn route -> route.path == route_path end)
-      _ -> false
     end
   end
 

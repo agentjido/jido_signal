@@ -40,6 +40,7 @@ defmodule Jido.Signal.Bus.Snapshot do
   """
   use TypedStruct
   use ExDbug, enabled: false
+  alias Jido.Signal
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.ID
@@ -75,7 +76,7 @@ defmodule Jido.Signal.Bus.Snapshot do
     """
     field(:id, String.t(), enforce: true)
     field(:path, String.t(), enforce: true)
-    field(:signals, %{String.t() => Jido.Signal.Bus.Signal.t()}, enforce: true)
+    field(:signals, %{String.t() => Signal.t()}, enforce: true)
     field(:created_at, DateTime.t(), enforce: true)
   end
 
@@ -127,8 +128,12 @@ defmodule Jido.Signal.Bus.Snapshot do
         id = custom_id || ID.generate!()
         now = DateTime.utc_now()
 
-        # Convert list of signals to a map keyed by signal ID
-        signals_map = Map.new(signals, fn signal -> {signal.id, signal} end)
+        # Convert list of RecordedSignal structs to a map keyed by signal ID
+        # Extract the actual Signal structs from the RecordedSignal wrappers
+        signals_map =
+          Map.new(signals, fn recorded_signal ->
+            {recorded_signal.signal.id, recorded_signal.signal}
+          end)
 
         # Create the full snapshot data
         snapshot_data = %SnapshotData{

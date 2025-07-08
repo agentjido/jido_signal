@@ -57,6 +57,7 @@ defmodule Jido.Signal.Error do
   - `:planning_error`: Used when an error occurs during action planning.
   - `:routing_error`: Used when an error occurs during action routing.
   - `:dispatch_error`: Used when an error occurs during signal dispatching.
+  - `:bad_request`: Used when the client sends an invalid or malformed request.
   """
   @type error_type ::
           :validation_error
@@ -65,6 +66,7 @@ defmodule Jido.Signal.Error do
           | :timeout
           | :routing_error
           | :dispatch_error
+          | :bad_request
 
   use TypedStruct
 
@@ -144,8 +146,18 @@ defmodule Jido.Signal.Error do
         stacktrace: [...]
       }
   """
+  @spec bad_request(String.t()) :: t()
+  def bad_request(message) do
+    new(:bad_request, message, nil, nil)
+  end
+
+  @spec bad_request(String.t(), map() | nil) :: t()
+  def bad_request(message, details) do
+    new(:bad_request, message, details, nil)
+  end
+
   @spec bad_request(String.t(), map() | nil, list() | nil) :: t()
-  def bad_request(message, details \\ nil, stacktrace \\ nil) do
+  def bad_request(message, details, stacktrace) do
     new(:bad_request, message, details, stacktrace)
   end
 
