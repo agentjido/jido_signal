@@ -285,7 +285,7 @@ defmodule JidoTest.Signal.Bus do
       assert read_snapshot.path == "test.signal.1"
       assert map_size(read_snapshot.signals) == 1
       signal_entry = read_snapshot.signals |> Map.values() |> hd()
-      assert signal_entry.signal.type == "test.signal.1"
+      assert signal_entry.type == "test.signal.1"
     end
 
     test "lists snapshots", %{bus: bus} do
