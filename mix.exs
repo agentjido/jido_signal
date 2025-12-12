@@ -197,6 +197,8 @@ defmodule Jido.Signal.MixProject do
       {:zoi, "~> 0.10"},
 
       # Development & Test Dependencies
+      {:git_ops, "~> 2.9", only: :dev, runtime: false},
+      {:git_hooks, "~> 0.5.0", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:doctor, "~> 0.21", only: [:dev, :test], runtime: false},
@@ -222,11 +224,10 @@ defmodule Jido.Signal.MixProject do
       # Run to check the quality of your code
       q: ["quality"],
       quality: [
-        "format",
         "format --check-formatted",
         "compile --warnings-as-errors",
-        "dialyzer --format dialyxir",
-        "credo --all"
+        "credo --strict",
+        "dialyzer"
       ]
     ]
   end

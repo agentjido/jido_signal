@@ -1,23 +1,26 @@
-# Contributing to Jido
+# Contributing to Jido Signal
 
-Welcome to the Jido contributor's guide! We're excited that you're interested in contributing to Jido, our framework for building autonomous, distributed agent systems in Elixir. This guide will help you understand our development process and standards.
+Welcome to the Jido Signal contributor's guide! We're excited that you're interested in contributing to Jido Signal, the event signaling and pub/sub library for the Jido ecosystem.
 
 ## Getting Started
 
 ### Development Environment
 
 1. **Elixir Version Requirements**
-   - Jido requires Elixir ~> 1.17
+   - Jido Signal requires Elixir ~> 1.17
    - We recommend using asdf or similar version manager
 
 2. **Initial Setup**
    ```bash
    # Clone the repository
-   git clone https://github.com/agentjido/jido.git
-   cd jido
+   git clone https://github.com/agentjido/jido_signal.git
+   cd jido_signal
 
    # Install dependencies
    mix deps.get
+
+   # Install git hooks (enforces conventional commits)
+   mix git_hooks.install
 
    # Run tests to verify your setup
    mix test
@@ -32,7 +35,7 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
    mix format                    # Format code
    mix compile --warnings-as-errors  # Check compilation
    mix dialyzer                  # Type checking
-   mix credo --all              # Static analysis
+   mix credo --strict            # Static analysis
    ```
 
 ## Code Organization
@@ -41,27 +44,25 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
 ```
 .
 ├── lib/
-│   ├── jido/
-│   │   ├── actions/     # Core action implementations
-│   │   ├── agents/      # Agent behaviors and implementations
-│   │   ├── sensors/     # Sensor system components
-│   │   ├── workflows/   # Workflow execution engines
-│   │   └── utils/       # Utility functions
-│   └── jido.ex          # Main entry point
+│   ├── jido_signal/
+│   │   ├── bus/           # Event bus implementations
+│   │   ├── dispatch/      # Signal dispatching logic
+│   │   ├── router/        # Signal routing
+│   │   └── adapters/      # Backend adapters
+│   └── jido_signal.ex     # Main entry point
 ├── test/
-│   ├── jido/
-│   │   └── ...         # Tests mirroring lib structure
-│   ├── support/        # Test helpers and shared fixtures
+│   ├── jido_signal/
+│   │   └── ...           # Tests mirroring lib structure
+│   ├── support/          # Test helpers and shared fixtures
 │   └── test_helper.exs
-├── guides/            # Documentation guides
 └── mix.exs
 ```
 
 ### Core Components
-- **Actions**: Discrete, composable units of work
-- **Workflows**: Sequences of actions that accomplish larger goals
-- **Agents**: Stateful entities that can plan and execute workflows
-- **Sensors**: Real-time monitoring and data gathering components
+- **Bus**: Event bus for publish/subscribe patterns
+- **Dispatch**: Signal dispatching and delivery
+- **Router**: Signal routing based on topics and patterns
+- **Adapters**: Backend implementations (Phoenix.PubSub, etc.)
 
 ## Development Guidelines
 
@@ -77,15 +78,14 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
    - Add `@moduledoc` to every module
    - Document all public functions with `@doc`
    - Include examples when helpful
-   - Keep guides up-to-date in the `guides/` directory
    - Use doctests for simple examples
 
 3. **Type Specifications**
    ```elixir
-   @type validation_error :: :invalid_name | :invalid_status
-   
-   @spec process(String.t()) :: {:ok, term()} | {:error, validation_error()}
-   def process(input) do
+   @type signal :: %JidoSignal{}
+
+   @spec dispatch(signal()) :: {:ok, term()} | {:error, term()}
+   def dispatch(signal) do
      # Implementation
    end
    ```
@@ -94,15 +94,15 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
 
 1. **Test Organization**
    ```elixir
-   defmodule Jido.Test.Actions.FormatUserTest do
+   defmodule JidoSignal.BusTest do
      use ExUnit.Case, async: true
-     
-     describe "run/2" do
-       test "formats user data correctly" do
+
+     describe "publish/2" do
+       test "publishes signal to subscribers" do
          # Test implementation
        end
-       
-       test "handles invalid input" do
+
+       test "handles missing topic" do
          # Error case testing
        end
      end
@@ -124,17 +124,17 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
    mix test --cover
 
    # Run specific test file
-   mix test test/jido/actions/format_user_test.exs
+   mix test test/jido_signal/bus_test.exs
    ```
 
 ### Error Handling
 
 1. **Use With Patterns**
    ```elixir
-   def complex_operation(input) do
-     with {:ok, validated} <- validate(input),
-          {:ok, processed} <- process(validated) do
-       {:ok, processed}
+   def subscribe(topic, opts) do
+     with {:ok, validated} <- validate_topic(topic),
+          {:ok, subscription} <- create_subscription(validated, opts) do
+       {:ok, subscription}
      end
    end
    ```
@@ -142,22 +142,57 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
 2. **Return Values**
    - Use tagged tuples: `{:ok, result}` or `{:error, reason}`
    - Create specific error types for different failures
-   - Never intentionally raise Exceptions, the Jido framework intentionally minimizes the use of exceptions.
    - Avoid silent failures
    - Document error conditions
 
-### Performance Considerations
+## Git Hooks and Conventional Commits
 
-1. **Optimization**
-   - Profile before optimizing
-   - Document performance characteristics
-   - Consider resource usage in distributed environments
-   - Implement appropriate timeouts
+We use [`git_hooks`](https://hex.pm/packages/git_hooks) to enforce commit message conventions:
 
-2. **Resource Management**
-   - Clean up resources properly
-   - Handle large data sets efficiently
-   - Consider memory usage in long-running processes
+```bash
+mix git_hooks.install
+```
+
+This installs a `commit-msg` hook that validates your commit messages follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+
+### Commit Message Format
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `feat` | A new feature |
+| `fix` | A bug fix |
+| `docs` | Documentation only changes |
+| `style` | Changes that don't affect code meaning |
+| `refactor` | Code change that neither fixes a bug nor adds a feature |
+| `perf` | Performance improvement |
+| `test` | Adding or correcting tests |
+| `chore` | Changes to build process or auxiliary tools |
+| `ci` | CI configuration changes |
+
+### Examples
+
+```bash
+# Feature
+git commit -m "feat(bus): add topic pattern matching"
+
+# Bug fix
+git commit -m "fix(dispatch): resolve message ordering issue"
+
+# Breaking change
+git commit -m "feat(api)!: change subscription return type"
+```
+
+The hook will reject non-conforming commits, ensuring a clean changelog can be generated automatically.
 
 ## Pull Request Process
 
@@ -169,7 +204,7 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
 
 2. **PR Guidelines**
    - Create a feature branch from `main`
-   - Use descriptive commit messages
+   - Use descriptive commit messages following conventional commits
    - Reference any related issues
    - Keep changes focused and atomic
 
@@ -193,9 +228,9 @@ Welcome to the Jido contributor's guide! We're excited that you're interested in
 
 ## Additional Resources
 
-- [Hex Documentation](https://hexdocs.pm/jido)
-- [GitHub Issues](https://github.com/agentjido/jido/issues)
-- [GitHub Discussions](https://github.com/agentjido/jido/discussions)
+- [Hex Documentation](https://hexdocs.pm/jido_signal)
+- [GitHub Issues](https://github.com/agentjido/jido_signal/issues)
+- [GitHub Discussions](https://github.com/agentjido/jido_signal/discussions)
 
 ## Questions or Problems?
 
@@ -204,4 +239,4 @@ If you have questions about contributing:
 - Check existing issues
 - Review the guides directory
 
-Thank you for contributing to Jido!
+Thank you for contributing to Jido Signal!
