@@ -49,6 +49,7 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.Error
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
 
   require Logger
@@ -516,17 +517,7 @@ defmodule Jido.Signal.Bus do
 
             final_state = %{new_state | middleware: final_middleware}
 
-            # Create RecordedSignal structs from the uuid_signal_pairs
-            recorded_signals =
-              Enum.map(uuid_signal_pairs, fn {uuid, signal} ->
-                %Jido.Signal.Bus.RecordedSignal{
-                  id: uuid,
-                  type: signal.type,
-                  created_at: DateTime.utc_now(),
-                  signal: signal
-                }
-              end)
-
+            recorded_signals = build_recorded_signals(uuid_signal_pairs)
             {:reply, {:ok, recorded_signals}, final_state}
 
           {:error, error} ->
@@ -970,6 +961,42 @@ defmodule Jido.Signal.Bus do
       # For regular subscriptions, use async dispatch
       Jido.Signal.Dispatch.dispatch(signal, subscription.dispatch)
     end
+  end
+
+  defp build_recorded_signals(uuid_signal_pairs) do
+    Enum.map(uuid_signal_pairs, fn {uuid, signal} ->
+      %Jido.Signal.Bus.RecordedSignal{
+        id: uuid,
+        type: signal.type,
+        created_at: recorded_created_at(uuid, signal),
+        signal: signal
+      }
+    end)
+  end
+
+  defp recorded_created_at(uuid, signal) do
+    case extract_uuid_timestamp(uuid) do
+      {:ok, timestamp} ->
+        DateTime.from_unix!(timestamp, :millisecond)
+
+      :error ->
+        case Map.get(signal, :time) do
+          time when is_binary(time) ->
+            case DateTime.from_iso8601(time) do
+              {:ok, datetime, _} -> datetime
+              _ -> DateTime.utc_now()
+            end
+
+          _ ->
+            DateTime.utc_now()
+        end
+    end
+  end
+
+  defp extract_uuid_timestamp(uuid) do
+    {:ok, ID.extract_timestamp(uuid)}
+  rescue
+    _ -> :error
   end
 
   defp validate_signals(signals) do

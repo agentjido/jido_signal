@@ -31,16 +31,16 @@ defmodule Jido.Signal.Bus.State do
   end
 
   @doc """
-  Merges a list of recorded signals into the existing log.
+  Merges a list of signals into the existing log.
   Signals are added to the log keyed by their IDs.
   If a signal with the same ID already exists, it will be overwritten.
 
   ## Parameters
     - state: The current bus state
-    - signals: List of recorded signals to merge
+    - signals: List of signals to merge
 
   ## Returns
-    - `{:ok, new_state, recorded_signals}` with signals merged into log
+    - `{:ok, new_state, uuid_signal_pairs}` with signals merged into log
     - `{:error, reason}` if there was an error processing the signals
   """
   @spec append_signals(t(), [Jido.Signal.t() | {:ok, Jido.Signal.t()} | map()]) ::
@@ -125,6 +125,17 @@ defmodule Jido.Signal.Bus.State do
     state.log
     |> Map.values()
     |> Enum.sort_by(fn signal -> signal.id end)
+  end
+
+  @doc """
+  Returns log entries as a list of {log_id, signal} tuples sorted by log_id.
+
+  This preserves the bus log ordering (UUID7 keys are time-ordered).
+  """
+  @spec log_entries(t()) :: [{String.t(), Signal.t()}]
+  def log_entries(%__MODULE__{} = state) do
+    state.log
+    |> Enum.sort_by(fn {key, _signal} -> key end)
   end
 
   @doc """
