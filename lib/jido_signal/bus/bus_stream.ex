@@ -9,7 +9,9 @@ defmodule Jido.Signal.Bus.Stream do
   """
 
   alias Jido.Signal
+  alias Jido.Signal.Bus.RecordedSignal
   alias Jido.Signal.Bus.State, as: BusState
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
 
   require Logger
@@ -24,41 +26,24 @@ defmodule Jido.Signal.Bus.Stream do
     batch_size = Keyword.get(opts, :batch_size, 1_000)
     correlation_id = Keyword.get(opts, :correlation_id)
 
-    # Get list of signals from log map
-    signals = BusState.log_to_list(state)
+    # Get list of {log_id, signal} entries from log map
+    entries = BusState.log_entries(state)
 
     # First filter by timestamp if provided
     timestamp_filtered =
       if start_timestamp do
-        filtered =
-          Enum.filter(signals, fn signal ->
-            # For UUID7 IDs, we can extract the timestamp directly from the ID
-            # This is more efficient than converting DateTime to Unix time
-            # Fall back to created_at if ID timestamp extraction fails
-            signal_ts =
-              try do
-                ts = Jido.Signal.ID.extract_timestamp(signal.id)
-
-                ts
-              rescue
-                _error ->
-                  # Default to 0 to include the signal
-                  0
-              end
-
-            signal_ts > start_timestamp
-          end)
-
-        filtered
+        Enum.filter(entries, fn {log_id, signal} ->
+          entry_timestamp_ms(log_id, signal) > start_timestamp
+        end)
       else
-        signals
+        entries
       end
 
     # Then filter by correlation_id if provided
     correlation_filtered =
       if correlation_id do
-        Enum.filter(timestamp_filtered, fn signal ->
-          signal.correlation_id == correlation_id
+        Enum.filter(timestamp_filtered, fn {_log_id, signal} ->
+          is_map(signal) and Map.get(signal, :correlation_id) == correlation_id
         end)
       else
         timestamp_filtered
@@ -69,10 +54,15 @@ defmodule Jido.Signal.Bus.Stream do
     case Router.Validator.validate_path(type_pattern) do
       {:ok, _} ->
         # Create a simple pattern matcher function
-        matches_pattern? = fn signal ->
-          matches = Router.matches?(signal.type, type_pattern)
-
-          matches
+        matches_pattern? = fn {_log_id, signal} ->
+          if is_map(signal) do
+            case Map.fetch(signal, :type) do
+              {:ok, signal_type} -> Router.matches?(signal_type, type_pattern)
+              :error -> false
+            end
+          else
+            false
+          end
         end
 
         # Apply the pattern filter and take the specified batch size
@@ -80,12 +70,11 @@ defmodule Jido.Signal.Bus.Stream do
           correlation_filtered
           |> Enum.filter(matches_pattern?)
           |> Enum.take(batch_size)
-          |> Enum.map(fn signal ->
-            # Convert to RecordedSignal struct
-            %Jido.Signal.Bus.RecordedSignal{
-              id: signal.id,
-              type: signal.type,
-              created_at: DateTime.utc_now(),
+          |> Enum.map(fn {log_id, signal} ->
+            %RecordedSignal{
+              id: log_id,
+              type: Map.get(signal, :type),
+              created_at: entry_created_at(log_id, signal),
               signal: signal
             }
           end)
@@ -114,7 +103,7 @@ defmodule Jido.Signal.Bus.Stream do
       {:error, :empty_signal_list}
     else
       with :ok <- validate_signals(signals),
-           {:ok, new_state, _new_signals} <- BusState.append_signals(state, signals) do
+           {:ok, new_state, _uuid_signal_pairs} <- BusState.append_signals(state, signals) do
         # Route signals to subscribers
         Enum.each(signals, fn signal ->
           # For each subscription, check if the signal type matches the subscription path
@@ -179,6 +168,54 @@ defmodule Jido.Signal.Bus.Stream do
     case invalid_signals do
       [] -> :ok
       _ -> {:error, :invalid_signals}
+    end
+  end
+
+  defp entry_timestamp_ms(log_id, signal) do
+    case extract_uuid_timestamp(log_id) do
+      {:ok, timestamp} ->
+        timestamp
+
+      :error ->
+        signal_time_to_ms(signal)
+    end
+  end
+
+  defp entry_created_at(log_id, signal) do
+    case extract_uuid_timestamp(log_id) do
+      {:ok, timestamp} ->
+        DateTime.from_unix!(timestamp, :millisecond)
+
+      :error ->
+        case signal do
+          %{time: time} when is_binary(time) ->
+            case DateTime.from_iso8601(time) do
+              {:ok, datetime, _} -> datetime
+              _ -> DateTime.utc_now()
+            end
+
+          _ ->
+            DateTime.utc_now()
+        end
+    end
+  end
+
+  defp extract_uuid_timestamp(log_id) do
+    {:ok, ID.extract_timestamp(log_id)}
+  rescue
+    _ -> :error
+  end
+
+  defp signal_time_to_ms(signal) do
+    case signal do
+      %{time: time} when is_binary(time) ->
+        case DateTime.from_iso8601(time) do
+          {:ok, datetime, _} -> DateTime.to_unix(datetime, :millisecond)
+          _ -> 0
+        end
+
+      _ ->
+        0
     end
   end
 end

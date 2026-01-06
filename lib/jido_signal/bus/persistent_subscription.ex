@@ -9,6 +9,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   use GenServer
   use TypedStruct
 
+  alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
@@ -339,31 +340,22 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     # Get the bus state to access the log
     bus_state = :sys.get_state(state.bus_pid)
 
-    missed_signals =
-      Enum.filter(bus_state.log, fn {_id, signal} ->
-        case DateTime.from_iso8601(signal.time) do
-          {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp) > state.checkpoint
-          _ -> false
-        end
+    missed_entries =
+      bus_state
+      |> BusState.log_entries()
+      |> Enum.filter(fn {log_id, signal} ->
+        log_timestamp_ms(log_id, signal) > state.checkpoint
       end)
 
-    Enum.each(missed_signals, fn {_id, signal} ->
-      case DateTime.from_iso8601(signal.time) do
-        {:ok, timestamp, _offset} ->
-          if DateTime.to_unix(timestamp) > state.checkpoint do
-            case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
-              :ok ->
-                :ok
-
-              {:error, reason} ->
-                Logger.debug(
-                  "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
-                )
-            end
-          end
-
-        _ ->
+    Enum.each(missed_entries, fn {_log_id, signal} ->
+      case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
+        :ok ->
           :ok
+
+        {:error, reason} ->
+          Logger.debug(
+            "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
+          )
       end
     end)
 
@@ -398,6 +390,35 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         )
 
         :ok
+    end
+  end
+
+  defp log_timestamp_ms(log_id, signal) do
+    case extract_uuid_timestamp(log_id) do
+      {:ok, timestamp} ->
+        timestamp
+
+      :error ->
+        signal_time_to_ms(signal)
+    end
+  end
+
+  defp extract_uuid_timestamp(log_id) do
+    {:ok, ID.extract_timestamp(log_id)}
+  rescue
+    _ -> :error
+  end
+
+  defp signal_time_to_ms(signal) do
+    case Map.get(signal, :time) do
+      time when is_binary(time) ->
+        case DateTime.from_iso8601(time) do
+          {:ok, datetime, _} -> DateTime.to_unix(datetime, :millisecond)
+          _ -> 0
+        end
+
+      _ ->
+        0
     end
   end
 
