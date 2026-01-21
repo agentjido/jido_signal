@@ -202,7 +202,7 @@ defmodule Jido.Signal.MixProject do
       {:telemetry_metrics, "~> 1.1"},
       {:typed_struct, "~> 0.3.0"},
       {:uniq, "~> 0.6.1"},
-      {:splode, "~> 0.2.10"},
+      {:splode, "~> 0.3.0"},
       {:zoi, "~> 0.16"},
       {:memento, "~> 0.5.0"},
       {:fuse, "~> 2.5"},
