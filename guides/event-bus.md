@@ -205,6 +205,73 @@ Replay signals from specific timestamp:
 {:ok, user_signals} = Jido.Signal.Bus.replay(:my_bus, "user.*", timestamp)
 ```
 
+## Instance Isolation
+
+For multi-tenant applications or isolated testing, create instance-scoped signal infrastructure:
+
+```elixir
+alias Jido.Signal.Instance
+alias Jido.Signal.Bus
+
+# Start an isolated instance (starts its own Registry, TaskSupervisor, Ext.Registry)
+{:ok, _} = Instance.start_link(name: MyApp.Jido)
+
+# Start bus scoped to the instance
+{:ok, _} = Bus.start_link(name: :tenant_bus, jido: MyApp.Jido)
+
+# Lookup uses the instance's registry
+{:ok, bus_pid} = Bus.whereis(:tenant_bus, jido: MyApp.Jido)
+
+# Check if instance is running
+Instance.running?(MyApp.Jido)  # => true
+
+# Stop instance and all its children
+Instance.stop(MyApp.Jido)
+```
+
+### Multi-Tenant Isolation
+
+Multiple instances are completely isolated from each other:
+
+```elixir
+# Start separate instances for each tenant
+{:ok, _} = Instance.start_link(name: TenantA.Jido)
+{:ok, _} = Instance.start_link(name: TenantB.Jido)
+
+# Same bus name, different instances = different processes
+{:ok, bus_a} = Bus.start_link(name: :events, jido: TenantA.Jido)
+{:ok, bus_b} = Bus.start_link(name: :events, jido: TenantB.Jido)
+
+# Completely isolated - signals don't cross instances
+Bus.subscribe(bus_a, "order.*", dispatch: {:pid, target: tenant_a_handler})
+Bus.subscribe(bus_b, "order.*", dispatch: {:pid, target: tenant_b_handler})
+
+# Publish to tenant A only
+Bus.publish(bus_a, [order_signal])  # Only tenant_a_handler receives
+```
+
+### Process Name Resolution
+
+The `jido:` option controls which registry is used for process lookup:
+
+```elixir
+# Global (default) - uses Jido.Signal.Registry
+Bus.start_link(name: :my_bus)
+
+# Instance-scoped - uses MyApp.Jido.Signal.Registry
+Bus.start_link(name: :my_bus, jido: MyApp.Jido)
+```
+
+Use `Jido.Signal.Names` to resolve process names programmatically:
+
+```elixir
+alias Jido.Signal.Names
+
+Names.registry([])                    # => Jido.Signal.Registry
+Names.registry(jido: MyApp.Jido)      # => MyApp.Jido.Signal.Registry
+Names.task_supervisor(jido: MyApp.Jido)  # => MyApp.Jido.Signal.TaskSupervisor
+```
+
 ## Advanced Configuration
 
 Configure bus with custom router and options:

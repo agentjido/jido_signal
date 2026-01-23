@@ -196,6 +196,7 @@ defmodule Jido.Signal.Bus do
 
         state = %BusState{
           name: name,
+          jido: Keyword.get(opts, :jido),
           router: Keyword.get(opts, :router, Router.new!()),
           child_supervisor: child_supervisor,
           middleware: middleware_configs,

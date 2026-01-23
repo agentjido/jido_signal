@@ -15,6 +15,7 @@ defmodule Jido.Signal.Bus.State do
 
   typedstruct do
     field(:name, atom(), enforce: true)
+    field(:jido, atom() | nil, default: nil)
     field(:router, Router.Router.t(), default: Router.new!())
     field(:log, %{String.t() => Signal.t()}, default: %{})
     field(:snapshots, %{String.t() => Jido.Signal.Bus.Snapshot.SnapshotRef.t()}, default: %{})

@@ -18,6 +18,8 @@ defmodule Jido.Signal.Util do
   but they can also be useful for developers building applications with Jido.
   """
 
+  alias Jido.Signal.Names
+
   @type server :: pid() | atom() | binary() | {name :: atom() | binary(), registry :: module()}
 
   @doc """
@@ -43,6 +45,10 @@ defmodule Jido.Signal.Util do
 
       iex> Jido.Signal.Util.via_tuple({:my_process, MyRegistry})
       {:via, Registry, {MyRegistry, "my_process"}}
+
+      iex> Jido.Signal.Util.via_tuple(:my_process, jido: MyApp.Jido)
+      {:via, Registry, {MyApp.Jido.Signal.Registry, "my_process"}}
+
   """
   @spec via_tuple(server(), keyword()) :: {:via, Registry, {module(), String.t()}}
   def via_tuple(name_or_tuple, opts \\ [])
@@ -53,7 +59,13 @@ defmodule Jido.Signal.Util do
   end
 
   def via_tuple(name, opts) do
-    registry = Keyword.get(opts, :registry, Jido.Signal.Registry)
+    # Use jido: option for instance-scoped registry, fall back to explicit :registry option
+    registry =
+      case Keyword.get(opts, :jido) do
+        nil -> Keyword.get(opts, :registry, Jido.Signal.Registry)
+        _instance -> Names.registry(opts)
+      end
+
     name = if is_atom(name), do: Atom.to_string(name), else: name
     {:via, Registry, {registry, name}}
   end
@@ -82,6 +94,9 @@ defmodule Jido.Signal.Util do
 
       iex> Jido.Signal.Util.whereis({:my_process, MyRegistry})
       {:ok, #PID<0.125.0>}
+
+      iex> Jido.Signal.Util.whereis(:my_process, jido: MyApp.Jido)
+      {:ok, #PID<0.126.0>}
   """
   @spec whereis(server(), keyword()) :: {:ok, pid()} | {:error, :not_found}
   def whereis(server, opts \\ [])
@@ -98,7 +113,13 @@ defmodule Jido.Signal.Util do
   end
 
   def whereis(name, opts) do
-    registry = Keyword.get(opts, :registry, Jido.Signal.Registry)
+    # Use jido: option for instance-scoped registry, fall back to explicit :registry option
+    registry =
+      case Keyword.get(opts, :jido) do
+        nil -> Keyword.get(opts, :registry, Jido.Signal.Registry)
+        _instance -> Names.registry(opts)
+      end
+
     name = if is_atom(name), do: Atom.to_string(name), else: name
 
     case Registry.lookup(registry, name) do

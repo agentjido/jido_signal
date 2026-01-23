@@ -157,6 +157,42 @@ See [Signals and Dispatch guide](signals-and-dispatch.md) for full circuit break
 
 ## Testing Approaches
 
+### Instance Isolation for Tests
+
+Use isolated instances to prevent test interference:
+
+```elixir
+defmodule MyApp.SignalTest do
+  use ExUnit.Case, async: true
+
+  alias Jido.Signal.Instance
+  alias Jido.Signal.Bus
+
+  setup do
+    # Create unique instance per test
+    instance = :"TestInstance_#{System.unique_integer([:positive])}"
+    {:ok, sup} = Instance.start_link(name: instance)
+
+    on_exit(fn ->
+      if Process.alive?(sup), do: Supervisor.stop(sup, :normal, 100)
+    end)
+
+    {:ok, instance: instance}
+  end
+
+  test "isolated bus operations", %{instance: instance} do
+    {:ok, bus} = Bus.start_link(name: :test_bus, jido: instance)
+    {:ok, _} = Bus.subscribe(bus, "test.*", dispatch: {:pid, target: self()})
+    
+    signal = Jido.Signal.new!("test.event", %{value: 42})
+    {:ok, _} = Bus.publish(bus, [signal])
+    
+    assert_receive {:signal, received}
+    assert received.data.value == 42
+  end
+end
+```
+
 ### Mock Adapters
 
 ```elixir

@@ -74,10 +74,36 @@ defmodule Jido.Signal.Ext.Registry do
   # Client API
 
   @doc """
+  Returns a child_spec for starting the registry under a supervisor.
+
+  ## Options
+
+    * `:name` - The name to register the process under (default: #{@registry_name})
+
+  """
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    name = Keyword.get(opts, :name, @registry_name)
+
+    %{
+      id: name,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :permanent,
+      shutdown: 5000
+    }
+  end
+
+  @doc """
   Starts the extension registry.
 
   This is typically called by the application supervision tree
   and doesn't need to be called manually.
+
+  ## Options
+
+    * `:name` - The name to register the process under (default: #{@registry_name})
+
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, @registry_name))
