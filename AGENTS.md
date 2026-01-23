@@ -16,6 +16,7 @@
 - Dispatch adapters: `:pid`, `:pubsub`, `:http`, `:bus`, `:named`, `:console`, `:logger`, `:noop`
 - In-memory persistence via ETS or maps, no external DB dependency
 - Middleware pipeline for cross-cutting concerns
+- **Instance isolation**: `Jido.Signal.Instance` for multi-tenant/isolated infrastructure via `jido:` option
 
 ## Router System
 - **Trie-based routing**: Efficient prefix tree for path matching with O(k) complexity (k = segments)

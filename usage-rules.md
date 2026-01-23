@@ -61,6 +61,23 @@ Bus.publish(:my_bus, [signal])
 
 **Patterns**: `"user.created"` (exact), `"user.*"` (single), `"user.**"` (multi-level)
 
+## Instance Isolation
+
+For multi-tenant or isolated signal infrastructure:
+
+```elixir
+# Start isolated instance
+{:ok, _} = Jido.Signal.Instance.start_link(name: MyApp.Jido)
+
+# Bus uses instance-scoped registry
+{:ok, _} = Bus.start_link(name: :tenant_bus, jido: MyApp.Jido)
+
+# Lookup uses correct instance
+{:ok, pid} = Bus.whereis(:tenant_bus, jido: MyApp.Jido)
+```
+
+**Key**: Pass `jido: instance` option to route through instance supervisors.
+
 ## Signal Router
 
 High-performance trie-based routing for pattern matching and handler dispatch.
