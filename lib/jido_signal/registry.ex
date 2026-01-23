@@ -7,6 +7,8 @@ defmodule Jido.Signal.Registry do
   """
   use TypedStruct
 
+  alias Jido.Signal.Router
+
   typedstruct module: Subscription do
     @moduledoc """
     Represents a subscription to signal patterns in the registry.
@@ -119,7 +121,7 @@ defmodule Jido.Signal.Registry do
     registry.subscriptions
     |> Map.values()
     |> Enum.filter(fn subscription ->
-      Jido.Signal.Router.matches?(path, subscription.path)
+      Router.matches?(path, subscription.path)
     end)
   end
 

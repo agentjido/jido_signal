@@ -310,27 +310,7 @@ defmodule Jido.Signal.Router.Engine do
 
   # Handler collection logic
   defp collect_handlers(%NodeHandlers{} = node_handlers, %Signal{} = signal, acc) do
-    handler_results =
-      case node_handlers.handlers do
-        handlers when is_list(handlers) ->
-          Enum.map(handlers, fn info ->
-            case info.target do
-              targets when is_list(targets) ->
-                # For multiple dispatch targets, create a tuple for each target
-                Enum.map(targets, fn target ->
-                  {target, info.priority, info.complexity}
-                end)
-
-              target ->
-                [{target, info.priority, info.complexity}]
-            end
-          end)
-          |> List.flatten()
-
-        _ ->
-          []
-      end
-
+    handler_results = extract_handler_results(node_handlers.handlers)
     pattern_results = collect_pattern_matches(node_handlers.matchers || [], signal)
 
     merge_sorted(
@@ -341,6 +321,24 @@ defmodule Jido.Signal.Router.Engine do
 
   defp collect_handlers(nil, %Signal{} = _signal, acc) do
     acc
+  end
+
+  # Extracts handler results from a list of handlers
+  defp extract_handler_results(handlers) when is_list(handlers) do
+    handlers
+    |> Enum.flat_map(&expand_handler_targets/1)
+  end
+
+  defp extract_handler_results(_), do: []
+
+  # Expands a single handler into target tuples
+  defp expand_handler_targets(%{target: targets, priority: priority, complexity: complexity})
+       when is_list(targets) do
+    Enum.map(targets, fn target -> {target, priority, complexity} end)
+  end
+
+  defp expand_handler_targets(%{target: target, priority: priority, complexity: complexity}) do
+    [{target, priority, complexity}]
   end
 
   # Pattern matching

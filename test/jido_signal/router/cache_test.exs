@@ -2,6 +2,7 @@ defmodule Jido.Signal.Router.CacheTest do
   use ExUnit.Case, async: false
 
   alias Jido.Signal
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
   alias Jido.Signal.Router.Cache
 
@@ -75,7 +76,7 @@ defmodule Jido.Signal.Router.CacheTest do
       Cache.put(:route_test, router)
 
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
@@ -86,7 +87,7 @@ defmodule Jido.Signal.Router.CacheTest do
 
     test "returns :not_cached error for uncached router" do
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
@@ -100,7 +101,7 @@ defmodule Jido.Signal.Router.CacheTest do
       Cache.put(:nil_type_test, router)
 
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: nil,
         data: %{}
@@ -114,7 +115,7 @@ defmodule Jido.Signal.Router.CacheTest do
       Cache.put(:no_match_test, router)
 
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "payment.processed",
         data: %{}
@@ -133,14 +134,14 @@ defmodule Jido.Signal.Router.CacheTest do
       Cache.put(:wildcard_test, router)
 
       signal1 = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
       }
 
       signal2 = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "audit.user.login.success",
         data: %{}
@@ -184,14 +185,14 @@ defmodule Jido.Signal.Router.CacheTest do
 
       # Verify both routes work
       signal1 = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
       }
 
       signal2 = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.updated",
         data: %{}
@@ -221,7 +222,7 @@ defmodule Jido.Signal.Router.CacheTest do
 
       # Verify routing works
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
@@ -255,7 +256,7 @@ defmodule Jido.Signal.Router.CacheTest do
 
       # Verify cache was updated
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.updated",
         data: %{}
@@ -278,7 +279,7 @@ defmodule Jido.Signal.Router.CacheTest do
 
       # Verify removed route no longer matches
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
@@ -297,21 +298,21 @@ defmodule Jido.Signal.Router.CacheTest do
       {:ok, router3} = Router.new([{"audit.**", :audit_handler}], cache_id: {:app, :audit})
 
       user_signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
       }
 
       payment_signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "payment.processed",
         data: %{}
       }
 
       audit_signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "audit.user.login",
         data: %{}
@@ -348,7 +349,7 @@ defmodule Jido.Signal.Router.CacheTest do
       )
 
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "user.created",
         data: %{}
@@ -383,7 +384,7 @@ defmodule Jido.Signal.Router.CacheTest do
       )
 
       signal = %Signal{
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         source: "/test",
         type: "payment.processed",
         data: %{}

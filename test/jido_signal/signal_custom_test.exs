@@ -1,6 +1,8 @@
 defmodule Jido.Signal.CustomTest do
   use ExUnit.Case, async: true
 
+  alias Jido.Signal.ID
+
   # Define a test Signal module
   defmodule TestSignal do
     use Jido.Signal,
@@ -167,10 +169,10 @@ defmodule Jido.Signal.CustomTest do
     test "generates valid UUID7 IDs" do
       {:ok, signal} = TestSignal.new(%{user_id: "123", message: "test"})
 
-      assert Jido.Signal.ID.valid?(signal.id)
+      assert ID.valid?(signal.id)
 
       # Extract timestamp should work
-      timestamp = Jido.Signal.ID.extract_timestamp(signal.id)
+      timestamp = ID.extract_timestamp(signal.id)
       assert is_integer(timestamp)
       assert timestamp > 0
     end

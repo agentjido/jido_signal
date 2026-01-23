@@ -10,6 +10,8 @@ defmodule Jido.Signal.Bus.Stream do
 
   alias Jido.Signal
   alias Jido.Signal.Bus.State, as: BusState
+  alias Jido.Signal.Dispatch
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
 
   require Logger
@@ -37,7 +39,7 @@ defmodule Jido.Signal.Bus.Stream do
             # Fall back to created_at if ID timestamp extraction fails
             signal_ts =
               try do
-                ts = Jido.Signal.ID.extract_timestamp(signal.id)
+                ts = ID.extract_timestamp(signal.id)
 
                 ts
               rescue
@@ -109,26 +111,30 @@ defmodule Jido.Signal.Bus.Stream do
   Signals are recorded and routed in the exact order they are received.
   """
   @spec publish(BusState.t(), list(Signal.t())) :: {:ok, BusState.t()} | {:error, atom()}
-  def publish(%BusState{} = state, signals) when is_list(signals) do
-    if signals == [] do
-      {:error, :empty_signal_list}
-    else
-      with :ok <- validate_signals(signals),
-           {:ok, new_state, _new_signals} <- BusState.append_signals(state, signals) do
-        # Route signals to subscribers
-        Enum.each(signals, fn signal ->
-          # For each subscription, check if the signal type matches the subscription path
-          Enum.each(new_state.subscriptions, fn {_id, subscription} ->
-            if Router.matches?(signal.type, subscription.path) do
-              # If it matches, dispatch the signal
-              Jido.Signal.Dispatch.dispatch(signal, subscription.dispatch)
-            end
-          end)
-        end)
+  def publish(%BusState{} = _state, []) do
+    {:error, :empty_signal_list}
+  end
 
-        {:ok, new_state}
-      end
+  def publish(%BusState{} = state, signals) when is_list(signals) do
+    with :ok <- validate_signals(signals),
+         {:ok, new_state, _new_signals} <- BusState.append_signals(state, signals) do
+      route_signals_to_subscribers(signals, new_state.subscriptions)
+      {:ok, new_state}
     end
+  end
+
+  defp route_signals_to_subscribers(signals, subscriptions) do
+    Enum.each(signals, fn signal ->
+      dispatch_to_matching_subscriptions(signal, subscriptions)
+    end)
+  end
+
+  defp dispatch_to_matching_subscriptions(signal, subscriptions) do
+    Enum.each(subscriptions, fn {_id, subscription} ->
+      if Router.matches?(signal.type, subscription.path) do
+        Dispatch.dispatch(signal, subscription.dispatch)
+      end
+    end)
   end
 
   @doc """

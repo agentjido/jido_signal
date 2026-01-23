@@ -25,6 +25,7 @@ defmodule Jido.Signal.Serialization.ErlangTermSerializer do
   @behaviour Jido.Signal.Serialization.Serializer
 
   alias Jido.Signal.Serialization.CloudEventsTransform
+  alias Jido.Signal.Serialization.Config
   alias Jido.Signal.Serialization.TypeProvider
 
   @doc """
@@ -47,7 +48,7 @@ defmodule Jido.Signal.Serialization.ErlangTermSerializer do
   """
   @impl true
   def deserialize(binary, config \\ []) when is_binary(binary) do
-    max_size = Jido.Signal.Serialization.Config.max_payload_bytes()
+    max_size = Config.max_payload_bytes()
 
     if byte_size(binary) > max_size do
       {:error, {:payload_too_large, byte_size(binary), max_size}}

@@ -9,6 +9,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   use GenServer
   use TypedStruct
 
+  alias Jido.Signal.Bus
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
@@ -56,7 +57,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   - dispatch_opts: Additional dispatch options for the subscription
   """
   def start_link(opts) do
-    id = Keyword.get(opts, :id) || Jido.Signal.ID.generate!()
+    id = Keyword.get(opts, :id) || ID.generate!()
     opts = Keyword.put(opts, :id, id)
 
     # Validate start_from value and set default if invalid
@@ -341,33 +342,45 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
     missed_signals =
       Enum.filter(bus_state.log, fn {_id, signal} ->
-        case DateTime.from_iso8601(signal.time) do
-          {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp) > state.checkpoint
-          _ -> false
-        end
+        signal_after_checkpoint?(signal, state.checkpoint)
       end)
 
     Enum.each(missed_signals, fn {_id, signal} ->
-      case DateTime.from_iso8601(signal.time) do
-        {:ok, timestamp, _offset} ->
-          if DateTime.to_unix(timestamp) > state.checkpoint do
-            case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
-              :ok ->
-                :ok
-
-              {:error, reason} ->
-                Logger.debug(
-                  "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
-                )
-            end
-          end
-
-        _ ->
-          :ok
-      end
+      replay_single_signal(signal, state)
     end)
 
     state
+  end
+
+  defp signal_after_checkpoint?(signal, checkpoint) do
+    case DateTime.from_iso8601(signal.time) do
+      {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp) > checkpoint
+      _ -> false
+    end
+  end
+
+  defp replay_single_signal(signal, state) do
+    case DateTime.from_iso8601(signal.time) do
+      {:ok, timestamp, _offset} ->
+        if DateTime.to_unix(timestamp) > state.checkpoint do
+          dispatch_replay_signal(signal, state)
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp dispatch_replay_signal(signal, state) do
+    case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.debug(
+          "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
+        )
+    end
   end
 
   @impl GenServer
@@ -375,7 +388,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     # Use state.id as the subscription_id since that's what we're using to identify the subscription
     if state.bus_pid do
       # Best effort to unsubscribe
-      Jido.Signal.Bus.unsubscribe(state.bus_pid, state.id)
+      Bus.unsubscribe(state.bus_pid, state.id)
     end
 
     :ok
@@ -466,39 +479,46 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   @spec dispatch_signal(t(), String.t(), term()) :: t()
   defp dispatch_signal(state, signal_log_id, signal) do
     if state.bus_subscription.dispatch do
-      case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
-        :ok ->
-          # Success - clear attempts for this signal and add to in-flight
-          new_attempts = Map.delete(state.attempts, signal_log_id)
-          new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
-          %{state | in_flight_signals: new_in_flight, attempts: new_attempts}
-
-        {:error, reason} ->
-          # Failure - increment attempts
-          current_attempts = Map.get(state.attempts, signal_log_id, 0) + 1
-
-          if current_attempts >= state.max_attempts do
-            # Move to DLQ
-            handle_dlq(state, signal_log_id, signal, reason, current_attempts)
-          else
-            # Keep for retry - add to pending for later retry, update attempts
-            :telemetry.execute(
-              [:jido, :signal, :subscription, :dispatch, :retry],
-              %{attempt: current_attempts},
-              %{subscription_id: state.id, signal_id: signal.id}
-            )
-
-            new_attempts = Map.put(state.attempts, signal_log_id, current_attempts)
-            new_pending = Map.put(state.pending_signals, signal_log_id, signal)
-            state = %{state | pending_signals: new_pending, attempts: new_attempts}
-            schedule_retry(state)
-          end
-      end
+      result = Dispatch.dispatch(signal, state.bus_subscription.dispatch)
+      handle_dispatch_result(result, state, signal_log_id, signal)
     else
       # No dispatch configured - just add to in-flight
       new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
       %{state | in_flight_signals: new_in_flight}
     end
+  end
+
+  defp handle_dispatch_result(:ok, state, signal_log_id, signal) do
+    # Success - clear attempts for this signal and add to in-flight
+    new_attempts = Map.delete(state.attempts, signal_log_id)
+    new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
+    %{state | in_flight_signals: new_in_flight, attempts: new_attempts}
+  end
+
+  defp handle_dispatch_result({:error, reason}, state, signal_log_id, signal) do
+    # Failure - increment attempts
+    current_attempts = Map.get(state.attempts, signal_log_id, 0) + 1
+
+    if current_attempts >= state.max_attempts do
+      # Move to DLQ
+      handle_dlq(state, signal_log_id, signal, reason, current_attempts)
+    else
+      handle_dispatch_retry(state, signal_log_id, signal, current_attempts)
+    end
+  end
+
+  defp handle_dispatch_retry(state, signal_log_id, signal, current_attempts) do
+    # Keep for retry - add to pending for later retry, update attempts
+    :telemetry.execute(
+      [:jido, :signal, :subscription, :dispatch, :retry],
+      %{attempt: current_attempts},
+      %{subscription_id: state.id, signal_id: signal.id}
+    )
+
+    new_attempts = Map.put(state.attempts, signal_log_id, current_attempts)
+    new_pending = Map.put(state.pending_signals, signal_log_id, signal)
+    state = %{state | pending_signals: new_pending, attempts: new_attempts}
+    schedule_retry(state)
   end
 
   # Schedules a retry timer if one is not already scheduled

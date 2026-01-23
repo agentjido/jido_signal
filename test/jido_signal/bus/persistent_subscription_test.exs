@@ -3,6 +3,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.ID
   alias Jido.Signal.Journal.Adapters.ETS, as: ETSAdapter
 
   @moduletag :capture_log
@@ -134,7 +135,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       highest_timestamp =
         signal_ids
-        |> Enum.map(&Jido.Signal.ID.extract_timestamp/1)
+        |> Enum.map(&ID.extract_timestamp/1)
         |> Enum.max()
 
       assert checkpoint == highest_timestamp

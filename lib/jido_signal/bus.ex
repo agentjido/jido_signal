@@ -48,7 +48,10 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Bus.Snapshot
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
+  alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
 
   require Logger
@@ -103,117 +106,136 @@ defmodule Jido.Signal.Bus do
   """
   @impl GenServer
   def init({name, opts}) do
-    # Trap exits so we can handle subscriber termination
     Process.flag(:trap_exit, true)
 
     {:ok, child_supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
-    # Resolve journal adapter from opts or application config
-    journal_adapter =
-      Keyword.get(opts, :journal_adapter) ||
-        Application.get_env(:jido_signal, :journal_adapter)
-
-    # Note: journal_adapter_opts is resolved for future use when adapters
-    # support custom initialization options
-    _journal_adapter_opts =
-      Keyword.get(opts, :journal_adapter_opts) ||
-        Application.get_env(:jido_signal, :journal_adapter_opts, [])
-
-    # Initialize journal adapter if configured
-    # Allow passing an existing journal_pid (useful for testing or shared adapters)
-    existing_journal_pid = Keyword.get(opts, :journal_pid)
-
-    {journal_adapter, journal_pid} =
-      cond do
-        # If journal_pid is provided, use it directly
-        journal_adapter && existing_journal_pid ->
-          {journal_adapter, existing_journal_pid}
-
-        # If only adapter is provided, initialize it
-        journal_adapter ->
-          case journal_adapter.init() do
-            :ok ->
-              {journal_adapter, nil}
-
-            {:ok, pid} ->
-              {journal_adapter, pid}
-
-            {:error, reason} ->
-              Logger.warning(
-                "Failed to initialize journal adapter #{inspect(journal_adapter)}: #{inspect(reason)}"
-              )
-
-              {nil, nil}
-          end
-
-        # No adapter configured
-        true ->
-          Logger.debug(
-            "Bus #{name} started without journal adapter - checkpoints will be in-memory only"
-          )
-
-          {nil, nil}
-      end
-
-    # Initialize middleware
+    {journal_adapter, journal_pid} = init_journal_adapter(name, opts)
     middleware_specs = Keyword.get(opts, :middleware, [])
 
     case MiddlewarePipeline.init_middleware(middleware_specs) do
       {:ok, middleware_configs} ->
-        middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
-        partition_count = Keyword.get(opts, :partition_count, 1)
-        max_log_size = Keyword.get(opts, :max_log_size, 100_000)
-        log_ttl_ms = Keyword.get(opts, :log_ttl_ms)
-
-        partition_pids =
-          if partition_count > 1 do
-            partition_opts = [
-              partition_count: partition_count,
-              bus_name: name,
-              bus_pid: self(),
-              middleware: middleware_configs,
-              middleware_timeout_ms: middleware_timeout_ms,
-              journal_adapter: journal_adapter,
-              journal_pid: journal_pid,
-              rate_limit_per_sec: Keyword.get(opts, :partition_rate_limit_per_sec, 10_000),
-              burst_size: Keyword.get(opts, :partition_burst_size, 1_000)
-            ]
-
-            {:ok, _sup_pid} = PartitionSupervisor.start_link(partition_opts)
-
-            for i <- 0..(partition_count - 1) do
-              GenServer.whereis(Partition.via_tuple(name, i))
-            end
-            |> Enum.reject(&is_nil/1)
-          else
-            []
-          end
-
-        # Schedule periodic GC if log_ttl_ms is set
-        if log_ttl_ms do
-          Process.send_after(self(), :gc_log, log_ttl_ms)
-        end
-
-        state = %BusState{
-          name: name,
-          router: Keyword.get(opts, :router, Router.new!()),
-          child_supervisor: child_supervisor,
-          middleware: middleware_configs,
-          middleware_timeout_ms: middleware_timeout_ms,
-          journal_adapter: journal_adapter,
-          journal_pid: journal_pid,
-          partition_count: partition_count,
-          partition_pids: partition_pids,
-          max_log_size: max_log_size,
-          log_ttl_ms: log_ttl_ms
-        }
-
-        {:ok, state}
+        init_state(name, opts, child_supervisor, journal_adapter, journal_pid, middleware_configs)
 
       {:error, reason} ->
         {:stop, {:middleware_init_failed, reason}}
     end
   end
+
+  # Initializes the journal adapter from opts or application config
+  defp init_journal_adapter(name, opts) do
+    journal_adapter =
+      Keyword.get(opts, :journal_adapter) ||
+        Application.get_env(:jido_signal, :journal_adapter)
+
+    existing_journal_pid = Keyword.get(opts, :journal_pid)
+
+    do_init_journal_adapter(name, journal_adapter, existing_journal_pid)
+  end
+
+  defp do_init_journal_adapter(_name, journal_adapter, existing_pid)
+       when not is_nil(journal_adapter) and not is_nil(existing_pid) do
+    {journal_adapter, existing_pid}
+  end
+
+  defp do_init_journal_adapter(_name, journal_adapter, _existing_pid)
+       when not is_nil(journal_adapter) do
+    case journal_adapter.init() do
+      :ok ->
+        {journal_adapter, nil}
+
+      {:ok, pid} ->
+        {journal_adapter, pid}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to initialize journal adapter #{inspect(journal_adapter)}: #{inspect(reason)}"
+        )
+
+        {nil, nil}
+    end
+  end
+
+  defp do_init_journal_adapter(name, _journal_adapter, _existing_pid) do
+    Logger.debug(
+      "Bus #{name} started without journal adapter - checkpoints will be in-memory only"
+    )
+
+    {nil, nil}
+  end
+
+  # Initializes the bus state with all configuration
+  defp init_state(name, opts, child_supervisor, journal_adapter, journal_pid, middleware_configs) do
+    middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
+    partition_count = Keyword.get(opts, :partition_count, 1)
+    max_log_size = Keyword.get(opts, :max_log_size, 100_000)
+    log_ttl_ms = Keyword.get(opts, :log_ttl_ms)
+
+    partition_pids =
+      init_partitions(
+        name,
+        opts,
+        partition_count,
+        middleware_configs,
+        middleware_timeout_ms,
+        journal_adapter,
+        journal_pid
+      )
+
+    schedule_gc_if_needed(log_ttl_ms)
+
+    state = %BusState{
+      name: name,
+      router: Keyword.get(opts, :router, Router.new!()),
+      child_supervisor: child_supervisor,
+      middleware: middleware_configs,
+      middleware_timeout_ms: middleware_timeout_ms,
+      journal_adapter: journal_adapter,
+      journal_pid: journal_pid,
+      partition_count: partition_count,
+      partition_pids: partition_pids,
+      max_log_size: max_log_size,
+      log_ttl_ms: log_ttl_ms
+    }
+
+    {:ok, state}
+  end
+
+  defp init_partitions(_name, _opts, partition_count, _middleware, _timeout, _adapter, _pid)
+       when partition_count <= 1 do
+    []
+  end
+
+  defp init_partitions(
+         name,
+         opts,
+         partition_count,
+         middleware_configs,
+         middleware_timeout_ms,
+         journal_adapter,
+         journal_pid
+       ) do
+    partition_opts = [
+      partition_count: partition_count,
+      bus_name: name,
+      bus_pid: self(),
+      middleware: middleware_configs,
+      middleware_timeout_ms: middleware_timeout_ms,
+      journal_adapter: journal_adapter,
+      journal_pid: journal_pid,
+      rate_limit_per_sec: Keyword.get(opts, :partition_rate_limit_per_sec, 10_000),
+      burst_size: Keyword.get(opts, :partition_burst_size, 1_000)
+    ]
+
+    {:ok, _sup_pid} = PartitionSupervisor.start_link(partition_opts)
+
+    0..(partition_count - 1)
+    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1)))
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp schedule_gc_if_needed(nil), do: :ok
+  defp schedule_gc_if_needed(log_ttl_ms), do: Process.send_after(self(), :gc_log, log_ttl_ms)
 
   @doc """
   Starts a new bus process and links it to the calling process.
@@ -442,21 +464,12 @@ defmodule Jido.Signal.Bus do
 
   @impl GenServer
   def handle_call({:subscribe, path, opts}, _from, state) do
-    subscription_id = Keyword.get(opts, :subscription_id, Jido.Signal.ID.generate!())
+    subscription_id = Keyword.get(opts, :subscription_id, ID.generate!())
     opts = Keyword.put(opts, :subscription_id, subscription_id)
 
-    case Jido.Signal.Bus.Subscriber.subscribe(state, subscription_id, path, opts) do
+    case Subscriber.subscribe(state, subscription_id, path, opts) do
       {:ok, new_state} ->
-        if not Enum.empty?(state.partition_pids) do
-          subscription = BusState.get_subscription(new_state, subscription_id)
-          partition_id = Partition.partition_for(subscription_id, state.partition_count)
-          partition_pid = Enum.at(state.partition_pids, partition_id)
-
-          if partition_pid do
-            GenServer.call(partition_pid, {:add_subscription, subscription_id, subscription})
-          end
-        end
-
+        sync_subscription_to_partition(new_state, subscription_id, state)
         {:reply, {:ok, subscription_id}, new_state}
 
       {:error, error} ->
@@ -474,7 +487,7 @@ defmodule Jido.Signal.Bus do
       end
     end
 
-    case Jido.Signal.Bus.Subscriber.unsubscribe(state, subscription_id, opts) do
+    case Subscriber.unsubscribe(state, subscription_id, opts) do
       {:ok, new_state} -> {:reply, :ok, new_state}
       {:error, error} -> {:reply, {:error, error}, state}
     end
@@ -487,54 +500,30 @@ defmodule Jido.Signal.Bus do
       metadata: %{}
     }
 
-    # Run before_publish middleware - captures updated middleware configs
-    case MiddlewarePipeline.before_publish(
-           state.middleware,
-           signals,
-           context,
-           state.middleware_timeout_ms
-         ) do
-      {:ok, processed_signals, updated_middleware} ->
-        # Update state with middleware changes from before_publish
-        state_with_middleware = %{state | middleware: updated_middleware}
-
-        case publish_with_middleware(
+    result =
+      with {:ok, processed_signals, updated_middleware} <-
+             MiddlewarePipeline.before_publish(
+               state.middleware,
+               signals,
+               context,
+               state.middleware_timeout_ms
+             ),
+           state_with_middleware = %{state | middleware: updated_middleware},
+           {:ok, new_state, uuid_signal_pairs} <-
+             publish_with_middleware(
                state_with_middleware,
                processed_signals,
                context,
                state.middleware_timeout_ms
              ) do
-          {:ok, new_state, uuid_signal_pairs} ->
-            # Run after_publish middleware and capture state changes
-            final_middleware =
-              MiddlewarePipeline.after_publish(
-                new_state.middleware,
-                processed_signals,
-                context,
-                state.middleware_timeout_ms
-              )
+        final_state = finalize_publish(new_state, processed_signals, context)
+        recorded_signals = build_recorded_signals(uuid_signal_pairs)
+        {:ok, recorded_signals, final_state}
+      end
 
-            final_state = %{new_state | middleware: final_middleware}
-
-            # Create RecordedSignal structs from the uuid_signal_pairs
-            recorded_signals =
-              Enum.map(uuid_signal_pairs, fn {uuid, signal} ->
-                %Jido.Signal.Bus.RecordedSignal{
-                  id: uuid,
-                  type: signal.type,
-                  created_at: DateTime.utc_now(),
-                  signal: signal
-                }
-              end)
-
-            {:reply, {:ok, recorded_signals}, final_state}
-
-          {:error, error} ->
-            {:reply, {:error, error}, state}
-        end
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+    case result do
+      {:ok, recorded_signals, final_state} -> {:reply, {:ok, recorded_signals}, final_state}
+      {:error, error} -> {:reply, {:error, error}, state}
     end
   end
 
@@ -609,67 +598,7 @@ defmodule Jido.Signal.Bus do
         {:reply, {:error, :subscription_not_found}, state}
 
       subscription ->
-        if subscription.persistent? do
-          # Update the client PID in the subscription
-          updated_subscription = %{
-            subscription
-            | dispatch: {:pid, [delivery_mode: :async, target: client_pid]}
-          }
-
-          case BusState.add_subscription(state, subscriber_id, updated_subscription) do
-            {:error, :subscription_exists} ->
-              # If subscription already exists, notify the persistence process and get latest timestamp
-              GenServer.cast(subscription.persistence_pid, {:reconnect, client_pid})
-
-              latest_timestamp =
-                state.log
-                |> Map.values()
-                |> Enum.map(& &1.time)
-                |> Enum.max(fn -> 0 end)
-
-              {:reply, {:ok, latest_timestamp}, state}
-
-            {:ok, updated_state} ->
-              # Notify the persistence process and get latest timestamp
-              GenServer.cast(subscription.persistence_pid, {:reconnect, client_pid})
-
-              latest_timestamp =
-                updated_state.log
-                |> Map.values()
-                |> Enum.map(& &1.time)
-                |> Enum.max(fn -> 0 end)
-
-              {:reply, {:ok, latest_timestamp}, updated_state}
-          end
-        else
-          # For non-persistent subscriptions, just update the client PID
-          updated_subscription = %{
-            subscription
-            | dispatch: {:pid, [delivery_mode: :async, target: client_pid]}
-          }
-
-          case BusState.add_subscription(state, subscriber_id, updated_subscription) do
-            {:error, :subscription_exists} ->
-              # If subscription already exists, just get the latest timestamp
-              latest_timestamp =
-                state.log
-                |> Map.values()
-                |> Enum.map(& &1.time)
-                |> Enum.max(fn -> 0 end)
-
-              {:reply, {:ok, latest_timestamp}, state}
-
-            {:ok, updated_state} ->
-              # Get the latest signal timestamp from the log
-              latest_timestamp =
-                updated_state.log
-                |> Map.values()
-                |> Enum.map(& &1.time)
-                |> Enum.max(fn -> 0 end)
-
-              {:reply, {:ok, latest_timestamp}, updated_state}
-          end
-        end
+        do_reconnect(state, subscriber_id, client_pid, subscription)
     end
   end
 
@@ -682,56 +611,13 @@ defmodule Jido.Signal.Bus do
     end
   end
 
+  def handle_call({:redrive_dlq, _subscription_id, _opts}, _from, %{journal_adapter: nil} = state) do
+    {:reply, {:error, :no_journal_adapter}, state}
+  end
+
   def handle_call({:redrive_dlq, subscription_id, opts}, _from, state) do
-    if state.journal_adapter do
-      limit = Keyword.get(opts, :limit, :infinity)
-      clear_on_success = Keyword.get(opts, :clear_on_success, true)
-
-      case state.journal_adapter.get_dlq_entries(subscription_id, state.journal_pid) do
-        {:ok, entries} ->
-          entries_to_process =
-            if limit == :infinity,
-              do: entries,
-              else: Enum.take(entries, limit)
-
-          subscription = BusState.get_subscription(state, subscription_id)
-
-          if subscription do
-            results =
-              Enum.map(entries_to_process, fn entry ->
-                case Jido.Signal.Dispatch.dispatch(entry.signal, subscription.dispatch) do
-                  :ok ->
-                    if clear_on_success do
-                      state.journal_adapter.delete_dlq_entry(entry.id, state.journal_pid)
-                    end
-
-                    :ok
-
-                  {:error, _reason} = error ->
-                    error
-                end
-              end)
-
-            succeeded = Enum.count(results, &(&1 == :ok))
-            failed = length(results) - succeeded
-
-            :telemetry.execute(
-              [:jido, :signal, :bus, :dlq, :redrive],
-              %{succeeded: succeeded, failed: failed},
-              %{bus_name: state.name, subscription_id: subscription_id}
-            )
-
-            {:reply, {:ok, %{succeeded: succeeded, failed: failed}}, state}
-          else
-            {:reply, {:error, :subscription_not_found}, state}
-          end
-
-        {:error, reason} ->
-          {:reply, {:error, reason}, state}
-      end
-    else
-      {:reply, {:error, :no_journal_adapter}, state}
-    end
+    result = do_redrive_dlq(state, subscription_id, opts)
+    {:reply, result, state}
   end
 
   def handle_call({:clear_dlq, subscription_id}, _from, state) do
@@ -741,6 +627,129 @@ defmodule Jido.Signal.Bus do
     else
       {:reply, {:error, :no_journal_adapter}, state}
     end
+  end
+
+  # Private helpers for handle_call callbacks
+
+  defp sync_subscription_to_partition(_new_state, _subscription_id, %{partition_pids: []}),
+    do: :ok
+
+  defp sync_subscription_to_partition(new_state, subscription_id, state) do
+    subscription = BusState.get_subscription(new_state, subscription_id)
+    partition_id = Partition.partition_for(subscription_id, state.partition_count)
+    partition_pid = Enum.at(state.partition_pids, partition_id)
+
+    if partition_pid do
+      GenServer.call(partition_pid, {:add_subscription, subscription_id, subscription})
+    end
+  end
+
+  defp finalize_publish(new_state, processed_signals, context) do
+    final_middleware =
+      MiddlewarePipeline.after_publish(
+        new_state.middleware,
+        processed_signals,
+        context,
+        new_state.middleware_timeout_ms
+      )
+
+    %{new_state | middleware: final_middleware}
+  end
+
+  defp build_recorded_signals(uuid_signal_pairs) do
+    Enum.map(uuid_signal_pairs, fn {uuid, signal} ->
+      %Jido.Signal.Bus.RecordedSignal{
+        id: uuid,
+        type: signal.type,
+        created_at: DateTime.utc_now(),
+        signal: signal
+      }
+    end)
+  end
+
+  defp do_reconnect(state, subscriber_id, client_pid, %{persistent?: true} = subscription) do
+    updated_subscription = update_subscription_dispatch(subscription, client_pid)
+    {final_state, latest_timestamp} = apply_reconnect(state, subscriber_id, updated_subscription)
+    GenServer.cast(subscription.persistence_pid, {:reconnect, client_pid})
+    {:reply, {:ok, latest_timestamp}, final_state}
+  end
+
+  defp do_reconnect(state, subscriber_id, client_pid, subscription) do
+    updated_subscription = update_subscription_dispatch(subscription, client_pid)
+    {final_state, latest_timestamp} = apply_reconnect(state, subscriber_id, updated_subscription)
+    {:reply, {:ok, latest_timestamp}, final_state}
+  end
+
+  defp update_subscription_dispatch(subscription, client_pid) do
+    %{subscription | dispatch: {:pid, [delivery_mode: :async, target: client_pid]}}
+  end
+
+  defp apply_reconnect(state, subscriber_id, updated_subscription) do
+    case BusState.add_subscription(state, subscriber_id, updated_subscription) do
+      {:error, :subscription_exists} ->
+        {state, get_latest_log_timestamp(state)}
+
+      {:ok, updated_state} ->
+        {updated_state, get_latest_log_timestamp(updated_state)}
+    end
+  end
+
+  defp get_latest_log_timestamp(state) do
+    state.log
+    |> Map.values()
+    |> Enum.map(& &1.time)
+    |> Enum.max(fn -> 0 end)
+  end
+
+  defp do_redrive_dlq(state, subscription_id, opts) do
+    limit = Keyword.get(opts, :limit, :infinity)
+    clear_on_success = Keyword.get(opts, :clear_on_success, true)
+
+    with {:ok, entries} <-
+           state.journal_adapter.get_dlq_entries(subscription_id, state.journal_pid),
+         {:ok, subscription} <- fetch_subscription(state, subscription_id) do
+      entries_to_process = limit_entries(entries, limit)
+      result = process_dlq_entries(state, entries_to_process, subscription, clear_on_success)
+      emit_redrive_telemetry(state.name, subscription_id, result)
+      {:ok, result}
+    end
+  end
+
+  defp fetch_subscription(state, subscription_id) do
+    case BusState.get_subscription(state, subscription_id) do
+      nil -> {:error, :subscription_not_found}
+      subscription -> {:ok, subscription}
+    end
+  end
+
+  defp limit_entries(entries, :infinity), do: entries
+  defp limit_entries(entries, limit), do: Enum.take(entries, limit)
+
+  defp process_dlq_entries(state, entries, subscription, clear_on_success) do
+    results = Enum.map(entries, &redrive_single_entry(state, &1, subscription, clear_on_success))
+    succeeded = Enum.count(results, &(&1 == :ok))
+    %{succeeded: succeeded, failed: length(results) - succeeded}
+  end
+
+  defp redrive_single_entry(state, entry, subscription, clear_on_success) do
+    case Dispatch.dispatch(entry.signal, subscription.dispatch) do
+      :ok ->
+        if clear_on_success,
+          do: state.journal_adapter.delete_dlq_entry(entry.id, state.journal_pid)
+
+        :ok
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp emit_redrive_telemetry(bus_name, subscription_id, %{succeeded: succeeded, failed: failed}) do
+    :telemetry.execute(
+      [:jido, :signal, :bus, :dlq, :redrive],
+      %{succeeded: succeeded, failed: failed},
+      %{bus_name: bus_name, subscription_id: subscription_id}
+    )
   end
 
   # Private helper function to publish signals with middleware dispatch hooks
@@ -760,193 +769,275 @@ defmodule Jido.Signal.Bus do
   # Partitioned dispatch - cast to all partitions for async dispatch
   # For persistent subscriptions, we still need to handle backpressure from the main bus
   defp publish_with_partitions(state, signals, uuid_signal_pairs, context) do
-    # For partitioned mode, we dispatch to partitions asynchronously
-    # But persistent subscriptions still need backpressure handling from main bus
-    # so we dispatch those synchronously here first
-    persistent_results =
-      Enum.flat_map(signals, fn signal ->
-        state.subscriptions
-        |> Enum.filter(fn {_id, sub} ->
-          sub.persistent? && Router.matches?(signal.type, sub.path)
-        end)
-        |> Enum.map(fn {subscription_id, subscription} ->
-          signal_log_id_map =
-            Map.new(uuid_signal_pairs, fn {uuid, sig} -> {sig.id, uuid} end)
+    signal_log_id_map = Map.new(uuid_signal_pairs, fn {uuid, sig} -> {sig.id, uuid} end)
+    persistent_results = dispatch_to_persistent_subscriptions(state, signals, signal_log_id_map)
 
-          result = dispatch_to_subscription(signal, subscription, signal_log_id_map)
-          {subscription_id, result}
-        end)
-      end)
-
-    saturated =
-      Enum.filter(persistent_results, fn
-        {_id, {:error, :queue_full}} -> true
-        _ -> false
-      end)
-
-    case saturated do
+    case find_saturated_subscriptions(persistent_results) do
       [] ->
-        # Cast to all partitions for non-persistent subscriptions
-        Enum.each(state.partition_pids, fn partition_pid ->
-          GenServer.cast(partition_pid, {:dispatch, signals, uuid_signal_pairs, context})
-        end)
-
+        broadcast_to_partitions(state.partition_pids, signals, uuid_signal_pairs, context)
         {:ok, state, uuid_signal_pairs}
 
-      [{subscription_id, _} | _] ->
-        :telemetry.execute(
-          [:jido, :signal, :bus, :backpressure],
-          %{saturated_count: length(saturated)},
-          %{bus_name: state.name}
-        )
+      [{subscription_id, _} | _] = saturated ->
+        emit_backpressure_telemetry(state.name, saturated)
 
         {:error,
-         Error.execution_error(
-           "Subscription saturated",
-           %{subscription_id: subscription_id, reason: :queue_full}
-         )}
+         Error.execution_error("Subscription saturated", %{
+           subscription_id: subscription_id,
+           reason: :queue_full
+         })}
     end
+  end
+
+  defp dispatch_to_persistent_subscriptions(state, signals, signal_log_id_map) do
+    Enum.flat_map(signals, &dispatch_signal_to_persistent(state, &1, signal_log_id_map))
+  end
+
+  defp dispatch_signal_to_persistent(state, signal, signal_log_id_map) do
+    state.subscriptions
+    |> Enum.filter(fn {_id, sub} -> sub.persistent? && Router.matches?(signal.type, sub.path) end)
+    |> Enum.map(fn {subscription_id, subscription} ->
+      {subscription_id, dispatch_to_subscription(signal, subscription, signal_log_id_map)}
+    end)
+  end
+
+  defp find_saturated_subscriptions(results) do
+    Enum.filter(results, fn
+      {_id, {:error, :queue_full}} -> true
+      _ -> false
+    end)
+  end
+
+  defp broadcast_to_partitions(partition_pids, signals, uuid_signal_pairs, context) do
+    Enum.each(partition_pids, fn partition_pid ->
+      GenServer.cast(partition_pid, {:dispatch, signals, uuid_signal_pairs, context})
+    end)
+  end
+
+  defp emit_backpressure_telemetry(bus_name, saturated) do
+    :telemetry.execute(
+      [:jido, :signal, :bus, :backpressure],
+      %{saturated_count: length(saturated)},
+      %{bus_name: bus_name}
+    )
   end
 
   # Original non-partitioned dispatch with full middleware support
   defp publish_without_partitions(new_state, signals, uuid_signal_pairs, context, timeout_ms) do
-    signal_log_id_map =
-      Map.new(uuid_signal_pairs, fn {uuid, signal} -> {signal.id, uuid} end)
+    signal_log_id_map = Map.new(uuid_signal_pairs, fn {uuid, signal} -> {signal.id, uuid} end)
+
+    dispatch_ctx = %{
+      state: new_state,
+      context: context,
+      timeout_ms: timeout_ms,
+      signal_log_id_map: signal_log_id_map
+    }
 
     {final_middleware, dispatch_results} =
-      Enum.reduce(signals, {new_state.middleware, []}, fn signal,
-                                                          {current_middleware, results_acc} ->
-        Enum.reduce(
-          new_state.subscriptions,
-          {current_middleware, results_acc},
-          fn {subscription_id, subscription}, {acc_middleware, acc_results} ->
-            if Router.matches?(signal.type, subscription.path) do
-              :telemetry.execute(
-                [:jido, :signal, :bus, :before_dispatch],
-                %{timestamp: System.monotonic_time(:microsecond)},
-                %{
-                  bus_name: new_state.name,
-                  signal_id: signal.id,
-                  signal_type: signal.type,
-                  subscription_id: subscription_id,
-                  subscription_path: subscription.path,
-                  signal: signal,
-                  subscription: subscription
-                }
-              )
-
-              case MiddlewarePipeline.before_dispatch(
-                     acc_middleware,
-                     signal,
-                     subscription,
-                     context,
-                     timeout_ms
-                   ) do
-                {:ok, processed_signal, updated_middleware} ->
-                  result =
-                    dispatch_to_subscription(
-                      processed_signal,
-                      subscription,
-                      signal_log_id_map
-                    )
-
-                  :telemetry.execute(
-                    [:jido, :signal, :bus, :after_dispatch],
-                    %{timestamp: System.monotonic_time(:microsecond)},
-                    %{
-                      bus_name: new_state.name,
-                      signal_id: processed_signal.id,
-                      signal_type: processed_signal.type,
-                      subscription_id: subscription_id,
-                      subscription_path: subscription.path,
-                      dispatch_result: result,
-                      signal: processed_signal,
-                      subscription: subscription
-                    }
-                  )
-
-                  new_middleware =
-                    MiddlewarePipeline.after_dispatch(
-                      updated_middleware,
-                      processed_signal,
-                      subscription,
-                      result,
-                      context,
-                      timeout_ms
-                    )
-
-                  {new_middleware, [{subscription_id, result} | acc_results]}
-
-                :skip ->
-                  :telemetry.execute(
-                    [:jido, :signal, :bus, :dispatch_skipped],
-                    %{timestamp: System.monotonic_time(:microsecond)},
-                    %{
-                      bus_name: new_state.name,
-                      signal_id: signal.id,
-                      signal_type: signal.type,
-                      subscription_id: subscription_id,
-                      subscription_path: subscription.path,
-                      reason: :middleware_skip,
-                      signal: signal,
-                      subscription: subscription
-                    }
-                  )
-
-                  {acc_middleware, acc_results}
-
-                {:error, reason} ->
-                  :telemetry.execute(
-                    [:jido, :signal, :bus, :dispatch_error],
-                    %{timestamp: System.monotonic_time(:microsecond)},
-                    %{
-                      bus_name: new_state.name,
-                      signal_id: signal.id,
-                      signal_type: signal.type,
-                      subscription_id: subscription_id,
-                      subscription_path: subscription.path,
-                      error: reason,
-                      signal: signal,
-                      subscription: subscription
-                    }
-                  )
-
-                  Logger.warning(
-                    "Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}"
-                  )
-
-                  {acc_middleware, acc_results}
-              end
-            else
-              {acc_middleware, acc_results}
-            end
-          end
-        )
+      Enum.reduce(signals, {new_state.middleware, []}, fn signal, acc ->
+        dispatch_signal_to_subscriptions(signal, new_state.subscriptions, acc, dispatch_ctx)
       end)
 
-    saturated =
-      Enum.filter(dispatch_results, fn
-        {_id, {:error, :queue_full}} -> true
-        _ -> false
-      end)
-
-    case saturated do
+    case find_saturated_subscriptions(dispatch_results) do
       [] ->
         {:ok, %{new_state | middleware: final_middleware}, uuid_signal_pairs}
 
-      [{subscription_id, _} | _] ->
-        :telemetry.execute(
-          [:jido, :signal, :bus, :backpressure],
-          %{saturated_count: length(saturated)},
-          %{bus_name: new_state.name}
-        )
+      [{subscription_id, _} | _] = saturated ->
+        emit_backpressure_telemetry(new_state.name, saturated)
 
         {:error,
-         Error.execution_error(
-           "Subscription saturated",
-           %{subscription_id: subscription_id, reason: :queue_full}
-         )}
+         Error.execution_error("Subscription saturated", %{
+           subscription_id: subscription_id,
+           reason: :queue_full
+         })}
     end
+  end
+
+  defp dispatch_signal_to_subscriptions(signal, subscriptions, acc, dispatch_ctx) do
+    Enum.reduce(subscriptions, acc, fn {subscription_id, subscription},
+                                       {acc_middleware, acc_results} ->
+      if Router.matches?(signal.type, subscription.path) do
+        dispatch_matching_signal(
+          signal,
+          subscription_id,
+          subscription,
+          acc_middleware,
+          acc_results,
+          dispatch_ctx
+        )
+      else
+        {acc_middleware, acc_results}
+      end
+    end)
+  end
+
+  defp dispatch_matching_signal(
+         signal,
+         subscription_id,
+         subscription,
+         acc_middleware,
+         acc_results,
+         dispatch_ctx
+       ) do
+    emit_before_dispatch_telemetry(dispatch_ctx.state.name, signal, subscription_id, subscription)
+
+    middleware_result =
+      MiddlewarePipeline.before_dispatch(
+        acc_middleware,
+        signal,
+        subscription,
+        dispatch_ctx.context,
+        dispatch_ctx.timeout_ms
+      )
+
+    handle_middleware_result(
+      middleware_result,
+      signal,
+      subscription_id,
+      subscription,
+      acc_middleware,
+      acc_results,
+      dispatch_ctx
+    )
+  end
+
+  defp handle_middleware_result(
+         {:ok, processed_signal, updated_middleware},
+         _signal,
+         subscription_id,
+         subscription,
+         _acc_middleware,
+         acc_results,
+         dispatch_ctx
+       ) do
+    result =
+      dispatch_to_subscription(processed_signal, subscription, dispatch_ctx.signal_log_id_map)
+
+    emit_after_dispatch_telemetry(
+      dispatch_ctx.state.name,
+      processed_signal,
+      subscription_id,
+      subscription,
+      result
+    )
+
+    new_middleware =
+      MiddlewarePipeline.after_dispatch(
+        updated_middleware,
+        processed_signal,
+        subscription,
+        result,
+        dispatch_ctx.context,
+        dispatch_ctx.timeout_ms
+      )
+
+    {new_middleware, [{subscription_id, result} | acc_results]}
+  end
+
+  defp handle_middleware_result(
+         :skip,
+         signal,
+         subscription_id,
+         subscription,
+         acc_middleware,
+         acc_results,
+         dispatch_ctx
+       ) do
+    emit_dispatch_skipped_telemetry(
+      dispatch_ctx.state.name,
+      signal,
+      subscription_id,
+      subscription
+    )
+
+    {acc_middleware, acc_results}
+  end
+
+  defp handle_middleware_result(
+         {:error, reason},
+         signal,
+         subscription_id,
+         subscription,
+         acc_middleware,
+         acc_results,
+         dispatch_ctx
+       ) do
+    emit_dispatch_error_telemetry(
+      dispatch_ctx.state.name,
+      signal,
+      subscription_id,
+      subscription,
+      reason
+    )
+
+    Logger.warning("Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}")
+    {acc_middleware, acc_results}
+  end
+
+  defp emit_before_dispatch_telemetry(bus_name, signal, subscription_id, subscription) do
+    :telemetry.execute(
+      [:jido, :signal, :bus, :before_dispatch],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        signal: signal,
+        subscription: subscription
+      }
+    )
+  end
+
+  defp emit_after_dispatch_telemetry(bus_name, signal, subscription_id, subscription, result) do
+    :telemetry.execute(
+      [:jido, :signal, :bus, :after_dispatch],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        dispatch_result: result,
+        signal: signal,
+        subscription: subscription
+      }
+    )
+  end
+
+  defp emit_dispatch_skipped_telemetry(bus_name, signal, subscription_id, subscription) do
+    :telemetry.execute(
+      [:jido, :signal, :bus, :dispatch_skipped],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        reason: :middleware_skip,
+        signal: signal,
+        subscription: subscription
+      }
+    )
+  end
+
+  defp emit_dispatch_error_telemetry(bus_name, signal, subscription_id, subscription, reason) do
+    :telemetry.execute(
+      [:jido, :signal, :bus, :dispatch_error],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        error: reason,
+        signal: signal,
+        subscription: subscription
+      }
+    )
   end
 
   # Dispatch signal to a subscription
@@ -968,7 +1059,7 @@ defmodule Jido.Signal.Bus do
       end
     else
       # For regular subscriptions, use async dispatch
-      Jido.Signal.Dispatch.dispatch(signal, subscription.dispatch)
+      Dispatch.dispatch(signal, subscription.dispatch)
     end
   end
 
@@ -998,43 +1089,48 @@ defmodule Jido.Signal.Bus do
     end
   end
 
+  def handle_info(:gc_log, %{log_ttl_ms: nil} = state), do: {:noreply, state}
+
   def handle_info(:gc_log, state) do
-    if state.log_ttl_ms do
-      # Schedule next GC
-      Process.send_after(self(), :gc_log, state.log_ttl_ms)
-
-      # Prune signals older than TTL
-      cutoff_time = DateTime.add(DateTime.utc_now(), -state.log_ttl_ms, :millisecond)
-      original_size = map_size(state.log)
-
-      new_log =
-        state.log
-        |> Enum.filter(fn {_uuid, signal} ->
-          case DateTime.from_iso8601(signal.time) do
-            {:ok, signal_time, _} -> DateTime.compare(signal_time, cutoff_time) != :lt
-            _ -> true
-          end
-        end)
-        |> Map.new()
-
-      removed_count = original_size - map_size(new_log)
-
-      if removed_count > 0 do
-        :telemetry.execute(
-          [:jido, :signal, :bus, :log_gc],
-          %{removed_count: removed_count},
-          %{bus_name: state.name, new_size: map_size(new_log), ttl_ms: state.log_ttl_ms}
-        )
-      end
-
-      {:noreply, %{state | log: new_log}}
-    else
-      {:noreply, state}
-    end
+    Process.send_after(self(), :gc_log, state.log_ttl_ms)
+    new_state = prune_expired_log_entries(state)
+    {:noreply, new_state}
   end
 
   def handle_info(msg, state) do
     Logger.debug("Unexpected message in Bus: #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  defp prune_expired_log_entries(state) do
+    cutoff_time = DateTime.add(DateTime.utc_now(), -state.log_ttl_ms, :millisecond)
+    original_size = map_size(state.log)
+
+    new_log =
+      state.log
+      |> Enum.filter(&signal_not_expired?(&1, cutoff_time))
+      |> Map.new()
+
+    emit_gc_telemetry_if_pruned(state, original_size, new_log)
+    %{state | log: new_log}
+  end
+
+  defp signal_not_expired?({_uuid, signal}, cutoff_time) do
+    case DateTime.from_iso8601(signal.time) do
+      {:ok, signal_time, _} -> DateTime.compare(signal_time, cutoff_time) != :lt
+      _ -> true
+    end
+  end
+
+  defp emit_gc_telemetry_if_pruned(state, original_size, new_log) do
+    removed_count = original_size - map_size(new_log)
+
+    if removed_count > 0 do
+      :telemetry.execute(
+        [:jido, :signal, :bus, :log_gc],
+        %{removed_count: removed_count},
+        %{bus_name: state.name, new_size: map_size(new_log), ttl_ms: state.log_ttl_ms}
+      )
+    end
   end
 end

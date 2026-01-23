@@ -11,16 +11,20 @@ defmodule Jido.Signal.Bus.State do
   use TypedStruct
 
   alias Jido.Signal
+  alias Jido.Signal.Bus.MiddlewarePipeline
+  alias Jido.Signal.Bus.Snapshot
+  alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
 
   typedstruct do
     field(:name, atom(), enforce: true)
     field(:router, Router.Router.t(), default: Router.new!())
     field(:log, %{String.t() => Signal.t()}, default: %{})
-    field(:snapshots, %{String.t() => Jido.Signal.Bus.Snapshot.SnapshotRef.t()}, default: %{})
-    field(:subscriptions, %{String.t() => Jido.Signal.Bus.Subscriber.t()}, default: %{})
+    field(:snapshots, %{String.t() => Snapshot.SnapshotRef.t()}, default: %{})
+    field(:subscriptions, %{String.t() => Subscriber.t()}, default: %{})
     field(:child_supervisor, pid())
-    field(:middleware, [Jido.Signal.Bus.MiddlewarePipeline.middleware_config()], default: [])
+    field(:middleware, [MiddlewarePipeline.middleware_config()], default: [])
     field(:middleware_timeout_ms, pos_integer(), default: 100)
     field(:journal_adapter, module(), default: nil)
     field(:journal_pid, pid(), default: nil)
@@ -50,7 +54,7 @@ defmodule Jido.Signal.Bus.State do
       {:ok, state, []}
     else
       try do
-        {uuids, _timestamp} = Jido.Signal.ID.generate_batch(length(signals))
+        {uuids, _timestamp} = ID.generate_batch(length(signals))
 
         # Create list of {uuid, signal} tuples
         uuid_signal_pairs = Enum.zip(uuids, signals)

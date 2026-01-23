@@ -2,7 +2,7 @@ defmodule Jido.Signal.Serialization.VersioningTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
-  alias Jido.Signal.Serialization.{JsonSerializer, MsgpackSerializer, ErlangTermSerializer}
+  alias Jido.Signal.Serialization.{ErlangTermSerializer, JsonSerializer, MsgpackSerializer}
 
   defmodule TestExt do
     use Jido.Signal.Ext,

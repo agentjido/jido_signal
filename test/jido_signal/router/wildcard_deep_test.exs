@@ -2,6 +2,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
 
   describe "deep multi-wildcard paths" do
@@ -14,7 +15,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "a.#{middle}.z",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -28,7 +29,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "a.b.c.m.x.y.z",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -46,7 +47,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "user.123.created",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -64,7 +65,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "a.x.b",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -78,7 +79,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "order.123.payment.completed",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -97,7 +98,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "user.123.created",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -117,7 +118,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "start.#{middle}.end",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -131,7 +132,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "order.payment.completed",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -145,7 +146,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "order.payment.completed",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }
@@ -163,7 +164,7 @@ defmodule Jido.Signal.Router.WildcardDeepTest do
       signal = %Signal{
         type: "a.b.c.m.x.y.z",
         source: "/test",
-        id: Jido.Signal.ID.generate!(),
+        id: ID.generate!(),
         specversion: "1.0.2",
         data: %{}
       }

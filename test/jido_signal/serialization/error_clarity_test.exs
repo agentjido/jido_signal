@@ -1,7 +1,7 @@
 defmodule Jido.Signal.Serialization.ErrorClarityTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Signal.Serialization.{JsonSerializer, MsgpackSerializer, ErlangTermSerializer}
+  alias Jido.Signal.Serialization.{ErlangTermSerializer, JsonSerializer, MsgpackSerializer}
 
   describe "JsonSerializer error tagging" do
     test "json_decode_failed for invalid JSON" do

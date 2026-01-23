@@ -19,6 +19,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
 
   @behaviour Jido.Signal.Journal.Persistence
 
+  alias Jido.Signal.ID
   alias Jido.Signal.Journal.Adapters.Mnesia.Tables
 
   require Logger
@@ -153,16 +154,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
 
     result =
       Memento.transaction(fn ->
-        case Memento.Query.read(Tables.Effect, signal_id) do
-          nil ->
-            nil
-
-          %Tables.Effect{causes: causes} ->
-            case MapSet.to_list(causes) do
-              [cause_id | _] -> cause_id
-              [] -> nil
-            end
-        end
+        extract_cause_id(signal_id)
       end)
 
     duration_us = System.monotonic_time(:microsecond) - start_time
@@ -172,6 +164,20 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
       {:ok, nil} -> {:error, :not_found}
       {:ok, cause_id} -> {:ok, cause_id}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp extract_cause_id(signal_id) do
+    case Memento.Query.read(Tables.Effect, signal_id) do
+      nil -> nil
+      %Tables.Effect{causes: causes} -> first_cause_id(causes)
+    end
+  end
+
+  defp first_cause_id(causes) do
+    case MapSet.to_list(causes) do
+      [cause_id | _] -> cause_id
+      [] -> nil
     end
   end
 
@@ -286,7 +292,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
   @impl true
   def put_dlq_entry(subscription_id, signal, reason, metadata, _pid) do
     start_time = System.monotonic_time(:microsecond)
-    entry_id = Jido.Signal.ID.generate!()
+    entry_id = ID.generate!()
     inserted_at = DateTime.utc_now()
 
     result =
