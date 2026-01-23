@@ -19,6 +19,8 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   use GenServer
 
+  alias Jido.Signal.ID
+
   defstruct [
     :signals_table,
     :causes_table,
@@ -138,9 +140,25 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @doc """
   Cleans up all ETS tables used by this adapter instance.
+
+  Returns `:ok` if the adapter process is already gone.
   """
-  def cleanup(pid) do
-    GenServer.call(pid, :cleanup)
+  def cleanup(pid_or_name) do
+    case GenServer.whereis(pid_or_name) do
+      nil ->
+        :ok
+
+      _pid ->
+        try do
+          GenServer.call(pid_or_name, :cleanup)
+        catch
+          :exit, :noproc -> :ok
+          :exit, {:noproc, _} -> :ok
+          :exit, :normal -> :ok
+          :exit, :shutdown -> :ok
+          :exit, {:shutdown, _} -> :ok
+        end
+    end
   end
 
   # Server Callbacks
@@ -360,7 +378,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl GenServer
   def handle_call({:put_dlq_entry, subscription_id, signal, reason, metadata}, _from, adapter) do
-    entry_id = Jido.Signal.ID.generate!()
+    entry_id = ID.generate!()
 
     entry = %{
       id: entry_id,

@@ -2,6 +2,7 @@ defmodule Jido.Signal.DispatchValidationTest do
   use ExUnit.Case
 
   alias Jido.Signal
+  alias Jido.Signal.Dispatch
 
   defmodule CountingAdapter do
     @behaviour Jido.Signal.Dispatch.Adapter
@@ -21,7 +22,7 @@ defmodule Jido.Signal.DispatchValidationTest do
     config = {CountingAdapter, [counter_pid: self()]}
 
     # Should validate once
-    :ok = Jido.Signal.Dispatch.dispatch(signal, config)
+    :ok = Dispatch.dispatch(signal, config)
 
     # Check exactly one validation
     assert_receive :validated
@@ -38,7 +39,7 @@ defmodule Jido.Signal.DispatchValidationTest do
     ]
 
     # Should validate exactly once per config (3 total)
-    :ok = Jido.Signal.Dispatch.dispatch(signal, configs)
+    :ok = Dispatch.dispatch(signal, configs)
 
     # Check exactly three validations
     assert_receive :validated
@@ -56,7 +57,7 @@ defmodule Jido.Signal.DispatchValidationTest do
       end
 
     # Should validate exactly once per config (10 total)
-    :ok = Jido.Signal.Dispatch.dispatch_batch(signal, configs, batch_size: 5)
+    :ok = Dispatch.dispatch_batch(signal, configs, batch_size: 5)
 
     # Check exactly ten validations
     for _i <- 1..10 do

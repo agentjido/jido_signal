@@ -2,11 +2,12 @@ defmodule Jido.Signal.Journal.Adapters.ETSTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
+  alias Jido.Signal.ID
   alias Jido.Signal.Journal.Adapters.ETS
 
   # Helper function to create test signals with unique IDs
   defp create_test_signal(opts \\ []) do
-    id = Jido.Signal.ID.generate!()
+    id = ID.generate!()
     type = Keyword.get(opts, :type, "test")
     source = Keyword.get(opts, :source, "test")
     subject = Keyword.get(opts, :subject, "test")

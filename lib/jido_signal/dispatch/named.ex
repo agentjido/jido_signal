@@ -136,46 +136,51 @@ defmodule Jido.Signal.Dispatch.Named do
     timeout = Keyword.get(opts, :timeout, 5000)
     message_format = Keyword.get(opts, :message_format, &default_message_format/1)
 
-    case {target, mode} do
-      {{:name, name}, :async} ->
-        case Process.whereis(name) do
-          nil ->
-            {:error, :process_not_found}
-
-          pid ->
-            if Process.alive?(pid) do
-              send(pid, message_format.(signal))
-              :ok
-            else
-              {:error, :process_not_alive}
-            end
-        end
-
-      {{:name, name}, :sync} ->
-        case Process.whereis(name) do
-          nil ->
-            {:error, :process_not_found}
-
-          pid ->
-            if Process.alive?(pid) do
-              try do
-                message = message_format.(signal)
-
-                if pid == self() do
-                  {:error, {:calling_self, {GenServer, :call, [pid, message, timeout]}}}
-                else
-                  GenServer.call(pid, message, timeout)
-                end
-              catch
-                :exit, {:timeout, _} -> {:error, :timeout}
-                :exit, {:noproc, _} -> {:error, :process_not_alive}
-                :exit, reason -> {:error, reason}
-              end
-            else
-              {:error, :process_not_alive}
-            end
-        end
+    with {:ok, pid} <- resolve_process(target) do
+      deliver_to_pid(signal, pid, mode, timeout, message_format)
     end
+  end
+
+  # Resolves a named process to its PID
+  defp resolve_process({:name, name}) do
+    case Process.whereis(name) do
+      nil -> {:error, :process_not_found}
+      pid -> check_process_alive(pid)
+    end
+  end
+
+  # Checks if the process is alive
+  defp check_process_alive(pid) do
+    if Process.alive?(pid) do
+      {:ok, pid}
+    else
+      {:error, :process_not_alive}
+    end
+  end
+
+  # Delivers signal to a resolved PID based on mode
+  defp deliver_to_pid(signal, pid, :async, _timeout, message_format) do
+    send(pid, message_format.(signal))
+    :ok
+  end
+
+  defp deliver_to_pid(signal, pid, :sync, timeout, message_format) do
+    message = message_format.(signal)
+
+    if pid == self() do
+      {:error, {:calling_self, {GenServer, :call, [pid, message, timeout]}}}
+    else
+      do_sync_call(pid, message, timeout)
+    end
+  end
+
+  # Performs the synchronous GenServer call with error handling
+  defp do_sync_call(pid, message, timeout) do
+    GenServer.call(pid, message, timeout)
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, {:noproc, _} -> {:error, :process_not_alive}
+    :exit, reason -> {:error, reason}
   end
 
   # Default message format wraps signal in a tuple

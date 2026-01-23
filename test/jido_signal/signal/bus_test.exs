@@ -226,7 +226,7 @@ defmodule JidoTest.Signal.Bus do
 
       # Replay from first signal's timestamp + 1 to get only the second signal
       {:ok, replayed} = Bus.replay(bus, "**", timestamp + 1)
-      assert length(replayed) >= 1
+      assert replayed != []
       # Find the signal with value 2
       signal_with_value_2 = Enum.find(replayed, fn r -> r.signal.data.value == 2 end)
       assert signal_with_value_2 != nil
@@ -801,7 +801,7 @@ defmodule JidoTest.Signal.Bus do
 
       # The old signal should be gone (or the new one should exist)
       # Note: Timing can be tricky in tests, so we just verify GC mechanism works
-      assert length(replayed) >= 1
+      assert replayed != []
     end
   end
 end

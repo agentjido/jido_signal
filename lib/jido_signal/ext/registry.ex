@@ -133,7 +133,7 @@ defmodule Jido.Signal.Ext.Registry do
   """
   @spec register(module()) :: :ok
   def register(module) when is_atom(module) do
-    namespace = apply(module, :namespace, [])
+    namespace = module.namespace()
 
     # Handle the case where the registry process is not started (e.g., during compilation)
     try do

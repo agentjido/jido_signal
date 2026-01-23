@@ -51,6 +51,7 @@ defmodule Jido.Signal.Router.Cache do
   """
 
   alias Jido.Signal
+  alias Jido.Signal.Error
   alias Jido.Signal.Router.Engine
 
   @type cache_id :: atom() | {atom(), term()}
@@ -157,7 +158,7 @@ defmodule Jido.Signal.Router.Cache do
   @spec route(cache_id(), Signal.t()) :: {:ok, [term()]} | {:error, term()}
   def route(cache_id, %Signal{type: nil}) do
     {:error,
-     Jido.Signal.Error.routing_error(
+     Error.routing_error(
        "Signal type cannot be nil",
        %{route: nil, reason: :nil_signal_type, cache_id: cache_id}
      )}
@@ -182,7 +183,7 @@ defmodule Jido.Signal.Router.Cache do
             )
 
             {:error,
-             Jido.Signal.Error.routing_error(
+             Error.routing_error(
                "No matching handlers found for signal",
                %{signal_type: signal.type, route: signal.type, reason: :no_handlers_found}
              )}

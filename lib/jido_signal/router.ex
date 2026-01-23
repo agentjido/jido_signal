@@ -166,6 +166,7 @@ defmodule Jido.Signal.Router do
 
   alias Jido.Signal
   alias Jido.Signal.Error
+  alias Jido.Signal.Router, as: ParentRouter
   alias Jido.Signal.Router.{Cache, Engine, Route, Validator}
 
   @type cache_id :: Cache.cache_id()
@@ -208,20 +209,21 @@ defmodule Jido.Signal.Router do
           {:ok, [Route.t()]} | {:error, term()}
   defdelegate normalize(input), to: Validator
 
+  # Alias the parent module for use in nested typedstruct modules
   typedstruct module: HandlerInfo do
     @moduledoc "Router Helper struct to store handler metadata"
     @default_priority 0
-    field(:target, Jido.Signal.Router.target(), enforce: true)
-    field(:priority, Jido.Signal.Router.priority(), default: @default_priority)
+    field(:target, ParentRouter.target(), enforce: true)
+    field(:priority, ParentRouter.priority(), default: @default_priority)
     field(:complexity, non_neg_integer(), default: 0)
   end
 
   typedstruct module: PatternMatch do
     @moduledoc "Router Helper struct to store pattern match metadata"
     @default_priority 0
-    field(:match, Jido.Signal.Router.match(), enforce: true)
-    field(:target, Jido.Signal.Router.target(), enforce: true)
-    field(:priority, Jido.Signal.Router.priority(), default: @default_priority)
+    field(:match, ParentRouter.match(), enforce: true)
+    field(:target, ParentRouter.target(), enforce: true)
+    field(:priority, ParentRouter.priority(), default: @default_priority)
     field(:complexity, non_neg_integer(), default: 0)
   end
 
@@ -233,7 +235,7 @@ defmodule Jido.Signal.Router do
 
   typedstruct module: WildcardHandlers do
     @moduledoc "Router Helper struct to store wildcard handler metadata"
-    field(:type, Jido.Signal.Router.wildcard_type(), enforce: true)
+    field(:type, ParentRouter.wildcard_type(), enforce: true)
     field(:handlers, NodeHandlers.t(), enforce: true)
   end
 
@@ -247,17 +249,17 @@ defmodule Jido.Signal.Router do
   typedstruct module: Route do
     @moduledoc "Router Helper struct to store route metadata"
     @default_priority 0
-    field(:path, Jido.Signal.Router.path(), enforce: true)
-    field(:target, Jido.Signal.Router.target(), enforce: true)
-    field(:priority, Jido.Signal.Router.priority(), default: @default_priority)
-    field(:match, Jido.Signal.Router.match())
+    field(:path, ParentRouter.path(), enforce: true)
+    field(:target, ParentRouter.target(), enforce: true)
+    field(:priority, ParentRouter.priority(), default: @default_priority)
+    field(:match, ParentRouter.match())
   end
 
   typedstruct module: Router do
     @moduledoc "Router Helper struct to store router metadata"
     field(:trie, TrieNode.t(), default: %TrieNode{})
     field(:route_count, non_neg_integer(), default: 0)
-    field(:cache_id, Jido.Signal.Router.cache_id())
+    field(:cache_id, ParentRouter.cache_id())
   end
 
   @type new_opts :: [cache_id: cache_id()]
@@ -661,33 +663,44 @@ defmodule Jido.Signal.Router do
   def matches?(type, pattern) when not is_binary(type) or not is_binary(pattern), do: false
 
   def matches?(type, pattern) when is_binary(type) and is_binary(pattern) do
-    # For single wildcards, verify segment count matches
-    if String.contains?(pattern, "*") and not String.contains?(pattern, "**") do
-      pattern_segments = String.split(pattern, ".")
-      type_segments = String.split(type, ".")
+    cond do
+      single_wildcard_pattern?(pattern) ->
+        match_single_wildcard(type, pattern)
 
-      # Single wildcard must match exact number of segments
-      if length(pattern_segments) == length(type_segments) do
+      String.ends_with?(pattern, ".**") ->
+        match_multi_wildcard_suffix(type, pattern)
+
+      true ->
         do_matches?(type, pattern)
-      else
-        false
-      end
+    end
+  end
+
+  # Checks if pattern contains single wildcard but not double wildcard
+  defp single_wildcard_pattern?(pattern) do
+    String.contains?(pattern, "*") and not String.contains?(pattern, "**")
+  end
+
+  # Matches single wildcard patterns (requires exact segment count)
+  defp match_single_wildcard(type, pattern) do
+    pattern_segments = String.split(pattern, ".")
+    type_segments = String.split(type, ".")
+
+    if length(pattern_segments) == length(type_segments) do
+      do_matches?(type, pattern)
     else
-      # For multi-level wildcards, handle empty segments
-      if String.ends_with?(pattern, ".**") do
-        pattern_base = String.replace_trailing(pattern, ".**", "")
+      false
+    end
+  end
 
-        if String.starts_with?(type, pattern_base) do
-          # The type matches the base pattern (everything before .**)
-          remaining = String.replace_prefix(type, pattern_base, "")
-          # Either there are no remaining segments or they start with a dot
-          remaining == "" or String.starts_with?(remaining, ".")
-        else
-          false
-        end
-      else
-        do_matches?(type, pattern)
-      end
+  # Matches multi-level wildcard suffix patterns (e.g., "foo.**")
+  defp match_multi_wildcard_suffix(type, pattern) do
+    pattern_base = String.replace_trailing(pattern, ".**", "")
+
+    if String.starts_with?(type, pattern_base) do
+      remaining = String.replace_prefix(type, pattern_base, "")
+      remaining == "" or String.starts_with?(remaining, ".")
+    else
+      false
     end
   end
 
@@ -714,34 +727,53 @@ defmodule Jido.Signal.Router do
     type_len = length(type_segs)
     pattern_len = length(pattern_segs)
 
+    match_state = classify_match_state(type_segs, pattern_segs, i, j, type_len, pattern_len)
+    handle_match_state(match_state, type_segs, pattern_segs, i, j, star_i, star_j)
+  end
+
+  # Classifies the current match state
+  defp classify_match_state(type_segs, pattern_segs, i, j, type_len, pattern_len) do
     cond do
-      # Both exhausted - match
-      i >= type_len and j >= pattern_len ->
-        true
+      i >= type_len and j >= pattern_len -> :both_exhausted
+      i >= type_len -> :type_exhausted
+      j < pattern_len and Enum.at(pattern_segs, j) == "**" -> :double_wildcard
+      j < pattern_len and segment_matches?(pattern_segs, type_segs, j, i) -> :segment_match
+      true -> :mismatch
+    end
+  end
 
-      # Pattern exhausted but type remains - only OK if we have trailing **
-      i >= type_len ->
-        # Check if remaining pattern is all **
-        Enum.drop(pattern_segs, j) |> Enum.all?(&(&1 == "**"))
+  # Checks if pattern segment matches type segment (single wildcard or exact match)
+  defp segment_matches?(pattern_segs, type_segs, j, i) do
+    pattern_seg = Enum.at(pattern_segs, j)
+    pattern_seg == "*" or pattern_seg == Enum.at(type_segs, i)
+  end
 
-      # Pattern has ** - record backtrack position and advance pattern pointer
-      j < pattern_len and Enum.at(pattern_segs, j) == "**" ->
-        do_match_segments(type_segs, pattern_segs, i, j + 1, i, j + 1)
+  # Handles each classified match state
+  defp handle_match_state(:both_exhausted, _type_segs, _pattern_segs, _i, _j, _star_i, _star_j) do
+    true
+  end
 
-      # Pattern has * or exact match - advance both pointers
-      j < pattern_len and
-          (Enum.at(pattern_segs, j) == "*" or
-             Enum.at(pattern_segs, j) == Enum.at(type_segs, i)) ->
-        do_match_segments(type_segs, pattern_segs, i + 1, j + 1, star_i, star_j)
+  defp handle_match_state(:type_exhausted, _type_segs, pattern_segs, _i, j, _star_i, _star_j) do
+    # Check if remaining pattern is all **
+    Enum.drop(pattern_segs, j) |> Enum.all?(&(&1 == "**"))
+  end
 
-      # Mismatch - backtrack to last ** if available
-      star_j != nil ->
-        # Try consuming one more segment with **
-        do_match_segments(type_segs, pattern_segs, star_i + 1, star_j, star_i + 1, star_j)
+  defp handle_match_state(:double_wildcard, type_segs, pattern_segs, i, j, _star_i, _star_j) do
+    # Record backtrack position and advance pattern pointer
+    do_match_segments(type_segs, pattern_segs, i, j + 1, i, j + 1)
+  end
 
-      # No match possible
-      true ->
-        false
+  defp handle_match_state(:segment_match, type_segs, pattern_segs, i, j, star_i, star_j) do
+    # Advance both pointers
+    do_match_segments(type_segs, pattern_segs, i + 1, j + 1, star_i, star_j)
+  end
+
+  defp handle_match_state(:mismatch, type_segs, pattern_segs, _i, _j, star_i, star_j) do
+    # Backtrack to last ** if available
+    if star_j == nil do
+      false
+    else
+      do_match_segments(type_segs, pattern_segs, star_i + 1, star_j, star_i + 1, star_j)
     end
   end
 

@@ -1,6 +1,9 @@
 defmodule Jido.Signal.DispatchParallelTest do
   use ExUnit.Case
 
+  alias Jido.Signal
+  alias Jido.Signal.Dispatch
+
   defmodule SlowAdapter do
     @behaviour Jido.Signal.Dispatch.Adapter
 
@@ -14,7 +17,7 @@ defmodule Jido.Signal.DispatchParallelTest do
   end
 
   test "dispatches to multiple targets in parallel" do
-    {:ok, signal} = Jido.Signal.new("test.event", %{})
+    {:ok, signal} = Signal.new("test.event", %{})
 
     # 10 targets with 100ms delay each
     configs =
@@ -24,7 +27,7 @@ defmodule Jido.Signal.DispatchParallelTest do
 
     {elapsed_us, :ok} =
       :timer.tc(fn ->
-        Jido.Signal.Dispatch.dispatch(signal, configs)
+        Dispatch.dispatch(signal, configs)
       end)
 
     elapsed_ms = div(elapsed_us, 1000)
@@ -35,7 +38,7 @@ defmodule Jido.Signal.DispatchParallelTest do
   end
 
   test "returns all errors in a list" do
-    {:ok, signal} = Jido.Signal.new("test.event", %{})
+    {:ok, signal} = Signal.new("test.event", %{})
 
     configs = [
       {SlowAdapter, [delay: 50]},
@@ -44,11 +47,11 @@ defmodule Jido.Signal.DispatchParallelTest do
       {SlowAdapter, [delay: 50]}
     ]
 
-    assert {:error, [_error]} = Jido.Signal.Dispatch.dispatch(signal, configs)
+    assert {:error, [_error]} = Dispatch.dispatch(signal, configs)
   end
 
   test "returns all errors when multiple dispatches fail" do
-    {:ok, signal} = Jido.Signal.new("test.event", %{})
+    {:ok, signal} = Signal.new("test.event", %{})
 
     configs = [
       {SlowAdapter, [delay: 10]},
@@ -58,7 +61,7 @@ defmodule Jido.Signal.DispatchParallelTest do
       {:invalid_adapter_3, []}
     ]
 
-    assert {:error, errors} = Jido.Signal.Dispatch.dispatch(signal, configs)
+    assert {:error, errors} = Dispatch.dispatch(signal, configs)
     # Should have 3 errors, not just the first one
     assert length(errors) == 3
   end

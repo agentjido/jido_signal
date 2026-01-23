@@ -28,10 +28,6 @@ defmodule Jido.Signal.Bus.Subscriber do
   @spec subscribe(BusState.t(), String.t(), String.t(), keyword()) ::
           {:ok, BusState.t()} | {:error, Exception.t()}
   def subscribe(%BusState{} = state, subscription_id, path, opts) do
-    persistent? = Keyword.get(opts, :persistent?, false)
-    dispatch = Keyword.get(opts, :dispatch)
-
-    # Check if subscription already exists
     if BusState.has_subscription?(state, subscription_id) do
       {:error,
        Error.validation_error(
@@ -39,90 +35,112 @@ defmodule Jido.Signal.Bus.Subscriber do
          %{field: :subscription_id, value: subscription_id}
        )}
     else
-      # Create the subscription struct
-      subscription = %Subscriber{
-        id: subscription_id,
-        path: path,
-        dispatch: dispatch,
-        persistent?: persistent?,
-        persistence_pid: nil,
-        created_at: DateTime.utc_now()
-      }
+      do_subscribe(state, subscription_id, path, opts)
+    end
+  end
 
-      if persistent? do
-        # Extract the client PID from the dispatch configuration
-        client_pid = extract_client_pid(dispatch)
+  defp do_subscribe(state, subscription_id, path, opts) do
+    persistent? = Keyword.get(opts, :persistent?, false)
+    dispatch = Keyword.get(opts, :dispatch)
 
-        # Start the persistent subscription process under the bus supervisor
-        persistent_sub_opts = [
-          id: subscription_id,
-          bus_pid: self(),
-          bus_name: state.name,
-          bus_subscription: subscription,
-          start_from: opts[:start_from] || :origin,
-          max_in_flight: opts[:max_in_flight] || 1000,
-          max_pending: opts[:max_pending] || 10_000,
-          max_attempts: opts[:max_attempts] || 5,
-          retry_interval: opts[:retry_interval] || 100,
-          client_pid: client_pid,
-          journal_adapter: state.journal_adapter,
-          journal_pid: state.journal_pid
-        ]
+    subscription = %Subscriber{
+      id: subscription_id,
+      path: path,
+      dispatch: dispatch,
+      persistent?: persistent?,
+      persistence_pid: nil,
+      created_at: DateTime.utc_now()
+    }
 
-        case DynamicSupervisor.start_child(
-               state.child_supervisor,
-               {Jido.Signal.Bus.PersistentSubscription, persistent_sub_opts}
-             ) do
-          {:ok, pid} ->
-            # Update subscription with persistence pid
-            subscription = %{subscription | persistence_pid: pid}
+    if persistent? do
+      create_persistent_subscription(state, subscription_id, subscription, opts)
+    else
+      create_regular_subscription(state, subscription_id, subscription)
+    end
+  end
 
-            case BusState.add_subscription(state, subscription_id, subscription) do
-              {:ok, new_state} ->
-                {:ok, new_state}
+  defp create_persistent_subscription(state, subscription_id, subscription, opts) do
+    client_pid = extract_client_pid(subscription.dispatch)
 
-              {:error, reason} ->
-                {:error,
-                 Error.execution_error(
-                   "Failed to add subscription",
-                   %{action: "add_subscription", reason: reason}
-                 )}
-            end
+    persistent_sub_opts =
+      build_persistent_opts(state, subscription_id, subscription, client_pid, opts)
 
-          {:error, reason} ->
-            {:error,
-             Error.execution_error(
-               "Failed to start persistent subscription",
-               %{action: "start_persistent_subscription", reason: reason}
-             )}
-        end
-      else
-        # Since we already confirmed subscription doesn't exist, directly add it
-        new_state = %{
-          state
-          | subscriptions: Map.put(state.subscriptions, subscription_id, subscription)
-        }
+    case start_persistent_child(state, persistent_sub_opts) do
+      {:ok, pid} ->
+        finalize_persistent_subscription(state, subscription_id, subscription, pid)
 
-        # Create route for the subscription
-        route = %Router.Route{
-          path: subscription.path,
-          target: subscription.dispatch,
-          priority: 0,
-          match: nil
-        }
+      {:error, reason} ->
+        {:error,
+         Error.execution_error(
+           "Failed to start persistent subscription",
+           %{action: "start_persistent_subscription", reason: reason}
+         )}
+    end
+  end
 
-        case BusState.add_route(new_state, route) do
-          {:ok, final_state} ->
-            {:ok, final_state}
+  defp build_persistent_opts(state, subscription_id, subscription, client_pid, opts) do
+    [
+      id: subscription_id,
+      bus_pid: self(),
+      bus_name: state.name,
+      bus_subscription: subscription,
+      start_from: opts[:start_from] || :origin,
+      max_in_flight: opts[:max_in_flight] || 1000,
+      max_pending: opts[:max_pending] || 10_000,
+      max_attempts: opts[:max_attempts] || 5,
+      retry_interval: opts[:retry_interval] || 100,
+      client_pid: client_pid,
+      journal_adapter: state.journal_adapter,
+      journal_pid: state.journal_pid
+    ]
+  end
 
-          {:error, reason} ->
-            {:error,
-             Error.execution_error(
-               "Failed to add subscription route",
-               %{action: "add_route", reason: reason}
-             )}
-        end
-      end
+  defp start_persistent_child(state, persistent_sub_opts) do
+    DynamicSupervisor.start_child(
+      state.child_supervisor,
+      {Jido.Signal.Bus.PersistentSubscription, persistent_sub_opts}
+    )
+  end
+
+  defp finalize_persistent_subscription(state, subscription_id, subscription, pid) do
+    subscription = %{subscription | persistence_pid: pid}
+
+    case BusState.add_subscription(state, subscription_id, subscription) do
+      {:ok, new_state} ->
+        {:ok, new_state}
+
+      {:error, reason} ->
+        {:error,
+         Error.execution_error(
+           "Failed to add subscription",
+           %{action: "add_subscription", reason: reason}
+         )}
+    end
+  end
+
+  defp create_regular_subscription(state, subscription_id, subscription) do
+    new_state = %{
+      state
+      | subscriptions: Map.put(state.subscriptions, subscription_id, subscription)
+    }
+
+    route = %Router.Route{
+      path: subscription.path,
+      target: subscription.dispatch,
+      priority: 0,
+      match: nil
+    }
+
+    case BusState.add_route(new_state, route) do
+      {:ok, final_state} ->
+        {:ok, final_state}
+
+      {:error, reason} ->
+        {:error,
+         Error.execution_error(
+           "Failed to add subscription route",
+           %{action: "add_route", reason: reason}
+         )}
     end
   end
 

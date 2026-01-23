@@ -542,24 +542,19 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp validate_single_config({adapter, opts}) when is_atom(adapter) and is_list(opts) do
-    case resolve_adapter(adapter) do
-      {:ok, adapter_module} ->
-        if adapter_module == nil do
-          {:ok, {adapter, opts}}
-        else
-          case adapter_module.validate_opts(opts) do
-            {:ok, validated_opts} ->
-              # Mark as validated to skip re-validation
-              {:ok, {adapter, Keyword.put(validated_opts, :__validated__, true)}}
-
-            {:error, reason} ->
-              normalize_validation_error(reason, adapter, {adapter, opts})
-          end
-        end
-
-      {:error, reason} ->
-        normalize_validation_error(reason, adapter, {adapter, opts})
+    with {:ok, adapter_module} <- resolve_adapter(adapter),
+         {:ok, validated_opts} <- validate_adapter_opts(adapter_module, opts, adapter) do
+      {:ok, {adapter, Keyword.put(validated_opts, :__validated__, true)}}
+    else
+      {:error, reason} -> normalize_validation_error(reason, adapter, {adapter, opts})
     end
+  end
+
+  # Validates options with the adapter module, handling nil adapter case
+  defp validate_adapter_opts(nil, opts, _adapter), do: {:ok, opts}
+
+  defp validate_adapter_opts(adapter_module, opts, _adapter) do
+    adapter_module.validate_opts(opts)
   end
 
   defp dispatch_single(_signal, {nil, _opts}), do: :ok

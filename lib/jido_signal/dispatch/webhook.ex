@@ -74,6 +74,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
   @behaviour Jido.Signal.Dispatch.Adapter
 
   alias Jido.Signal.Dispatch.CircuitBreaker
+  alias Jido.Signal.Dispatch.Http
 
   require Logger
 
@@ -114,7 +115,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
   def validate_opts(opts) do
-    with {:ok, _} <- Jido.Signal.Dispatch.Http.validate_opts(opts),
+    with {:ok, _} <- Http.validate_opts(opts),
          {:ok, secret} <- validate_secret(Keyword.get(opts, :secret)),
          {:ok, signature_header} <-
            validate_header_name(
@@ -182,7 +183,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
 
     # Delegate to HTTP adapter - use do_deliver to avoid double circuit breaker
     opts = Keyword.put(opts, :headers, headers)
-    Jido.Signal.Dispatch.Http.do_deliver(signal, opts)
+    Http.do_deliver(signal, opts)
   end
 
   # Private Helpers

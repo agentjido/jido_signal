@@ -7,6 +7,8 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
 
   use Agent
 
+  alias Jido.Signal.ID
+
   @impl true
   def init do
     case Agent.start_link(fn ->
@@ -146,7 +148,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
   @impl true
   def put_dlq_entry(subscription_id, signal, reason, metadata, pid \\ nil) do
     target = pid || __MODULE__
-    entry_id = Jido.Signal.ID.generate!()
+    entry_id = ID.generate!()
 
     entry = %{
       id: entry_id,

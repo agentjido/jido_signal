@@ -36,6 +36,8 @@ defmodule Jido.Signal.Serialization.Serializer do
       Signal.deserialize(binary, serializer: MySerializer)
   """
 
+  alias Jido.Signal.Serialization.Config
+
   @type serializable :: term()
   @type serialized :: binary()
   @type opts :: keyword()
@@ -76,7 +78,7 @@ defmodule Jido.Signal.Serialization.Serializer do
   """
   @spec default_serializer() :: module()
   def default_serializer do
-    Jido.Signal.Serialization.Config.default_serializer()
+    Config.default_serializer()
   end
 
   @doc """

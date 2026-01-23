@@ -66,6 +66,8 @@ defmodule Jido.Signal.Ext do
   - `Jido.Signal` - Core Signal functionality
   """
 
+  alias Jido.Signal.Error
+
   require Logger
 
   @doc """
@@ -238,7 +240,7 @@ defmodule Jido.Signal.Ext do
 
             {:error, %NimbleOptions.ValidationError{} = error} ->
               reason =
-                Jido.Signal.Error.format_nimble_validation_error(
+                Error.format_nimble_validation_error(
                   error,
                   "Extension",
                   __MODULE__

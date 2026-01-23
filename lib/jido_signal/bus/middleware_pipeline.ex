@@ -44,63 +44,32 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   @spec before_publish([middleware_config()], [Signal.t()], context(), pos_integer()) ::
           {:ok, [Signal.t()], [middleware_config()]} | {:error, term()}
   def before_publish(middleware_configs, signals, context, timeout_ms \\ @default_timeout_ms) do
-    signals_count = length(signals)
-
     middleware_configs
     |> Enum.reduce_while({:ok, signals, []}, fn {module, state}, {:ok, current_signals, acc} ->
-      if function_exported?(module, :before_publish, 3) do
-        start_time = System.monotonic_time(:microsecond)
-
-        :telemetry.execute(
-          [:jido, :signal, :middleware, :before_publish, :start],
-          %{system_time: System.system_time()},
-          %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
-        )
-
-        case run_with_timeout(
-               fn -> module.before_publish(current_signals, context, state) end,
-               timeout_ms,
-               module,
-               context
-             ) do
-          {:cont, new_signals, new_state} ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :before_publish, :stop],
-              %{duration_us: duration_us},
-              %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
-            )
-
-            {:cont, {:ok, new_signals, [{module, new_state} | acc]}}
-
-          {:halt, reason, new_state} ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :before_publish, :stop],
-              %{duration_us: duration_us},
-              %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
-            )
-
-            {:halt, {:error, reason, [{module, new_state} | acc]}}
-
-          {:error, _reason} = error ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :before_publish, :exception],
-              %{duration_us: duration_us},
-              %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
-            )
-
-            {:halt, error}
-        end
-      else
-        {:cont, {:ok, current_signals, [{module, state} | acc]}}
-      end
+      process_before_publish_middleware(module, state, current_signals, acc, context, timeout_ms)
     end)
-    |> case do
+    |> finalize_before_publish_result()
+  end
+
+  defp process_before_publish_middleware(module, state, current_signals, acc, context, timeout_ms) do
+    if function_exported?(module, :before_publish, 3) do
+      case execute_before_publish_callback(module, state, current_signals, context, timeout_ms) do
+        {:cont, {:ok, new_signals, config}} ->
+          {:cont, {:ok, new_signals, [config | acc]}}
+
+        {:halt, {:error, reason, config}} ->
+          {:halt, {:error, reason, [config | acc]}}
+
+        {:halt, error} ->
+          {:halt, error}
+      end
+    else
+      {:cont, {:ok, current_signals, [{module, state} | acc]}}
+    end
+  end
+
+  defp finalize_before_publish_result(result) do
+    case result do
       {:ok, sigs, new_configs} -> {:ok, sigs, Enum.reverse(new_configs)}
       {:error, reason, _configs} -> {:error, reason}
       {:error, _reason} = error -> error
@@ -116,40 +85,17 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   @spec after_publish([middleware_config()], [Signal.t()], context(), pos_integer()) ::
           [middleware_config()]
   def after_publish(middleware_configs, signals, context, timeout_ms \\ @default_timeout_ms) do
-    signals_count = length(signals)
-
-    middleware_configs
-    |> Enum.map(fn {module, state} ->
-      if function_exported?(module, :after_publish, 3) do
-        start_time = System.monotonic_time(:microsecond)
-
-        case run_with_timeout(
-               fn -> module.after_publish(signals, context, state) end,
-               timeout_ms,
-               module,
-               context
-             ) do
-          {:cont, _signals, new_state} ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :after_publish, :stop],
-              %{duration_us: duration_us},
-              %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
-            )
-
-            {module, new_state}
-
-          {:error, _reason} ->
-            {module, state}
-
-          _ ->
-            {module, state}
-        end
-      else
-        {module, state}
-      end
+    Enum.map(middleware_configs, fn {module, state} ->
+      process_after_publish_middleware(module, state, signals, context, timeout_ms)
     end)
+  end
+
+  defp process_after_publish_middleware(module, state, signals, context, timeout_ms) do
+    if function_exported?(module, :after_publish, 3) do
+      execute_after_publish_callback(module, state, signals, context, timeout_ms)
+    else
+      {module, state}
+    end
   end
 
   @doc """
@@ -174,82 +120,56 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
       ) do
     middleware_configs
     |> Enum.reduce_while({:ok, signal, []}, fn {module, state}, {:ok, current_signal, acc} ->
-      if function_exported?(module, :before_dispatch, 4) do
-        start_time = System.monotonic_time(:microsecond)
-
-        :telemetry.execute(
-          [:jido, :signal, :middleware, :before_dispatch, :start],
-          %{system_time: System.system_time()},
-          %{
-            bus_name: context[:bus_name],
-            module: module,
-            signal_id: current_signal.id,
-            subscription_id: subscriber.id
-          }
-        )
-
-        case run_with_timeout(
-               fn -> module.before_dispatch(current_signal, subscriber, context, state) end,
-               timeout_ms,
-               module,
-               context
-             ) do
-          {:cont, new_signal, new_state} ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :before_dispatch, :stop],
-              %{duration_us: duration_us},
-              %{
-                bus_name: context[:bus_name],
-                module: module,
-                signal_id: current_signal.id,
-                subscription_id: subscriber.id
-              }
-            )
-
-            {:cont, {:ok, new_signal, [{module, new_state} | acc]}}
-
-          {:skip, new_state} ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :before_dispatch, :skip],
-              %{duration_us: duration_us},
-              %{
-                bus_name: context[:bus_name],
-                module: module,
-                signal_id: current_signal.id,
-                subscription_id: subscriber.id
-              }
-            )
-
-            {:halt, {:skip, [{module, new_state} | acc]}}
-
-          {:halt, reason, new_state} ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :before_dispatch, :stop],
-              %{duration_us: duration_us},
-              %{
-                bus_name: context[:bus_name],
-                module: module,
-                signal_id: current_signal.id,
-                subscription_id: subscriber.id
-              }
-            )
-
-            {:halt, {:error, reason, [{module, new_state} | acc]}}
-
-          {:error, _reason} = error ->
-            {:halt, error}
-        end
-      else
-        {:cont, {:ok, current_signal, [{module, state} | acc]}}
-      end
+      process_before_dispatch_middleware(
+        module,
+        state,
+        current_signal,
+        subscriber,
+        acc,
+        context,
+        timeout_ms
+      )
     end)
-    |> case do
+    |> finalize_before_dispatch_result()
+  end
+
+  defp process_before_dispatch_middleware(
+         module,
+         state,
+         current_signal,
+         subscriber,
+         acc,
+         context,
+         timeout_ms
+       ) do
+    if function_exported?(module, :before_dispatch, 4) do
+      case execute_before_dispatch_callback(
+             module,
+             state,
+             current_signal,
+             subscriber,
+             context,
+             timeout_ms
+           ) do
+        {:cont, {:ok, new_signal, config}} ->
+          {:cont, {:ok, new_signal, [config | acc]}}
+
+        {:halt, {:skip, config}} ->
+          {:halt, {:skip, [config | acc]}}
+
+        {:halt, {:error, reason, config}} ->
+          {:halt, {:error, reason, [config | acc]}}
+
+        {:halt, error} ->
+          {:halt, error}
+      end
+    else
+      {:cont, {:ok, current_signal, [{module, state} | acc]}}
+    end
+  end
+
+  defp finalize_before_dispatch_result(result) do
+    case result do
       {:ok, sig, new_configs} -> {:ok, sig, Enum.reverse(new_configs)}
       {:skip, _configs} -> :skip
       {:error, reason, _configs} -> {:error, reason}
@@ -279,43 +199,41 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
         context,
         timeout_ms \\ @default_timeout_ms
       ) do
-    middleware_configs
-    |> Enum.map(fn {module, state} ->
-      if function_exported?(module, :after_dispatch, 5) do
-        start_time = System.monotonic_time(:microsecond)
-
-        case run_with_timeout(
-               fn -> module.after_dispatch(signal, subscriber, result, context, state) end,
-               timeout_ms,
-               module,
-               context
-             ) do
-          {:cont, new_state} ->
-            duration_us = System.monotonic_time(:microsecond) - start_time
-
-            :telemetry.execute(
-              [:jido, :signal, :middleware, :after_dispatch, :stop],
-              %{duration_us: duration_us},
-              %{
-                bus_name: context[:bus_name],
-                module: module,
-                signal_id: signal.id,
-                subscription_id: subscriber.id
-              }
-            )
-
-            {module, new_state}
-
-          {:error, _reason} ->
-            {module, state}
-
-          _ ->
-            {module, state}
-        end
-      else
-        {module, state}
-      end
+    Enum.map(middleware_configs, fn {module, state} ->
+      process_after_dispatch_middleware(
+        module,
+        state,
+        signal,
+        subscriber,
+        result,
+        context,
+        timeout_ms
+      )
     end)
+  end
+
+  defp process_after_dispatch_middleware(
+         module,
+         state,
+         signal,
+         subscriber,
+         result,
+         context,
+         timeout_ms
+       ) do
+    if function_exported?(module, :after_dispatch, 5) do
+      execute_after_dispatch_callback(
+        module,
+        state,
+        signal,
+        subscriber,
+        result,
+        context,
+        timeout_ms
+      )
+    else
+      {module, state}
+    end
   end
 
   @doc """
@@ -360,5 +278,240 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
         {:error,
          Error.execution_error("Middleware timeout", %{module: module, timeout_ms: timeout_ms})}
     end
+  end
+
+  # Helper functions for before_publish
+  defp execute_before_publish_callback(module, state, current_signals, context, timeout_ms) do
+    signals_count = length(current_signals)
+    start_time = System.monotonic_time(:microsecond)
+
+    emit_before_publish_start(context, module, signals_count)
+
+    result =
+      run_with_timeout(
+        fn -> module.before_publish(current_signals, context, state) end,
+        timeout_ms,
+        module,
+        context
+      )
+
+    handle_before_publish_result(result, module, state, start_time, context, signals_count)
+  end
+
+  defp emit_before_publish_start(context, module, signals_count) do
+    :telemetry.execute(
+      [:jido, :signal, :middleware, :before_publish, :start],
+      %{system_time: System.system_time()},
+      %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
+    )
+  end
+
+  defp handle_before_publish_result(result, module, _state, start_time, context, signals_count) do
+    duration_us = System.monotonic_time(:microsecond) - start_time
+
+    case result do
+      {:cont, new_signals, new_state} ->
+        emit_before_publish_stop(context, module, signals_count, duration_us)
+        {:cont, {:ok, new_signals, {module, new_state}}}
+
+      {:halt, reason, new_state} ->
+        emit_before_publish_stop(context, module, signals_count, duration_us)
+        {:halt, {:error, reason, {module, new_state}}}
+
+      {:error, _reason} = error ->
+        emit_before_publish_exception(context, module, signals_count, duration_us)
+        {:halt, error}
+    end
+  end
+
+  defp emit_before_publish_stop(context, module, signals_count, duration_us) do
+    :telemetry.execute(
+      [:jido, :signal, :middleware, :before_publish, :stop],
+      %{duration_us: duration_us},
+      %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
+    )
+  end
+
+  defp emit_before_publish_exception(context, module, signals_count, duration_us) do
+    :telemetry.execute(
+      [:jido, :signal, :middleware, :before_publish, :exception],
+      %{duration_us: duration_us},
+      %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
+    )
+  end
+
+  # Helper functions for after_publish
+  defp execute_after_publish_callback(module, state, signals, context, timeout_ms) do
+    signals_count = length(signals)
+    start_time = System.monotonic_time(:microsecond)
+
+    result =
+      run_with_timeout(
+        fn -> module.after_publish(signals, context, state) end,
+        timeout_ms,
+        module,
+        context
+      )
+
+    handle_after_publish_result(result, module, state, start_time, context, signals_count)
+  end
+
+  defp handle_after_publish_result(result, module, state, start_time, context, signals_count) do
+    case result do
+      {:cont, _signals, new_state} ->
+        duration_us = System.monotonic_time(:microsecond) - start_time
+        emit_after_publish_stop(context, module, signals_count, duration_us)
+        {module, new_state}
+
+      {:error, _reason} ->
+        {module, state}
+
+      _ ->
+        {module, state}
+    end
+  end
+
+  defp emit_after_publish_stop(context, module, signals_count, duration_us) do
+    :telemetry.execute(
+      [:jido, :signal, :middleware, :after_publish, :stop],
+      %{duration_us: duration_us},
+      %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
+    )
+  end
+
+  # Helper functions for before_dispatch
+  defp execute_before_dispatch_callback(module, state, signal, subscriber, context, timeout_ms) do
+    start_time = System.monotonic_time(:microsecond)
+
+    emit_before_dispatch_start(context, module, signal, subscriber)
+
+    result =
+      run_with_timeout(
+        fn -> module.before_dispatch(signal, subscriber, context, state) end,
+        timeout_ms,
+        module,
+        context
+      )
+
+    handle_before_dispatch_result(result, module, start_time, context, signal, subscriber)
+  end
+
+  defp emit_before_dispatch_start(context, module, signal, subscriber) do
+    :telemetry.execute(
+      [:jido, :signal, :middleware, :before_dispatch, :start],
+      %{system_time: System.system_time()},
+      %{
+        bus_name: context[:bus_name],
+        module: module,
+        signal_id: signal.id,
+        subscription_id: subscriber.id
+      }
+    )
+  end
+
+  defp handle_before_dispatch_result(result, module, start_time, context, signal, subscriber) do
+    duration_us = System.monotonic_time(:microsecond) - start_time
+    telemetry_meta = build_dispatch_telemetry_meta(context, module, signal, subscriber)
+
+    case result do
+      {:cont, new_signal, new_state} ->
+        emit_before_dispatch_telemetry(:stop, duration_us, telemetry_meta)
+        {:cont, {:ok, new_signal, {module, new_state}}}
+
+      {:skip, new_state} ->
+        emit_before_dispatch_telemetry(:skip, duration_us, telemetry_meta)
+        {:halt, {:skip, {module, new_state}}}
+
+      {:halt, reason, new_state} ->
+        emit_before_dispatch_telemetry(:stop, duration_us, telemetry_meta)
+        {:halt, {:error, reason, {module, new_state}}}
+
+      {:error, _reason} = error ->
+        {:halt, error}
+    end
+  end
+
+  defp build_dispatch_telemetry_meta(context, module, signal, subscriber) do
+    %{
+      bus_name: context[:bus_name],
+      module: module,
+      signal_id: signal.id,
+      subscription_id: subscriber.id
+    }
+  end
+
+  defp emit_before_dispatch_telemetry(event, duration_us, meta) do
+    :telemetry.execute(
+      [:jido, :signal, :middleware, :before_dispatch, event],
+      %{duration_us: duration_us},
+      meta
+    )
+  end
+
+  # Helper functions for after_dispatch
+  defp execute_after_dispatch_callback(
+         module,
+         state,
+         signal,
+         subscriber,
+         result,
+         context,
+         timeout_ms
+       ) do
+    start_time = System.monotonic_time(:microsecond)
+
+    callback_result =
+      run_with_timeout(
+        fn -> module.after_dispatch(signal, subscriber, result, context, state) end,
+        timeout_ms,
+        module,
+        context
+      )
+
+    handle_after_dispatch_result(
+      callback_result,
+      module,
+      state,
+      start_time,
+      context,
+      signal,
+      subscriber
+    )
+  end
+
+  defp handle_after_dispatch_result(
+         callback_result,
+         module,
+         state,
+         start_time,
+         context,
+         signal,
+         subscriber
+       ) do
+    case callback_result do
+      {:cont, new_state} ->
+        duration_us = System.monotonic_time(:microsecond) - start_time
+        emit_after_dispatch_stop(context, module, signal, subscriber, duration_us)
+        {module, new_state}
+
+      {:error, _reason} ->
+        {module, state}
+
+      _ ->
+        {module, state}
+    end
+  end
+
+  defp emit_after_dispatch_stop(context, module, signal, subscriber, duration_us) do
+    :telemetry.execute(
+      [:jido, :signal, :middleware, :after_dispatch, :stop],
+      %{duration_us: duration_us},
+      %{
+        bus_name: context[:bus_name],
+        module: module,
+        signal_id: signal.id,
+        subscription_id: subscriber.id
+      }
+    )
   end
 end

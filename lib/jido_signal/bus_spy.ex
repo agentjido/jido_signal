@@ -276,35 +276,45 @@ defmodule Jido.Signal.BusSpy do
   end
 
   # Simple glob-style pattern matching for signal types
+  defp match_signal_type?(_signal_type, "*"), do: true
+  defp match_signal_type?(signal_type, signal_type), do: true
+
   defp match_signal_type?(signal_type, pattern) do
+    match_pattern_type(signal_type, pattern)
+  end
+
+  defp match_pattern_type(signal_type, pattern) do
     cond do
-      pattern == "*" ->
-        true
-
-      pattern == signal_type ->
-        true
-
       String.ends_with?(pattern, "*") ->
-        prefix = String.slice(pattern, 0..-2//1)
-        String.starts_with?(signal_type, prefix)
+        match_prefix_pattern(signal_type, pattern)
 
       String.starts_with?(pattern, "*") ->
-        suffix = String.slice(pattern, 1..-1//1)
-        String.ends_with?(signal_type, suffix)
+        match_suffix_pattern(signal_type, pattern)
 
       String.contains?(pattern, "*") ->
-        # More complex glob matching could be implemented here
-        pattern
-        |> String.split("*", parts: 2)
-        |> case do
-          [prefix, suffix] ->
-            String.starts_with?(signal_type, prefix) and String.ends_with?(signal_type, suffix)
-
-          _ ->
-            false
-        end
+        match_middle_pattern(signal_type, pattern)
 
       true ->
+        false
+    end
+  end
+
+  defp match_prefix_pattern(signal_type, pattern) do
+    prefix = String.slice(pattern, 0..-2//1)
+    String.starts_with?(signal_type, prefix)
+  end
+
+  defp match_suffix_pattern(signal_type, pattern) do
+    suffix = String.slice(pattern, 1..-1//1)
+    String.ends_with?(signal_type, suffix)
+  end
+
+  defp match_middle_pattern(signal_type, pattern) do
+    case String.split(pattern, "*", parts: 2) do
+      [prefix, suffix] ->
+        String.starts_with?(signal_type, prefix) and String.ends_with?(signal_type, suffix)
+
+      _ ->
         false
     end
   end

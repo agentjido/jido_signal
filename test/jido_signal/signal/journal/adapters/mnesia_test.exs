@@ -2,13 +2,14 @@ defmodule Jido.Signal.Journal.Adapters.MnesiaTest do
   use ExUnit.Case, async: false
 
   alias Jido.Signal
+  alias Jido.Signal.ID
   alias Jido.Signal.Journal.Adapters.Mnesia
   alias Jido.Signal.Journal.Adapters.Mnesia.Tables
 
   @moduletag :mnesia
 
   defp create_test_signal(opts \\ []) do
-    id = Jido.Signal.ID.generate!()
+    id = ID.generate!()
     type = Keyword.get(opts, :type, "test")
     source = Keyword.get(opts, :source, "test")
     subject = Keyword.get(opts, :subject, "test")
