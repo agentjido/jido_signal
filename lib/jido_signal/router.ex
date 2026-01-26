@@ -243,7 +243,7 @@ defmodule Jido.Signal.Router do
     @moduledoc "Router Helper struct to store trie node metadata"
     field(:segments, %{String.t() => TrieNode.t()}, default: %{})
     field(:wildcards, [WildcardHandlers.t()], default: [])
-    field(:handlers, NodeHandlers.t())
+    field(:handlers, NodeHandlers.t(), default: %NodeHandlers{})
   end
 
   typedstruct module: Route do
