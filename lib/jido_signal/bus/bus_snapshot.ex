@@ -38,15 +38,13 @@ defmodule Jido.Signal.Bus.Snapshot do
   {:ok, new_state} = Snapshot.cleanup(state, fn ref -> ref.path == "user.created" end)
   ```
   """
-  use TypedStruct
-
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.ID
 
   require Logger
 
-  typedstruct module: SnapshotRef do
+  defmodule SnapshotRef do
     @moduledoc """
     A lightweight reference to a snapshot stored in :persistent_term.
     Contains only the metadata needed for listing and lookup.
@@ -57,12 +55,17 @@ defmodule Jido.Signal.Bus.Snapshot do
     * `path` - The path pattern used to filter signals
     * `created_at` - When the snapshot was created
     """
-    field(:id, String.t(), enforce: true)
-    field(:path, String.t(), enforce: true)
-    field(:created_at, DateTime.t(), enforce: true)
+    @type t :: %__MODULE__{
+            id: String.t(),
+            path: String.t(),
+            created_at: DateTime.t()
+          }
+
+    @enforce_keys [:id, :path, :created_at]
+    defstruct [:id, :path, :created_at]
   end
 
-  typedstruct module: SnapshotData do
+  defmodule SnapshotData do
     @moduledoc """
     The actual snapshot data stored in :persistent_term.
     Contains the full signal list and metadata.
@@ -74,10 +77,15 @@ defmodule Jido.Signal.Bus.Snapshot do
     * `signals` - Map of recorded signals matching the path pattern, keyed by signal ID
     * `created_at` - When the snapshot was created
     """
-    field(:id, String.t(), enforce: true)
-    field(:path, String.t(), enforce: true)
-    field(:signals, %{String.t() => Jido.Signal.t()}, enforce: true)
-    field(:created_at, DateTime.t(), enforce: true)
+    @type t :: %__MODULE__{
+            id: String.t(),
+            path: String.t(),
+            signals: %{String.t() => Jido.Signal.t()},
+            created_at: DateTime.t()
+          }
+
+    @enforce_keys [:id, :path, :signals, :created_at]
+    defstruct [:id, :path, :signals, :created_at]
   end
 
   @doc """

@@ -136,7 +136,6 @@ defmodule Jido.Signal do
   - `Jido.Signal.Dispatch` - Dispatch handling
   - CloudEvents spec: https://cloudevents.io/
   """
-  use TypedStruct
 
   import Jido.Signal.Ext.Registry, only: [get: 1]
 

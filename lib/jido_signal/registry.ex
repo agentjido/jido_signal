@@ -5,11 +5,9 @@ defmodule Jido.Signal.Registry do
   Provides functionality to register, unregister, and manage subscriptions
   to signal paths with associated dispatch configurations.
   """
-  use TypedStruct
-
   alias Jido.Signal.Router
 
-  typedstruct module: Subscription do
+  defmodule Subscription do
     @moduledoc """
     Represents a subscription to signal patterns in the registry.
 
@@ -17,16 +15,23 @@ defmodule Jido.Signal.Registry do
     allowing signals matching the pattern to be routed to the specified target.
     """
     @typedoc "A single subscription mapping a path to dispatch configuration"
-    field(:id, String.t(), enforce: true)
-    field(:path, String.t(), enforce: true)
-    field(:dispatch, term(), enforce: true)
-    field(:created_at, DateTime.t())
+    @type t :: %__MODULE__{
+            id: String.t(),
+            path: String.t(),
+            dispatch: term(),
+            created_at: DateTime.t() | nil
+          }
+
+    @enforce_keys [:id, :path, :dispatch]
+    defstruct [:id, :path, :dispatch, :created_at]
   end
 
-  typedstruct do
-    @typedoc "Registry containing a unique mapping of subscription IDs to subscriptions"
-    field(:subscriptions, %{String.t() => Subscription.t()}, default: %{})
-  end
+  @typedoc "Registry containing a unique mapping of subscription IDs to subscriptions"
+  @type t :: %__MODULE__{
+          subscriptions: %{String.t() => Subscription.t()}
+        }
+
+  defstruct subscriptions: %{}
 
   @doc """
   Creates a new empty registry.

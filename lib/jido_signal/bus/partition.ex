@@ -6,7 +6,6 @@ defmodule Jido.Signal.Bus.Partition do
   Each partition manages its own set of subscriptions based on a hash of the subscription ID.
   """
   use GenServer
-  use TypedStruct
 
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Subscriber
@@ -15,20 +14,36 @@ defmodule Jido.Signal.Bus.Partition do
 
   require Logger
 
-  typedstruct do
-    field(:partition_id, non_neg_integer(), enforce: true)
-    field(:bus_name, atom(), enforce: true)
-    field(:bus_pid, pid(), enforce: true)
-    field(:subscriptions, %{String.t() => Subscriber.t()}, default: %{})
-    field(:middleware, [MiddlewarePipeline.middleware_config()], default: [])
-    field(:middleware_timeout_ms, pos_integer(), default: 100)
-    field(:journal_adapter, module())
-    field(:journal_pid, pid())
-    field(:rate_limit_per_sec, pos_integer(), default: 10_000)
-    field(:burst_size, pos_integer(), default: 1_000)
-    field(:tokens, float(), default: 1_000.0)
-    field(:last_refill, integer())
-  end
+  @type t :: %__MODULE__{
+          partition_id: non_neg_integer(),
+          bus_name: atom(),
+          bus_pid: pid(),
+          subscriptions: %{String.t() => Subscriber.t()},
+          middleware: [MiddlewarePipeline.middleware_config()],
+          middleware_timeout_ms: pos_integer(),
+          journal_adapter: module() | nil,
+          journal_pid: pid() | nil,
+          rate_limit_per_sec: pos_integer(),
+          burst_size: pos_integer(),
+          tokens: float(),
+          last_refill: integer() | nil
+        }
+
+  @enforce_keys [:partition_id, :bus_name, :bus_pid]
+  defstruct [
+    :partition_id,
+    :bus_name,
+    :bus_pid,
+    subscriptions: %{},
+    middleware: [],
+    middleware_timeout_ms: 100,
+    journal_adapter: nil,
+    journal_pid: nil,
+    rate_limit_per_sec: 10_000,
+    burst_size: 1_000,
+    tokens: 1_000.0,
+    last_refill: nil
+  ]
 
   @doc """
   Starts a partition worker linked to the calling process.

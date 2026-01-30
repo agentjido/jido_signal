@@ -8,8 +8,6 @@ defmodule Jido.Signal.Bus.State do
   and querying this state.
   """
 
-  use TypedStruct
-
   alias Jido.Signal
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Snapshot
@@ -17,22 +15,75 @@ defmodule Jido.Signal.Bus.State do
   alias Jido.Signal.ID
   alias Jido.Signal.Router
 
-  typedstruct do
-    field(:name, atom(), enforce: true)
-    field(:jido, atom() | nil, default: nil)
-    field(:router, Router.Router.t(), default: Router.new!())
-    field(:log, %{String.t() => Signal.t()}, default: %{})
-    field(:snapshots, %{String.t() => Snapshot.SnapshotRef.t()}, default: %{})
-    field(:subscriptions, %{String.t() => Subscriber.t()}, default: %{})
-    field(:child_supervisor, pid())
-    field(:middleware, [MiddlewarePipeline.middleware_config()], default: [])
-    field(:middleware_timeout_ms, pos_integer(), default: 100)
-    field(:journal_adapter, module(), default: nil)
-    field(:journal_pid, pid(), default: nil)
-    field(:partition_count, pos_integer(), default: 1)
-    field(:partition_pids, [pid()], default: [])
-    field(:max_log_size, pos_integer(), default: 100_000)
-    field(:log_ttl_ms, pos_integer() | nil, default: nil)
+  @type t :: %__MODULE__{
+          name: atom(),
+          jido: atom() | nil,
+          router: Router.t() | nil,
+          log: %{String.t() => Signal.t()},
+          snapshots: %{String.t() => Snapshot.SnapshotRef.t()},
+          subscriptions: %{String.t() => Subscriber.t()},
+          child_supervisor: pid() | nil,
+          middleware: [MiddlewarePipeline.middleware_config()],
+          middleware_timeout_ms: pos_integer(),
+          journal_adapter: module() | nil,
+          journal_pid: pid() | nil,
+          partition_count: pos_integer(),
+          partition_pids: [pid()],
+          max_log_size: pos_integer(),
+          log_ttl_ms: pos_integer() | nil
+        }
+
+  @enforce_keys [:name]
+  defstruct [
+    :name,
+    :child_supervisor,
+    jido: nil,
+    router: nil,
+    log: %{},
+    snapshots: %{},
+    subscriptions: %{},
+    middleware: [],
+    middleware_timeout_ms: 100,
+    journal_adapter: nil,
+    journal_pid: nil,
+    partition_count: 1,
+    partition_pids: [],
+    max_log_size: 100_000,
+    log_ttl_ms: nil
+  ]
+
+  @doc """
+  Creates a new BusState with the given name and options.
+
+  Automatically initializes the router to `Router.new!()` if not provided.
+
+  ## Examples
+
+      iex> state = Jido.Signal.Bus.State.new(:my_bus)
+      iex> state.name
+      :my_bus
+  """
+  @spec new(atom(), keyword()) :: t()
+  def new(name, opts \\ []) do
+    router = Keyword.get_lazy(opts, :router, fn -> Router.new!() end)
+
+    %__MODULE__{
+      name: name,
+      router: router,
+      jido: Keyword.get(opts, :jido),
+      child_supervisor: Keyword.get(opts, :child_supervisor),
+      log: Keyword.get(opts, :log, %{}),
+      snapshots: Keyword.get(opts, :snapshots, %{}),
+      subscriptions: Keyword.get(opts, :subscriptions, %{}),
+      middleware: Keyword.get(opts, :middleware, []),
+      middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
+      journal_adapter: Keyword.get(opts, :journal_adapter),
+      journal_pid: Keyword.get(opts, :journal_pid),
+      partition_count: Keyword.get(opts, :partition_count, 1),
+      partition_pids: Keyword.get(opts, :partition_pids, []),
+      max_log_size: Keyword.get(opts, :max_log_size, 100_000),
+      log_ttl_ms: Keyword.get(opts, :log_ttl_ms)
+    }
   end
 
   @doc """

@@ -8,22 +8,32 @@ defmodule Jido.Signal.Bus.Subscriber do
   """
 
   use Private
-  use TypedStruct
 
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
   alias Jido.Signal.Router
 
-  typedstruct do
-    field(:id, String.t(), enforce: true)
-    field(:path, String.t(), enforce: true)
-    field(:dispatch, term(), enforce: true)
-    field(:persistent?, boolean(), default: false)
-    field(:persistence_pid, pid(), default: nil)
-    field(:disconnected?, boolean(), default: false)
-    field(:created_at, DateTime.t(), default: DateTime.utc_now())
-  end
+  @type t :: %__MODULE__{
+          id: String.t(),
+          path: String.t(),
+          dispatch: term(),
+          persistent?: boolean(),
+          persistence_pid: pid() | nil,
+          disconnected?: boolean(),
+          created_at: DateTime.t()
+        }
+
+  @enforce_keys [:id, :path, :dispatch]
+  defstruct [
+    :id,
+    :path,
+    :dispatch,
+    persistent?: false,
+    persistence_pid: nil,
+    disconnected?: false,
+    created_at: nil
+  ]
 
   @spec subscribe(BusState.t(), String.t(), String.t(), keyword()) ::
           {:ok, BusState.t()} | {:error, Exception.t()}

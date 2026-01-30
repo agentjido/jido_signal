@@ -162,7 +162,6 @@ defmodule Jido.Signal.Router do
   - `Jido.Signal.Dispatch` - Dispatch adapter interface
   """
   use Private
-  use TypedStruct
 
   alias Jido.Signal
   alias Jido.Signal.Error
@@ -209,57 +208,95 @@ defmodule Jido.Signal.Router do
           {:ok, [Route.t()]} | {:error, term()}
   defdelegate normalize(input), to: Validator
 
-  # Alias the parent module for use in nested typedstruct modules
-  typedstruct module: HandlerInfo do
+  defmodule HandlerInfo do
     @moduledoc "Router Helper struct to store handler metadata"
     @default_priority 0
-    field(:target, ParentRouter.target(), enforce: true)
-    field(:priority, ParentRouter.priority(), default: @default_priority)
-    field(:complexity, non_neg_integer(), default: 0)
+
+    @type t :: %__MODULE__{
+            target: ParentRouter.target(),
+            priority: ParentRouter.priority(),
+            complexity: non_neg_integer()
+          }
+
+    @enforce_keys [:target]
+    defstruct [:target, priority: @default_priority, complexity: 0]
   end
 
-  typedstruct module: PatternMatch do
+  defmodule PatternMatch do
     @moduledoc "Router Helper struct to store pattern match metadata"
     @default_priority 0
-    field(:match, ParentRouter.match(), enforce: true)
-    field(:target, ParentRouter.target(), enforce: true)
-    field(:priority, ParentRouter.priority(), default: @default_priority)
-    field(:complexity, non_neg_integer(), default: 0)
+
+    @type t :: %__MODULE__{
+            match: ParentRouter.match(),
+            target: ParentRouter.target(),
+            priority: ParentRouter.priority(),
+            complexity: non_neg_integer()
+          }
+
+    @enforce_keys [:match, :target]
+    defstruct [:match, :target, priority: @default_priority, complexity: 0]
   end
 
-  typedstruct module: NodeHandlers do
+  defmodule NodeHandlers do
     @moduledoc "Router Helper struct to store node handler metadata"
-    field(:handlers, [HandlerInfo.t()], default: [])
-    field(:matchers, [PatternMatch.t()], default: [])
+
+    @type t :: %__MODULE__{
+            handlers: [HandlerInfo.t()],
+            matchers: [PatternMatch.t()]
+          }
+
+    defstruct handlers: [], matchers: []
   end
 
-  typedstruct module: WildcardHandlers do
+  defmodule WildcardHandlers do
     @moduledoc "Router Helper struct to store wildcard handler metadata"
-    field(:type, ParentRouter.wildcard_type(), enforce: true)
-    field(:handlers, NodeHandlers.t(), enforce: true)
+
+    @type t :: %__MODULE__{
+            type: ParentRouter.wildcard_type(),
+            handlers: NodeHandlers.t()
+          }
+
+    @enforce_keys [:type, :handlers]
+    defstruct [:type, :handlers]
   end
 
-  typedstruct module: TrieNode do
+  defmodule TrieNode do
     @moduledoc "Router Helper struct to store trie node metadata"
-    field(:segments, %{String.t() => TrieNode.t()}, default: %{})
-    field(:wildcards, [WildcardHandlers.t()], default: [])
-    field(:handlers, NodeHandlers.t())
+
+    @type t :: %__MODULE__{
+            segments: %{String.t() => t()},
+            wildcards: [WildcardHandlers.t()],
+            handlers: NodeHandlers.t() | nil
+          }
+
+    defstruct segments: %{}, wildcards: [], handlers: nil
   end
 
-  typedstruct module: Route do
+  defmodule Route do
     @moduledoc "Router Helper struct to store route metadata"
     @default_priority 0
-    field(:path, ParentRouter.path(), enforce: true)
-    field(:target, ParentRouter.target(), enforce: true)
-    field(:priority, ParentRouter.priority(), default: @default_priority)
-    field(:match, ParentRouter.match())
+
+    @type t :: %__MODULE__{
+            path: ParentRouter.path(),
+            target: ParentRouter.target(),
+            priority: ParentRouter.priority(),
+            match: ParentRouter.match() | nil
+          }
+
+    @enforce_keys [:path, :target]
+    defstruct [:path, :target, :match, priority: @default_priority]
   end
 
-  typedstruct module: Router do
+  defmodule Router do
     @moduledoc "Router Helper struct to store router metadata"
-    field(:trie, TrieNode.t(), default: %TrieNode{})
-    field(:route_count, non_neg_integer(), default: 0)
-    field(:cache_id, ParentRouter.cache_id())
+
+    @type t :: %__MODULE__{
+            trie: TrieNode.t(),
+            route_count: non_neg_integer(),
+            cache_id: ParentRouter.cache_id() | nil
+          }
+
+    defstruct trie: %TrieNode{}, route_count: 0, cache_id: nil
   end
 
   @type new_opts :: [cache_id: cache_id()]

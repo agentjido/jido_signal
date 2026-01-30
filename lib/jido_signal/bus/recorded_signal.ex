@@ -4,20 +4,20 @@ defmodule Jido.Signal.Bus.RecordedSignal do
 
   This struct wraps a signal with additional metadata about when it was recorded.
   """
-  use TypedStruct
-
   alias Jido.Signal.Serialization.JsonSerializer
 
   @derive {Jason.Encoder, only: [:id, :type, :created_at, :signal]}
 
-  typedstruct do
-    @typedoc "A recorded signal with metadata"
+  @typedoc "A recorded signal with metadata"
+  @type t :: %__MODULE__{
+          id: String.t(),
+          type: String.t(),
+          created_at: DateTime.t(),
+          signal: Jido.Signal.t()
+        }
 
-    field(:id, String.t(), enforce: true)
-    field(:type, String.t(), enforce: true)
-    field(:created_at, DateTime.t(), enforce: true)
-    field(:signal, Jido.Signal.t(), enforce: true)
-  end
+  @enforce_keys [:id, :type, :created_at, :signal]
+  defstruct [:id, :type, :created_at, :signal]
 
   @doc """
   Serializes a RecordedSignal or a list of RecordedSignals to JSON string.

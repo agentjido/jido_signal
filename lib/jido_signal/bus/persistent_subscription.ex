@@ -7,7 +7,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   Each instance maps 1:1 to a bus subscriber and is managed as a child of the Bus's dynamic supervisor.
   """
   use GenServer
-  use TypedStruct
 
   alias Jido.Signal.Bus
   alias Jido.Signal.Bus.Subscriber
@@ -16,30 +15,44 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   require Logger
 
-  typedstruct do
-    field(:id, String.t(), enforce: true)
-    field(:bus_pid, pid(), enforce: true)
-    field(:bus_subscription, Subscriber.t())
+  @type t :: %__MODULE__{
+          id: String.t(),
+          bus_pid: pid(),
+          bus_subscription: Subscriber.t() | nil,
+          client_pid: pid(),
+          checkpoint: non_neg_integer(),
+          max_in_flight: pos_integer(),
+          max_pending: pos_integer(),
+          in_flight_signals: map(),
+          pending_signals: map(),
+          max_attempts: pos_integer(),
+          attempts: %{String.t() => non_neg_integer()},
+          retry_interval: pos_integer(),
+          retry_timer_ref: reference() | nil,
+          journal_adapter: module() | nil,
+          journal_pid: pid() | nil,
+          checkpoint_key: String.t() | nil
+        }
 
-    # Persistent subscription state
-    field(:client_pid, pid(), enforce: true)
-    field(:checkpoint, non_neg_integer(), default: 0)
-    field(:max_in_flight, pos_integer(), default: 1000)
-    field(:max_pending, pos_integer(), default: 10_000)
-    field(:in_flight_signals, map(), default: %{})
-    field(:pending_signals, map(), default: %{})
-
-    # Retry and DLQ
-    field(:max_attempts, pos_integer(), default: 5)
-    field(:attempts, %{String.t() => non_neg_integer()}, default: %{})
-    field(:retry_interval, pos_integer(), default: 100)
-    field(:retry_timer_ref, reference() | nil, default: nil)
-
-    # Journal persistence
-    field(:journal_adapter, module(), default: nil)
-    field(:journal_pid, pid(), default: nil)
-    field(:checkpoint_key, String.t())
-  end
+  @enforce_keys [:id, :bus_pid, :client_pid]
+  defstruct [
+    :id,
+    :bus_pid,
+    :bus_subscription,
+    :client_pid,
+    checkpoint: 0,
+    max_in_flight: 1000,
+    max_pending: 10_000,
+    in_flight_signals: %{},
+    pending_signals: %{},
+    max_attempts: 5,
+    attempts: %{},
+    retry_interval: 100,
+    retry_timer_ref: nil,
+    journal_adapter: nil,
+    journal_pid: nil,
+    checkpoint_key: nil
+  ]
 
   # Client API
 
