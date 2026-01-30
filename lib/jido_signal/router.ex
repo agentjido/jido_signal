@@ -294,7 +294,7 @@ defmodule Jido.Signal.Router do
               %{
                 segments: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
                 wildcards: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
-                handlers: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+                handlers: Zoi.default(Zoi.any(), %NodeHandlers{}) |> Zoi.optional()
               }
             )
 
