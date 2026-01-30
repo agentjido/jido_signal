@@ -8,42 +8,35 @@ defmodule Jido.Signal.Bus.Partition do
   use GenServer
 
   alias Jido.Signal.Bus.MiddlewarePipeline
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Router
 
   require Logger
 
-  @type t :: %__MODULE__{
-          partition_id: non_neg_integer(),
-          bus_name: atom(),
-          bus_pid: pid(),
-          subscriptions: %{String.t() => Subscriber.t()},
-          middleware: [MiddlewarePipeline.middleware_config()],
-          middleware_timeout_ms: pos_integer(),
-          journal_adapter: module() | nil,
-          journal_pid: pid() | nil,
-          rate_limit_per_sec: pos_integer(),
-          burst_size: pos_integer(),
-          tokens: float(),
-          last_refill: integer() | nil
-        }
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              partition_id: Zoi.integer(),
+              bus_name: Zoi.atom(),
+              bus_pid: Zoi.any(),
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              rate_limit_per_sec: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
+              burst_size: Zoi.default(Zoi.integer(), 1_000) |> Zoi.optional(),
+              tokens: Zoi.default(Zoi.float(), 1_000.0) |> Zoi.optional(),
+              last_refill: Zoi.integer() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-  @enforce_keys [:partition_id, :bus_name, :bus_pid]
-  defstruct [
-    :partition_id,
-    :bus_name,
-    :bus_pid,
-    subscriptions: %{},
-    middleware: [],
-    middleware_timeout_ms: 100,
-    journal_adapter: nil,
-    journal_pid: nil,
-    rate_limit_per_sec: 10_000,
-    burst_size: 1_000,
-    tokens: 1_000.0,
-    last_refill: nil
-  ]
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Partition"
+  def schema, do: @schema
 
   @doc """
   Starts a partition worker linked to the calling process.

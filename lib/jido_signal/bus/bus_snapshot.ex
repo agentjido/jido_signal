@@ -55,14 +55,22 @@ defmodule Jido.Signal.Bus.Snapshot do
     * `path` - The path pattern used to filter signals
     * `created_at` - When the snapshot was created
     """
-    @type t :: %__MODULE__{
-            id: String.t(),
-            path: String.t(),
-            created_at: DateTime.t()
-          }
 
-    @enforce_keys [:id, :path, :created_at]
-    defstruct [:id, :path, :created_at]
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                id: Zoi.string(),
+                path: Zoi.string(),
+                created_at: Zoi.any()
+              }
+            )
+
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for SnapshotRef"
+    def schema, do: @schema
   end
 
   defmodule SnapshotData do
@@ -77,15 +85,23 @@ defmodule Jido.Signal.Bus.Snapshot do
     * `signals` - Map of recorded signals matching the path pattern, keyed by signal ID
     * `created_at` - When the snapshot was created
     """
-    @type t :: %__MODULE__{
-            id: String.t(),
-            path: String.t(),
-            signals: %{String.t() => Jido.Signal.t()},
-            created_at: DateTime.t()
-          }
 
-    @enforce_keys [:id, :path, :signals, :created_at]
-    defstruct [:id, :path, :signals, :created_at]
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                id: Zoi.string(),
+                path: Zoi.string(),
+                signals: Zoi.map(),
+                created_at: Zoi.any()
+              }
+            )
+
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for SnapshotData"
+    def schema, do: @schema
   end
 
   @doc """

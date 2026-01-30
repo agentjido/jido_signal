@@ -21,23 +21,24 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   alias Jido.Signal.ID
 
-  defstruct [
-    :signals_table,
-    :causes_table,
-    :effects_table,
-    :conversations_table,
-    :checkpoints_table,
-    :dlq_table
-  ]
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              signals_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              causes_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              effects_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              conversations_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              checkpoints_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              dlq_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-  @type t :: %__MODULE__{
-          signals_table: atom(),
-          causes_table: atom(),
-          effects_table: atom(),
-          conversations_table: atom(),
-          checkpoints_table: atom(),
-          dlq_table: atom()
-        }
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for ETS adapter"
+  def schema, do: @schema
 
   # Client API
 

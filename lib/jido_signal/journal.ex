@@ -6,14 +6,21 @@ defmodule Jido.Signal.Journal do
   """
   alias Jido.Signal
 
-  @typedoc "The journal maintains the graph of signals and their relationships"
-  @type t :: %__MODULE__{
-          adapter: module(),
-          adapter_pid: pid() | nil
-        }
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              adapter: Zoi.atom(),
+              adapter_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-  @enforce_keys [:adapter]
-  defstruct [:adapter, :adapter_pid]
+  @typedoc "The journal maintains the graph of signals and their relationships"
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Journal"
+  def schema, do: @schema
 
   @type query_opts :: [
           type: String.t() | nil,

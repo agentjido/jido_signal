@@ -8,16 +8,23 @@ defmodule Jido.Signal.Bus.RecordedSignal do
 
   @derive {Jason.Encoder, only: [:id, :type, :created_at, :signal]}
 
-  @typedoc "A recorded signal with metadata"
-  @type t :: %__MODULE__{
-          id: String.t(),
-          type: String.t(),
-          created_at: DateTime.t(),
-          signal: Jido.Signal.t()
-        }
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              id: Zoi.string(),
+              type: Zoi.string(),
+              created_at: Zoi.any(),
+              signal: Zoi.any()
+            }
+          )
 
-  @enforce_keys [:id, :type, :created_at, :signal]
-  defstruct [:id, :type, :created_at, :signal]
+  @typedoc "A recorded signal with metadata"
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for RecordedSignal"
+  def schema, do: @schema
 
   @doc """
   Serializes a RecordedSignal or a list of RecordedSignals to JSON string.

@@ -14,24 +14,40 @@ defmodule Jido.Signal.Registry do
     A subscription maps a signal path pattern to a dispatch configuration,
     allowing signals matching the pattern to be routed to the specified target.
     """
-    @typedoc "A single subscription mapping a path to dispatch configuration"
-    @type t :: %__MODULE__{
-            id: String.t(),
-            path: String.t(),
-            dispatch: term(),
-            created_at: DateTime.t() | nil
-          }
 
-    @enforce_keys [:id, :path, :dispatch]
-    defstruct [:id, :path, :dispatch, :created_at]
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                id: Zoi.string(),
+                path: Zoi.string(),
+                dispatch: Zoi.any(),
+                created_at: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              }
+            )
+
+    @typedoc "A single subscription mapping a path to dispatch configuration"
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for Subscription"
+    def schema, do: @schema
   end
 
-  @typedoc "Registry containing a unique mapping of subscription IDs to subscriptions"
-  @type t :: %__MODULE__{
-          subscriptions: %{String.t() => Subscription.t()}
-        }
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional()
+            }
+          )
 
-  defstruct subscriptions: %{}
+  @typedoc "Registry containing a unique mapping of subscription IDs to subscriptions"
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Registry"
+  def schema, do: @schema
 
   @doc """
   Creates a new empty registry.

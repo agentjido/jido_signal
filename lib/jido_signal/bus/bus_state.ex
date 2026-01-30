@@ -9,48 +9,36 @@ defmodule Jido.Signal.Bus.State do
   """
 
   alias Jido.Signal
-  alias Jido.Signal.Bus.MiddlewarePipeline
-  alias Jido.Signal.Bus.Snapshot
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.ID
   alias Jido.Signal.Router
 
-  @type t :: %__MODULE__{
-          name: atom(),
-          jido: atom() | nil,
-          router: Router.t() | nil,
-          log: %{String.t() => Signal.t()},
-          snapshots: %{String.t() => Snapshot.SnapshotRef.t()},
-          subscriptions: %{String.t() => Subscriber.t()},
-          child_supervisor: pid() | nil,
-          middleware: [MiddlewarePipeline.middleware_config()],
-          middleware_timeout_ms: pos_integer(),
-          journal_adapter: module() | nil,
-          journal_pid: pid() | nil,
-          partition_count: pos_integer(),
-          partition_pids: [pid()],
-          max_log_size: pos_integer(),
-          log_ttl_ms: pos_integer() | nil
-        }
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              name: Zoi.atom(),
+              jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              router: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              log: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              snapshots: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              child_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
+              partition_pids: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              max_log_size: Zoi.default(Zoi.integer(), 100_000) |> Zoi.optional(),
+              log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-  @enforce_keys [:name]
-  defstruct [
-    :name,
-    :child_supervisor,
-    jido: nil,
-    router: nil,
-    log: %{},
-    snapshots: %{},
-    subscriptions: %{},
-    middleware: [],
-    middleware_timeout_ms: 100,
-    journal_adapter: nil,
-    journal_pid: nil,
-    partition_count: 1,
-    partition_pids: [],
-    max_log_size: 100_000,
-    log_ttl_ms: nil
-  ]
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for State"
+  def schema, do: @schema
 
   @doc """
   Creates a new BusState with the given name and options.

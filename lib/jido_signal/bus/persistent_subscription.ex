@@ -9,50 +9,39 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   use GenServer
 
   alias Jido.Signal.Bus
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
 
   require Logger
 
-  @type t :: %__MODULE__{
-          id: String.t(),
-          bus_pid: pid(),
-          bus_subscription: Subscriber.t() | nil,
-          client_pid: pid(),
-          checkpoint: non_neg_integer(),
-          max_in_flight: pos_integer(),
-          max_pending: pos_integer(),
-          in_flight_signals: map(),
-          pending_signals: map(),
-          max_attempts: pos_integer(),
-          attempts: %{String.t() => non_neg_integer()},
-          retry_interval: pos_integer(),
-          retry_timer_ref: reference() | nil,
-          journal_adapter: module() | nil,
-          journal_pid: pid() | nil,
-          checkpoint_key: String.t() | nil
-        }
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              id: Zoi.string(),
+              bus_pid: Zoi.any(),
+              bus_subscription: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              client_pid: Zoi.any(),
+              checkpoint: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
+              max_in_flight: Zoi.default(Zoi.integer(), 1000) |> Zoi.optional(),
+              max_pending: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
+              in_flight_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              pending_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              max_attempts: Zoi.default(Zoi.integer(), 5) |> Zoi.optional(),
+              attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              retry_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              checkpoint_key: Zoi.string() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-  @enforce_keys [:id, :bus_pid, :client_pid]
-  defstruct [
-    :id,
-    :bus_pid,
-    :bus_subscription,
-    :client_pid,
-    checkpoint: 0,
-    max_in_flight: 1000,
-    max_pending: 10_000,
-    in_flight_signals: %{},
-    pending_signals: %{},
-    max_attempts: 5,
-    attempts: %{},
-    retry_interval: 100,
-    retry_timer_ref: nil,
-    journal_adapter: nil,
-    journal_pid: nil,
-    checkpoint_key: nil
-  ]
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for PersistentSubscription"
+  def schema, do: @schema
 
   # Client API
 

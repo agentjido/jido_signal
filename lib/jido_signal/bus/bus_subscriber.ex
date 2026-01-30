@@ -14,26 +14,25 @@ defmodule Jido.Signal.Bus.Subscriber do
   alias Jido.Signal.Error
   alias Jido.Signal.Router
 
-  @type t :: %__MODULE__{
-          id: String.t(),
-          path: String.t(),
-          dispatch: term(),
-          persistent?: boolean(),
-          persistence_pid: pid() | nil,
-          disconnected?: boolean(),
-          created_at: DateTime.t()
-        }
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              id: Zoi.string(),
+              path: Zoi.string(),
+              dispatch: Zoi.any(),
+              persistent?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
+              persistence_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              disconnected?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
+              created_at: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-  @enforce_keys [:id, :path, :dispatch]
-  defstruct [
-    :id,
-    :path,
-    :dispatch,
-    persistent?: false,
-    persistence_pid: nil,
-    disconnected?: false,
-    created_at: nil
-  ]
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Subscriber"
+  def schema, do: @schema
 
   @spec subscribe(BusState.t(), String.t(), String.t(), keyword()) ::
           {:ok, BusState.t()} | {:error, Exception.t()}

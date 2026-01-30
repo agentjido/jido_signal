@@ -165,7 +165,6 @@ defmodule Jido.Signal.Router do
 
   alias Jido.Signal
   alias Jido.Signal.Error
-  alias Jido.Signal.Router, as: ParentRouter
   alias Jido.Signal.Router.{Cache, Engine, Route, Validator}
 
   @type cache_id :: Cache.cache_id()
@@ -210,93 +209,142 @@ defmodule Jido.Signal.Router do
 
   defmodule HandlerInfo do
     @moduledoc "Router Helper struct to store handler metadata"
-    @default_priority 0
 
-    @type t :: %__MODULE__{
-            target: ParentRouter.target(),
-            priority: ParentRouter.priority(),
-            complexity: non_neg_integer()
-          }
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                target: Zoi.any(),
+                priority: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
+                complexity: Zoi.default(Zoi.integer(), 0) |> Zoi.optional()
+              }
+            )
 
-    @enforce_keys [:target]
-    defstruct [:target, priority: @default_priority, complexity: 0]
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for HandlerInfo"
+    def schema, do: @schema
   end
 
   defmodule PatternMatch do
     @moduledoc "Router Helper struct to store pattern match metadata"
-    @default_priority 0
 
-    @type t :: %__MODULE__{
-            match: ParentRouter.match(),
-            target: ParentRouter.target(),
-            priority: ParentRouter.priority(),
-            complexity: non_neg_integer()
-          }
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                match: Zoi.any(),
+                target: Zoi.any(),
+                priority: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
+                complexity: Zoi.default(Zoi.integer(), 0) |> Zoi.optional()
+              }
+            )
 
-    @enforce_keys [:match, :target]
-    defstruct [:match, :target, priority: @default_priority, complexity: 0]
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for PatternMatch"
+    def schema, do: @schema
   end
 
   defmodule NodeHandlers do
     @moduledoc "Router Helper struct to store node handler metadata"
 
-    @type t :: %__MODULE__{
-            handlers: [HandlerInfo.t()],
-            matchers: [PatternMatch.t()]
-          }
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                handlers: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+                matchers: Zoi.default(Zoi.list(), []) |> Zoi.optional()
+              }
+            )
 
-    defstruct handlers: [], matchers: []
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for NodeHandlers"
+    def schema, do: @schema
   end
 
   defmodule WildcardHandlers do
     @moduledoc "Router Helper struct to store wildcard handler metadata"
 
-    @type t :: %__MODULE__{
-            type: ParentRouter.wildcard_type(),
-            handlers: NodeHandlers.t()
-          }
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                type: Zoi.atom(),
+                handlers: Zoi.any()
+              }
+            )
 
-    @enforce_keys [:type, :handlers]
-    defstruct [:type, :handlers]
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for WildcardHandlers"
+    def schema, do: @schema
   end
 
   defmodule TrieNode do
     @moduledoc "Router Helper struct to store trie node metadata"
 
-    @type t :: %__MODULE__{
-            segments: %{String.t() => t()},
-            wildcards: [WildcardHandlers.t()],
-            handlers: NodeHandlers.t() | nil
-          }
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                segments: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+                wildcards: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+                handlers: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              }
+            )
 
-    defstruct segments: %{}, wildcards: [], handlers: nil
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for TrieNode"
+    def schema, do: @schema
   end
 
   defmodule Route do
     @moduledoc "Router Helper struct to store route metadata"
-    @default_priority 0
 
-    @type t :: %__MODULE__{
-            path: ParentRouter.path(),
-            target: ParentRouter.target(),
-            priority: ParentRouter.priority(),
-            match: ParentRouter.match() | nil
-          }
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                path: Zoi.string(),
+                target: Zoi.any(),
+                priority: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
+                match: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              }
+            )
 
-    @enforce_keys [:path, :target]
-    defstruct [:path, :target, :match, priority: @default_priority]
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for Route"
+    def schema, do: @schema
   end
 
   defmodule Router do
     @moduledoc "Router Helper struct to store router metadata"
 
-    @type t :: %__MODULE__{
-            trie: TrieNode.t(),
-            route_count: non_neg_integer(),
-            cache_id: ParentRouter.cache_id() | nil
-          }
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                trie: Zoi.default(Zoi.any(), %TrieNode{}) |> Zoi.optional(),
+                route_count: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
+                cache_id: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              }
+            )
 
-    defstruct trie: %TrieNode{}, route_count: 0, cache_id: nil
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for Router"
+    def schema, do: @schema
   end
 
   @type new_opts :: [cache_id: cache_id()]
