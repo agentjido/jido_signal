@@ -8,31 +8,70 @@ defmodule Jido.Signal.Bus.State do
   and querying this state.
   """
 
-  use TypedStruct
-
   alias Jido.Signal
-  alias Jido.Signal.Bus.MiddlewarePipeline
-  alias Jido.Signal.Bus.Snapshot
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.ID
   alias Jido.Signal.Router
 
-  typedstruct do
-    field(:name, atom(), enforce: true)
-    field(:jido, atom() | nil, default: nil)
-    field(:router, Router.Router.t(), default: Router.new!())
-    field(:log, %{String.t() => Signal.t()}, default: %{})
-    field(:snapshots, %{String.t() => Snapshot.SnapshotRef.t()}, default: %{})
-    field(:subscriptions, %{String.t() => Subscriber.t()}, default: %{})
-    field(:child_supervisor, pid())
-    field(:middleware, [MiddlewarePipeline.middleware_config()], default: [])
-    field(:middleware_timeout_ms, pos_integer(), default: 100)
-    field(:journal_adapter, module(), default: nil)
-    field(:journal_pid, pid(), default: nil)
-    field(:partition_count, pos_integer(), default: 1)
-    field(:partition_pids, [pid()], default: [])
-    field(:max_log_size, pos_integer(), default: 100_000)
-    field(:log_ttl_ms, pos_integer() | nil, default: nil)
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              name: Zoi.atom(),
+              jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              router: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              log: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              snapshots: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              child_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
+              partition_pids: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              max_log_size: Zoi.default(Zoi.integer(), 100_000) |> Zoi.optional(),
+              log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for State"
+  def schema, do: @schema
+
+  @doc """
+  Creates a new BusState with the given name and options.
+
+  Automatically initializes the router to `Router.new!()` if not provided.
+
+  ## Examples
+
+      iex> state = Jido.Signal.Bus.State.new(:my_bus)
+      iex> state.name
+      :my_bus
+  """
+  @spec new(atom(), keyword()) :: t()
+  def new(name, opts \\ []) do
+    router = Keyword.get_lazy(opts, :router, fn -> Router.new!() end)
+
+    %__MODULE__{
+      name: name,
+      router: router,
+      jido: Keyword.get(opts, :jido),
+      child_supervisor: Keyword.get(opts, :child_supervisor),
+      log: Keyword.get(opts, :log, %{}),
+      snapshots: Keyword.get(opts, :snapshots, %{}),
+      subscriptions: Keyword.get(opts, :subscriptions, %{}),
+      middleware: Keyword.get(opts, :middleware, []),
+      middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
+      journal_adapter: Keyword.get(opts, :journal_adapter),
+      journal_pid: Keyword.get(opts, :journal_pid),
+      partition_count: Keyword.get(opts, :partition_count, 1),
+      partition_pids: Keyword.get(opts, :partition_pids, []),
+      max_log_size: Keyword.get(opts, :max_log_size, 100_000),
+      log_ttl_ms: Keyword.get(opts, :log_ttl_ms)
+    }
   end
 
   @doc """

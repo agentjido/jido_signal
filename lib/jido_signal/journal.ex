@@ -4,15 +4,23 @@ defmodule Jido.Signal.Journal do
   and conversation relationships. It provides a directed graph of signals that captures
   temporal ordering and causal relationships.
   """
-  use TypedStruct
-
   alias Jido.Signal
 
-  typedstruct do
-    @typedoc "The journal maintains the graph of signals and their relationships"
-    field(:adapter, module(), enforce: true)
-    field(:adapter_pid, pid())
-  end
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              adapter: Zoi.atom(),
+              adapter_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
+
+  @typedoc "The journal maintains the graph of signals and their relationships"
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Journal"
+  def schema, do: @schema
 
   @type query_opts :: [
           type: String.t() | nil,

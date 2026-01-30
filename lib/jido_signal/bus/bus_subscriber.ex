@@ -8,22 +8,31 @@ defmodule Jido.Signal.Bus.Subscriber do
   """
 
   use Private
-  use TypedStruct
 
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
   alias Jido.Signal.Router
 
-  typedstruct do
-    field(:id, String.t(), enforce: true)
-    field(:path, String.t(), enforce: true)
-    field(:dispatch, term(), enforce: true)
-    field(:persistent?, boolean(), default: false)
-    field(:persistence_pid, pid(), default: nil)
-    field(:disconnected?, boolean(), default: false)
-    field(:created_at, DateTime.t(), default: DateTime.utc_now())
-  end
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              id: Zoi.string(),
+              path: Zoi.string(),
+              dispatch: Zoi.any(),
+              persistent?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
+              persistence_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              disconnected?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
+              created_at: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Subscriber"
+  def schema, do: @schema
 
   @spec subscribe(BusState.t(), String.t(), String.t(), keyword()) ::
           {:ok, BusState.t()} | {:error, Exception.t()}
