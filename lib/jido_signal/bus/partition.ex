@@ -6,29 +6,37 @@ defmodule Jido.Signal.Bus.Partition do
   Each partition manages its own set of subscriptions based on a hash of the subscription ID.
   """
   use GenServer
-  use TypedStruct
 
   alias Jido.Signal.Bus.MiddlewarePipeline
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Router
 
   require Logger
 
-  typedstruct do
-    field(:partition_id, non_neg_integer(), enforce: true)
-    field(:bus_name, atom(), enforce: true)
-    field(:bus_pid, pid(), enforce: true)
-    field(:subscriptions, %{String.t() => Subscriber.t()}, default: %{})
-    field(:middleware, [MiddlewarePipeline.middleware_config()], default: [])
-    field(:middleware_timeout_ms, pos_integer(), default: 100)
-    field(:journal_adapter, module())
-    field(:journal_pid, pid())
-    field(:rate_limit_per_sec, pos_integer(), default: 10_000)
-    field(:burst_size, pos_integer(), default: 1_000)
-    field(:tokens, float(), default: 1_000.0)
-    field(:last_refill, integer())
-  end
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              partition_id: Zoi.integer(),
+              bus_name: Zoi.atom(),
+              bus_pid: Zoi.any(),
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              rate_limit_per_sec: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
+              burst_size: Zoi.default(Zoi.integer(), 1_000) |> Zoi.optional(),
+              tokens: Zoi.default(Zoi.float(), 1_000.0) |> Zoi.optional(),
+              last_refill: Zoi.integer() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Partition"
+  def schema, do: @schema
 
   @doc """
   Starts a partition worker linked to the calling process.

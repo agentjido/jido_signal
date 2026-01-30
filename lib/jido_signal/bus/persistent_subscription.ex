@@ -7,39 +7,41 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   Each instance maps 1:1 to a bus subscriber and is managed as a child of the Bus's dynamic supervisor.
   """
   use GenServer
-  use TypedStruct
 
   alias Jido.Signal.Bus
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
 
   require Logger
 
-  typedstruct do
-    field(:id, String.t(), enforce: true)
-    field(:bus_pid, pid(), enforce: true)
-    field(:bus_subscription, Subscriber.t())
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              id: Zoi.string(),
+              bus_pid: Zoi.any(),
+              bus_subscription: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              client_pid: Zoi.any(),
+              checkpoint: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
+              max_in_flight: Zoi.default(Zoi.integer(), 1000) |> Zoi.optional(),
+              max_pending: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
+              in_flight_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              pending_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              max_attempts: Zoi.default(Zoi.integer(), 5) |> Zoi.optional(),
+              attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              retry_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              checkpoint_key: Zoi.string() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-    # Persistent subscription state
-    field(:client_pid, pid(), enforce: true)
-    field(:checkpoint, non_neg_integer(), default: 0)
-    field(:max_in_flight, pos_integer(), default: 1000)
-    field(:max_pending, pos_integer(), default: 10_000)
-    field(:in_flight_signals, map(), default: %{})
-    field(:pending_signals, map(), default: %{})
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
 
-    # Retry and DLQ
-    field(:max_attempts, pos_integer(), default: 5)
-    field(:attempts, %{String.t() => non_neg_integer()}, default: %{})
-    field(:retry_interval, pos_integer(), default: 100)
-    field(:retry_timer_ref, reference() | nil, default: nil)
-
-    # Journal persistence
-    field(:journal_adapter, module(), default: nil)
-    field(:journal_pid, pid(), default: nil)
-    field(:checkpoint_key, String.t())
-  end
+  @doc "Returns the Zoi schema for PersistentSubscription"
+  def schema, do: @schema
 
   # Client API
 

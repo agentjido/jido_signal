@@ -8,7 +8,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "append_signals/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       {:ok, state: state}
     end
 
@@ -142,7 +142,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "log_to_list/1" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       signals = [
         Signal.new!(type: "test.signal", source: "test.source", data: "data1"),
@@ -175,7 +175,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "truncate_log/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       signals =
         for i <- 1..5 do
@@ -251,7 +251,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "clear_log/1" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       signals = [
         Signal.new!(type: "test.signal", source: "test.source", data: "data1"),
@@ -292,7 +292,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "add_route/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       route = %Router.Route{path: "test.*", target: {:pid, target: self()}, priority: 0}
       {:ok, state: state, route: route}
     end
@@ -312,7 +312,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "remove_route/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       route = %Router.Route{path: "test.*", target: {:pid, target: self()}, priority: 0}
       {:ok, state} = State.add_route(state, route)
       {:ok, state: state, route: route}
@@ -332,7 +332,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "subscription management" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       subscription = %Jido.Signal.Bus.Subscriber{
         id: "sub1",
@@ -392,7 +392,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "auto truncation on append" do
     setup do
-      state = %State{name: :test_bus, max_log_size: 10}
+      state = State.new(:test_bus, max_log_size: 10)
       {:ok, state: state}
     end
 
@@ -473,7 +473,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
     test "respects max_log_size from state config" do
       # Create state with custom max_log_size
-      state = %State{name: :test_bus, max_log_size: 3}
+      state = State.new(:test_bus, max_log_size: 3)
 
       signals =
         for i <- 1..10 do
@@ -488,7 +488,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "signal log integration" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       {:ok, state: state}
     end
 

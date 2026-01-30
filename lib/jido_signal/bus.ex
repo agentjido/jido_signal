@@ -40,7 +40,6 @@ defmodule Jido.Signal.Bus do
   """
 
   use GenServer
-  use TypedStruct
 
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Partition
