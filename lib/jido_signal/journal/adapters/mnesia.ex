@@ -310,7 +310,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
     duration_us = System.monotonic_time(:microsecond) - start_time
     emit_telemetry(:put_dlq_entry, duration_us)
 
-    :telemetry.execute(
+    Jido.Signal.Telemetry.execute(
       [:jido, :signal, :journal, :dlq, :put],
       %{},
       %{subscription_id: subscription_id, entry_id: entry_id}
@@ -357,7 +357,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
           end)
           |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
 
-        :telemetry.execute(
+        Jido.Signal.Telemetry.execute(
           [:jido, :signal, :journal, :dlq, :get],
           %{count: length(entries)},
           %{subscription_id: subscription_id}
@@ -415,7 +415,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
   end
 
   defp emit_telemetry(operation, duration_us) do
-    :telemetry.execute(
+    Jido.Signal.Telemetry.execute(
       [:jido, :signal, :journal, :mnesia, :operation],
       %{duration_us: duration_us},
       %{operation: operation}

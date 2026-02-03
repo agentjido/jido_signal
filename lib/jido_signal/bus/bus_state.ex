@@ -117,7 +117,7 @@ defmodule Jido.Signal.Bus.State do
 
         # Emit telemetry if truncation occurred
         if truncated_count > 0 do
-          :telemetry.execute(
+          Jido.Signal.Telemetry.execute(
             [:jido, :signal, :bus, :log_truncated],
             %{removed_count: truncated_count},
             %{bus_name: state.name, new_size: state.max_log_size}

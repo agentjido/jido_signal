@@ -150,7 +150,7 @@ defmodule Jido.Signal.BusSpy do
   def init(_opts) do
     # Attach telemetry handlers for all bus events
     for event <- @events do
-      :telemetry.attach(
+      Jido.Signal.Telemetry.attach(
         {__MODULE__, self(), event},
         event,
         &handle_telemetry_event/4,
@@ -264,7 +264,7 @@ defmodule Jido.Signal.BusSpy do
   def terminate(_reason, _state) do
     # Detach all telemetry handlers
     for event <- @events do
-      :telemetry.detach({__MODULE__, self(), event})
+      Jido.Signal.Telemetry.detach({__MODULE__, self(), event})
     end
 
     :ok

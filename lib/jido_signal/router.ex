@@ -688,7 +688,7 @@ defmodule Jido.Signal.Router do
 
     case results do
       [] ->
-        :telemetry.execute(
+        Jido.Signal.Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: 0},
           %{signal_type: signal.type, cache_id: cache_id, matched: false}
@@ -701,7 +701,7 @@ defmodule Jido.Signal.Router do
          )}
 
       _ ->
-        :telemetry.execute(
+        Jido.Signal.Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: length(results)},
           %{signal_type: signal.type, cache_id: cache_id, matched: true}

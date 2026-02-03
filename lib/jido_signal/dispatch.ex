@@ -561,7 +561,7 @@ defmodule Jido.Signal.Dispatch do
       target: get_target_from_opts(opts)
     }
 
-    :telemetry.execute([:jido, :dispatch, :start], %{}, metadata)
+    Jido.Signal.Telemetry.execute([:jido, :dispatch, :start], %{}, metadata)
 
     result = do_dispatch_single(signal, {adapter, opts})
 
@@ -573,9 +573,9 @@ defmodule Jido.Signal.Dispatch do
     metadata = Map.put(metadata, :success?, success)
 
     if success do
-      :telemetry.execute([:jido, :dispatch, :stop], measurements, metadata)
+      Jido.Signal.Telemetry.execute([:jido, :dispatch, :stop], measurements, metadata)
     else
-      :telemetry.execute([:jido, :dispatch, :exception], measurements, metadata)
+      Jido.Signal.Telemetry.execute([:jido, :dispatch, :exception], measurements, metadata)
     end
 
     result

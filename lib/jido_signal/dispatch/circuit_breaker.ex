@@ -62,7 +62,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
     refresh = Keyword.get(opts, :refresh, @default_reset_ms)
     fuse_opts = {strategy, {:reset, refresh}}
 
-    case :fuse.install(fuse_name(adapter_type), fuse_opts) do
+    case fuse_call(:install, [fuse_name(adapter_type), fuse_opts]) do
       :ok -> :ok
       :reset -> :ok
       {:error, :already_installed} -> :ok
@@ -89,7 +89,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   """
   @spec run(atom(), (-> any())) :: any() | {:error, :circuit_open}
   def run(adapter_type, fun) do
-    case :fuse.ask(fuse_name(adapter_type), :sync) do
+    case fuse_call(:ask, [fuse_name(adapter_type), :sync]) do
       :ok ->
         try do
           result = fun.()
@@ -102,13 +102,13 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
               ok
 
             {:error, _} = error ->
-              :fuse.melt(fuse_name(adapter_type))
+              _ = fuse_call(:melt, [fuse_name(adapter_type)])
               emit_melt_telemetry(adapter_type)
               error
           end
         rescue
           e ->
-            :fuse.melt(fuse_name(adapter_type))
+            _ = fuse_call(:melt, [fuse_name(adapter_type)])
             emit_melt_telemetry(adapter_type)
             {:error, {:exception, Exception.message(e)}}
         end
@@ -133,7 +133,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   """
   @spec status(atom()) :: :ok | :blown
   def status(adapter_type) do
-    case :fuse.ask(fuse_name(adapter_type), :sync) do
+    case fuse_call(:ask, [fuse_name(adapter_type), :sync]) do
       :ok -> :ok
       :blown -> :blown
     end
@@ -152,7 +152,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   """
   @spec reset(atom()) :: :ok
   def reset(adapter_type) do
-    :fuse.reset(fuse_name(adapter_type))
+    _ = fuse_call(:reset, [fuse_name(adapter_type)])
     emit_reset_telemetry(adapter_type)
     :ok
   end
@@ -171,11 +171,15 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   """
   @spec installed?(atom()) :: boolean()
   def installed?(adapter_type) do
-    case :fuse.ask(fuse_name(adapter_type), :sync) do
+    case fuse_call(:ask, [fuse_name(adapter_type), :sync]) do
       :ok -> true
       :blown -> true
       {:error, :not_found} -> false
     end
+  end
+
+  defp fuse_call(function_name, args) when is_atom(function_name) and is_list(args) do
+    apply(:fuse, function_name, args)
   end
 
   defp fuse_name(adapter_type) when is_atom(adapter_type) do
@@ -183,7 +187,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   end
 
   defp emit_melt_telemetry(adapter_type) do
-    :telemetry.execute(
+    Jido.Signal.Telemetry.execute(
       [:jido, :dispatch, :circuit, :melt],
       %{},
       %{adapter: adapter_type}
@@ -191,7 +195,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   end
 
   defp emit_rejected_telemetry(adapter_type) do
-    :telemetry.execute(
+    Jido.Signal.Telemetry.execute(
       [:jido, :dispatch, :circuit, :rejected],
       %{},
       %{adapter: adapter_type}
@@ -199,7 +203,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   end
 
   defp emit_reset_telemetry(adapter_type) do
-    :telemetry.execute(
+    Jido.Signal.Telemetry.execute(
       [:jido, :dispatch, :circuit, :reset],
       %{},
       %{adapter: adapter_type}
