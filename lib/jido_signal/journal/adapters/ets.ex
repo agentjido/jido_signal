@@ -20,6 +20,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   use GenServer
 
   alias Jido.Signal.ID
+  alias Jido.Signal.Telemetry
 
   @schema Zoi.struct(
             __MODULE__,
@@ -335,7 +336,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl GenServer
   def handle_call({:put_checkpoint, subscription_id, checkpoint}, _from, adapter) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :journal, :checkpoint, :put],
       %{},
       %{subscription_id: subscription_id}
@@ -350,7 +351,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
     reply =
       case :ets.lookup(adapter.checkpoints_table, subscription_id) do
         [{^subscription_id, checkpoint}] ->
-          :telemetry.execute(
+          Telemetry.execute(
             [:jido, :signal, :journal, :checkpoint, :get],
             %{},
             %{subscription_id: subscription_id, found: true}
@@ -359,7 +360,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
           {:ok, checkpoint}
 
         [] ->
-          :telemetry.execute(
+          Telemetry.execute(
             [:jido, :signal, :journal, :checkpoint, :get],
             %{},
             %{subscription_id: subscription_id, found: false}
@@ -392,7 +393,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
     true = :ets.insert(adapter.dlq_table, {entry_id, entry})
 
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :journal, :dlq, :put],
       %{},
       %{subscription_id: subscription_id, entry_id: entry_id}
@@ -409,7 +410,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
       |> Enum.filter(fn entry -> entry.subscription_id == subscription_id end)
       |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
 
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :journal, :dlq, :get],
       %{count: length(entries)},
       %{subscription_id: subscription_id}

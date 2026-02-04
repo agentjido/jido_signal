@@ -17,6 +17,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   alias Jido.Signal.Bus.Middleware
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
+  alias Jido.Signal.Telemetry
 
   @type middleware_config :: {module(), term()}
   @type context :: Middleware.context()
@@ -269,7 +270,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
         result
 
       nil ->
-        :telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :middleware, :timeout],
           %{timeout_ms: timeout_ms},
           %{module: module, bus_name: context[:bus_name]}
@@ -299,7 +300,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   end
 
   defp emit_before_publish_start(context, module, signals_count) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :middleware, :before_publish, :start],
       %{system_time: System.system_time()},
       %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
@@ -325,7 +326,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   end
 
   defp emit_before_publish_stop(context, module, signals_count, duration_us) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :middleware, :before_publish, :stop],
       %{duration_us: duration_us},
       %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
@@ -333,7 +334,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   end
 
   defp emit_before_publish_exception(context, module, signals_count, duration_us) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :middleware, :before_publish, :exception],
       %{duration_us: duration_us},
       %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
@@ -372,7 +373,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   end
 
   defp emit_after_publish_stop(context, module, signals_count, duration_us) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :middleware, :after_publish, :stop],
       %{duration_us: duration_us},
       %{bus_name: context[:bus_name], module: module, signals_count: signals_count}
@@ -397,7 +398,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   end
 
   defp emit_before_dispatch_start(context, module, signal, subscriber) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :middleware, :before_dispatch, :start],
       %{system_time: System.system_time()},
       %{
@@ -441,7 +442,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   end
 
   defp emit_before_dispatch_telemetry(event, duration_us, meta) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :middleware, :before_dispatch, event],
       %{duration_us: duration_us},
       meta
@@ -503,7 +504,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   end
 
   defp emit_after_dispatch_stop(context, module, signal, subscriber, duration_us) do
-    :telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :middleware, :after_dispatch, :stop],
       %{duration_us: duration_us},
       %{
