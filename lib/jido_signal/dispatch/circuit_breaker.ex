@@ -31,6 +31,8 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
       :ok = CircuitBreaker.reset(:http)
   """
 
+  alias Jido.Signal.Telemetry
+
   require Logger
 
   @default_max_failures 5
@@ -187,7 +189,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   end
 
   defp emit_melt_telemetry(adapter_type) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :dispatch, :circuit, :melt],
       %{},
       %{adapter: adapter_type}
@@ -195,7 +197,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   end
 
   defp emit_rejected_telemetry(adapter_type) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :dispatch, :circuit, :rejected],
       %{},
       %{adapter: adapter_type}
@@ -203,7 +205,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   end
 
   defp emit_reset_telemetry(adapter_type) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :dispatch, :circuit, :reset],
       %{},
       %{adapter: adapter_type}

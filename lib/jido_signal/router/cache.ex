@@ -53,6 +53,7 @@ defmodule Jido.Signal.Router.Cache do
   alias Jido.Signal
   alias Jido.Signal.Error
   alias Jido.Signal.Router.Engine
+  alias Jido.Signal.Telemetry
 
   @type cache_id :: atom() | {atom(), term()}
 
@@ -176,7 +177,7 @@ defmodule Jido.Signal.Router.Cache do
 
         case results do
           [] ->
-            Jido.Signal.Telemetry.execute(
+            Telemetry.execute(
               [:jido, :signal, :router, :routed],
               %{latency_us: latency_us, match_count: 0},
               %{signal_type: signal.type, cache_id: cache_id, matched: false}
@@ -189,7 +190,7 @@ defmodule Jido.Signal.Router.Cache do
              )}
 
           _ ->
-            Jido.Signal.Telemetry.execute(
+            Telemetry.execute(
               [:jido, :signal, :router, :routed],
               %{latency_us: latency_us, match_count: length(results)},
               %{signal_type: signal.type, cache_id: cache_id, matched: true}

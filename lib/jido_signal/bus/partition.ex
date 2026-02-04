@@ -10,6 +10,7 @@ defmodule Jido.Signal.Bus.Partition do
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Router
+  alias Jido.Signal.Telemetry
 
   require Logger
 
@@ -108,7 +109,7 @@ defmodule Jido.Signal.Bus.Partition do
         {:noreply, new_state}
 
       {:error, :rate_limited} ->
-        Jido.Signal.Telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :bus, :rate_limited],
           %{dropped_count: signal_count},
           %{
@@ -198,7 +199,7 @@ defmodule Jido.Signal.Bus.Partition do
          uuid_signal_pairs,
          context
        ) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :before_dispatch],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{
@@ -250,7 +251,7 @@ defmodule Jido.Signal.Bus.Partition do
         uuid_signal_pairs
       )
 
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :after_dispatch],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{
@@ -285,7 +286,7 @@ defmodule Jido.Signal.Bus.Partition do
          _uuid_signal_pairs,
          _context
        ) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :dispatch_skipped],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{
@@ -313,7 +314,7 @@ defmodule Jido.Signal.Bus.Partition do
          _uuid_signal_pairs,
          _context
        ) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :dispatch_error],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{

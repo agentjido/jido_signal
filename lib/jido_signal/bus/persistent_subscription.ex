@@ -11,6 +11,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   alias Jido.Signal.Bus
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
+  alias Jido.Signal.Telemetry
 
   require Logger
 
@@ -214,7 +215,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
       # Both full - reject with backpressure
       true ->
-        Jido.Signal.Telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :subscription, :backpressure],
           %{},
           %{
@@ -296,7 +297,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
       # Both full - drop the signal with backpressure telemetry
       true ->
-        Jido.Signal.Telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :subscription, :backpressure],
           %{},
           %{
@@ -511,7 +512,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   defp handle_dispatch_retry(state, signal_log_id, signal, current_attempts) do
     # Keep for retry - add to pending for later retry, update attempts
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :subscription, :dispatch, :retry],
       %{attempt: current_attempts},
       %{subscription_id: state.id, signal_id: signal.id}
@@ -554,7 +555,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
              state.journal_pid
            ) do
         {:ok, dlq_id} ->
-          Jido.Signal.Telemetry.execute(
+          Telemetry.execute(
             [:jido, :signal, :subscription, :dlq],
             %{},
             %{

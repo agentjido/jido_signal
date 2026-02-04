@@ -52,6 +52,7 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Error
   alias Jido.Signal.ID
   alias Jido.Signal.Router
+  alias Jido.Signal.Telemetry
 
   require Logger
 
@@ -745,7 +746,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp emit_redrive_telemetry(bus_name, subscription_id, %{succeeded: succeeded, failed: failed}) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :dlq, :redrive],
       %{succeeded: succeeded, failed: failed},
       %{bus_name: bus_name, subscription_id: subscription_id}
@@ -814,7 +815,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp emit_backpressure_telemetry(bus_name, saturated) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :backpressure],
       %{saturated_count: length(saturated)},
       %{bus_name: bus_name}
@@ -974,7 +975,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp emit_before_dispatch_telemetry(bus_name, signal, subscription_id, subscription) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :before_dispatch],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{
@@ -990,7 +991,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp emit_after_dispatch_telemetry(bus_name, signal, subscription_id, subscription, result) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :after_dispatch],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{
@@ -1007,7 +1008,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp emit_dispatch_skipped_telemetry(bus_name, signal, subscription_id, subscription) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :dispatch_skipped],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{
@@ -1024,7 +1025,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp emit_dispatch_error_telemetry(bus_name, signal, subscription_id, subscription, reason) do
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :bus, :dispatch_error],
       %{timestamp: System.monotonic_time(:microsecond)},
       %{
@@ -1126,7 +1127,7 @@ defmodule Jido.Signal.Bus do
     removed_count = original_size - map_size(new_log)
 
     if removed_count > 0 do
-      Jido.Signal.Telemetry.execute(
+      Telemetry.execute(
         [:jido, :signal, :bus, :log_gc],
         %{removed_count: removed_count},
         %{bus_name: state.name, new_size: map_size(new_log), ttl_ms: state.log_ttl_ms}

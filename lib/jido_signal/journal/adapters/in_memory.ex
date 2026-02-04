@@ -8,6 +8,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
   use Agent
 
   alias Jido.Signal.ID
+  alias Jido.Signal.Telemetry
 
   @impl true
   def init do
@@ -99,7 +100,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
   def put_checkpoint(subscription_id, checkpoint, pid \\ nil) do
     target = pid || __MODULE__
 
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :journal, :checkpoint, :put],
       %{},
       %{subscription_id: subscription_id}
@@ -116,7 +117,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
 
     case Agent.get(target, fn state -> get_in(state, [:checkpoints, subscription_id]) end) do
       nil ->
-        Jido.Signal.Telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :journal, :checkpoint, :get],
           %{},
           %{subscription_id: subscription_id, found: false}
@@ -125,7 +126,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
         {:error, :not_found}
 
       checkpoint ->
-        Jido.Signal.Telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :journal, :checkpoint, :get],
           %{},
           %{subscription_id: subscription_id, found: true}
@@ -163,7 +164,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
       put_in(state, [:dlq, entry_id], entry)
     end)
 
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :journal, :dlq, :put],
       %{},
       %{subscription_id: subscription_id, entry_id: entry_id}
@@ -184,7 +185,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
         |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
       end)
 
-    Jido.Signal.Telemetry.execute(
+    Telemetry.execute(
       [:jido, :signal, :journal, :dlq, :get],
       %{count: length(entries)},
       %{subscription_id: subscription_id}

@@ -3,16 +3,16 @@ defmodule Jido.Signal.Telemetry do
 
   @spec execute([atom()], map(), map()) :: :ok
   def execute(event_name, measurements, metadata) do
-    apply(:telemetry, :execute, [event_name, measurements, metadata])
+    :telemetry.execute(event_name, measurements, metadata)
   end
 
   @spec attach(term(), [atom()], function(), map()) :: :ok | {:error, term()}
   def attach(handler_id, event_name, function, config) do
-    apply(:telemetry, :attach, [handler_id, event_name, function, config])
+    :telemetry.attach(handler_id, event_name, function, config)
   end
 
   @spec detach(term()) :: :ok | {:error, term()}
   def detach(handler_id) do
-    apply(:telemetry, :detach, [handler_id])
+    :telemetry.detach(handler_id)
   end
 end

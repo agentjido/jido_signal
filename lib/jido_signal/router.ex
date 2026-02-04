@@ -166,6 +166,7 @@ defmodule Jido.Signal.Router do
   alias Jido.Signal
   alias Jido.Signal.Error
   alias Jido.Signal.Router.{Cache, Engine, Route, Validator}
+  alias Jido.Signal.Telemetry
 
   @type cache_id :: Cache.cache_id()
 
@@ -389,16 +390,7 @@ defmodule Jido.Signal.Router do
     with {:ok, normalized} <- Validator.normalize(routes),
          {:ok, validated} <- validate(normalized) do
       trie = Engine.build_trie(validated)
-
-      # Count targets (multi-target routes count as multiple)
-      route_count =
-        Enum.reduce(validated, 0, fn route, acc ->
-          case route.target do
-            targets when is_list(targets) -> acc + length(targets)
-            _single_target -> acc + 1
-          end
-        end)
-
+      route_count = count_targets(validated)
       router = %Router{trie: trie, route_count: route_count, cache_id: cache_id}
 
       if cache_id do
@@ -449,16 +441,7 @@ defmodule Jido.Signal.Router do
     with {:ok, normalized} <- Validator.normalize(routes),
          {:ok, validated} <- validate(normalized) do
       new_trie = Engine.build_trie(validated, router.trie)
-
-      # Count new targets (multi-target routes count as multiple)
-      added_count =
-        Enum.reduce(validated, 0, fn route, acc ->
-          case route.target do
-            targets when is_list(targets) -> acc + length(targets)
-            _single_target -> acc + 1
-          end
-        end)
-
+      added_count = count_targets(validated)
       updated_router = %{router | trie: new_trie, route_count: router.route_count + added_count}
 
       if router.cache_id do
@@ -688,7 +671,7 @@ defmodule Jido.Signal.Router do
 
     case results do
       [] ->
-        Jido.Signal.Telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: 0},
           %{signal_type: signal.type, cache_id: cache_id, matched: false}
@@ -701,7 +684,7 @@ defmodule Jido.Signal.Router do
          )}
 
       _ ->
-        Jido.Signal.Telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: length(results)},
           %{signal_type: signal.type, cache_id: cache_id, matched: true}
@@ -941,4 +924,14 @@ defmodule Jido.Signal.Router do
   end
 
   def has_route?(_router, _route_id), do: false
+
+  # Counts targets in a list of routes (multi-target routes count as multiple)
+  defp count_targets(routes) do
+    Enum.reduce(routes, 0, fn route, acc ->
+      acc + target_count(route.target)
+    end)
+  end
+
+  defp target_count(targets) when is_list(targets), do: length(targets)
+  defp target_count(_single_target), do: 1
 end
