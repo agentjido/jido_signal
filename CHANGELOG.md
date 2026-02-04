@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-rc.3] - 2026-02-04
+
+### Fixed
+- Elixir 1.18 compatibility (#73)
+
+### Changed
+- Bump zoi from 0.16.1 to 0.17.0
+- Bump credo from 1.7.15 to 1.7.16
+- Bump ex_doc from 0.40.0 to 0.40.1
+
 ## [2.0.0-rc.2] - 2025-01-30
 
 ### Added
