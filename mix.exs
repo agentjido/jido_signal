@@ -217,7 +217,6 @@ defmodule Jido.Signal.MixProject do
       {:expublish, "~> 2.7", only: [:dev], runtime: false},
       {:mix_test_watch, "~> 1.3.0", only: :dev, runtime: false},
       {:mimic, "~> 2.0", only: :test},
-      {:quokka, "~> 2.10", only: :dev, runtime: false},
       {:stream_data, "~> 1.0", only: [:dev, :test]}
     ]
   end
