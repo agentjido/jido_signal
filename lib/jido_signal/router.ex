@@ -161,8 +161,6 @@ defmodule Jido.Signal.Router do
   - `Jido.Signal.Errors` - Error types and handling
   - `Jido.Signal.Dispatch` - Dispatch adapter interface
   """
-  use Private
-
   alias Jido.Signal
   alias Jido.Signal.Error
   alias Jido.Signal.Router.{Cache, Engine, Route, Validator}
