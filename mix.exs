@@ -197,7 +197,6 @@ defmodule Jido.Signal.MixProject do
       {:msgpax, "~> 2.3"},
       {:nimble_options, "~> 1.1"},
       {:phoenix_pubsub, "~> 2.1"},
-      {:private, "~> 0.1.2"},
       {:telemetry, "~> 1.3"},
       {:uniq, "~> 0.6.1"},
       {:splode, "~> 0.3.0"},

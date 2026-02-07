@@ -7,8 +7,6 @@ defmodule Jido.Signal.Bus.Subscriber do
   persistent subscriptions, handling subscription lifetime and signal delivery.
   """
 
-  use Private
-
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
