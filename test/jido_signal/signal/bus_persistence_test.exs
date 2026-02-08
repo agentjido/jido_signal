@@ -165,22 +165,18 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       # Acknowledge first signal
       :ok = GenServer.call(pid, {:ack, signal_log_id1})
 
-      # Verify checkpoint was updated
-      state_after_ack = :sys.get_state(pid)
-
       # With UUID7, the checkpoint will be the timestamp from the UUID
       checkpoint_timestamp = ID.extract_timestamp(signal_log_id1)
-      assert state_after_ack.checkpoint == checkpoint_timestamp
 
-      # First signal should be removed from in-flight
-      assert total_in_flight(state_after_ack) == 1
-      refute signal_log_id1 in in_flight_signal_ids(state_after_ack)
+      wait_until(fn ->
+        state_after_ack = :sys.get_state(pid)
 
-      # Second signal should now be in-flight
-      assert signal_log_id2 in in_flight_signal_ids(state_after_ack)
-
-      # Pending signals should be empty
-      assert map_size(state_after_ack.pending_signals) == 0
+        state_after_ack.checkpoint == checkpoint_timestamp and
+          total_in_flight(state_after_ack) == 1 and
+          signal_log_id1 not in in_flight_signal_ids(state_after_ack) and
+          signal_log_id2 in in_flight_signal_ids(state_after_ack) and
+          map_size(state_after_ack.pending_signals) == 0
+      end)
 
       # We should now receive the second signal
       assert_receive {:signal, received_signal2}, 500
@@ -254,28 +250,24 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       # Acknowledge signals in a batch
       :ok = GenServer.call(pid, {:ack, ids_to_ack})
 
-      # Verify checkpoint was updated to highest acknowledged ID timestamp
-      state_after_ack = :sys.get_state(pid)
-
       # Find the highest timestamp from the acknowledged IDs
       highest_timestamp =
         ids_to_ack
         |> Enum.map(&ID.extract_timestamp/1)
         |> Enum.max()
 
-      assert state_after_ack.checkpoint == highest_timestamp
+      wait_until(fn ->
+        state_after_ack = :sys.get_state(pid)
+        in_flight_ids = in_flight_signal_ids(state_after_ack)
 
-      # The acknowledged signals should be removed from in-flight
-      assert total_in_flight(state_after_ack) == 2
-
-      # First, third, and fifth signals should be removed
-      in_flight_ids = in_flight_signal_ids(state_after_ack)
-
-      refute Enum.at(signal_log_ids, 0) in in_flight_ids
-      assert Enum.at(signal_log_ids, 1) in in_flight_ids
-      refute Enum.at(signal_log_ids, 2) in in_flight_ids
-      assert Enum.at(signal_log_ids, 3) in in_flight_ids
-      refute Enum.at(signal_log_ids, 4) in in_flight_ids
+        state_after_ack.checkpoint == highest_timestamp and
+          total_in_flight(state_after_ack) == 2 and
+          Enum.at(signal_log_ids, 0) not in in_flight_ids and
+          Enum.at(signal_log_ids, 1) in in_flight_ids and
+          Enum.at(signal_log_ids, 2) not in in_flight_ids and
+          Enum.at(signal_log_ids, 3) in in_flight_ids and
+          Enum.at(signal_log_ids, 4) not in in_flight_ids
+      end)
     end
 
     test "returns {:error, :queue_full} when both in_flight and pending are full via handle_call",
@@ -463,10 +455,11 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       # Acknowledge first signal
       :ok = GenServer.call(pid, {:ack, signal_log_id1})
 
-      # Now pending should move to in-flight, leaving room in pending
-      state = :sys.get_state(pid)
-      assert total_in_flight(state) == 1
-      assert map_size(state.pending_signals) == 0
+      # Pending eventually moves to in-flight once dispatch/ack transitions settle
+      wait_until(fn ->
+        state = :sys.get_state(pid)
+        total_in_flight(state) == 1 and map_size(state.pending_signals) == 0
+      end)
 
       # Should be able to add more signals now
       signal4 = Signal.new!(%{type: "test-4", source: "/test", data: %{i: 4}})

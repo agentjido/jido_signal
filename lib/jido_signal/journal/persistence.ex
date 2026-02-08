@@ -50,7 +50,14 @@ defmodule Jido.Signal.Journal.Persistence do
   @callback get_dlq_entries(subscription_id(), pid() | nil) ::
               {:ok, [dlq_entry()]} | error()
 
+  @callback get_dlq_entries(subscription_id(), pid() | nil, keyword()) ::
+              {:ok, [dlq_entry()]} | error()
+
   @callback delete_dlq_entry(String.t(), pid() | nil) :: :ok | error()
 
   @callback clear_dlq(subscription_id(), pid() | nil) :: :ok | error()
+
+  @callback clear_dlq(subscription_id(), pid() | nil, keyword()) :: :ok | error()
+
+  @optional_callbacks get_dlq_entries: 3, clear_dlq: 3
 end

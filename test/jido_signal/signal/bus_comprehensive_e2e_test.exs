@@ -3,6 +3,7 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.Error
 
   require Logger
 
@@ -86,8 +87,9 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       bus_name = "e2e_comprehensive_bus_#{:erlang.unique_integer([:positive])}"
       {:ok, _} = start_supervised({Bus, name: bus_name})
 
-      # Wait for bus to be registered
-      Process.sleep(50)
+      wait_until(fn ->
+        match?({:ok, pid} when is_pid(pid), Bus.whereis(bus_name))
+      end)
 
       # Get the bus PID
       {:ok, bus_pid} = Bus.whereis(bus_name)
@@ -195,8 +197,11 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
         assert Map.has_key?(recorded, :signal)
       end)
 
-      # Give time for signal delivery
-      Process.sleep(200)
+      wait_until(fn ->
+        length(TestClient.get_signals(regular_client)) == 1 and
+          length(TestClient.get_signals(persistent_client)) == 1 and
+          length(TestClient.get_signals(wildcard_client)) == 3
+      end)
 
       # Verify signal delivery
       regular_signals = TestClient.get_signals(regular_client)
@@ -305,7 +310,10 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
         })
 
       {:ok, _} = Bus.publish(bus_pid, [reconnect_signal])
-      Process.sleep(100)
+
+      wait_until(fn ->
+        length(TestClient.get_signals(reconnect_client)) == 1
+      end)
 
       # Verify signal was received
       reconnect_signals = TestClient.get_signals(reconnect_client)
@@ -313,7 +321,7 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
 
       # Simulate disconnection by stopping the client
       TestClient.stop(reconnect_client)
-      Process.sleep(100)
+      refute Process.alive?(reconnect_client)
 
       # Publish more signals while disconnected
       {:ok, disconnected_signal} =
@@ -324,7 +332,14 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
         })
 
       {:ok, _} = Bus.publish(bus_pid, [disconnected_signal])
-      Process.sleep(100)
+
+      wait_until(fn ->
+        bus_state = :sys.get_state(bus_pid)
+
+        bus_state.log
+        |> Map.values()
+        |> Enum.count(&(&1.type == "test.reconnect")) >= 2
+      end)
 
       # Create new client and reconnect
       {:ok, new_reconnect_client} = TestClient.start_link(id: "new_reconnect_client")
@@ -335,8 +350,10 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
              "Reconnect should return a timestamp string or 0"
 
       # Test error cases for reconnect
-      assert {:error, :subscription_not_found} =
+      assert {:error, %Error.InvalidInputError{} = reconnect_error} =
                Bus.reconnect(bus_pid, "non-existent-sub", self())
+
+      assert reconnect_error.details[:reason] == :subscription_not_found
 
       # ===== TEST 8: UNSUBSCRIPTION =====
       Logger.info("Testing unsubscription")
@@ -389,7 +406,9 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       {:ok, batch_recorded} = Bus.publish(bus_pid, ordered_signals)
       assert length(batch_recorded) == 5
 
-      Process.sleep(200)
+      wait_until(fn ->
+        length(TestClient.get_signals(order_client)) == 5
+      end)
 
       # Verify all signals were received
       order_signals = TestClient.get_signals(order_client)
@@ -466,7 +485,8 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       assert Process.alive?(bus_pid)
 
       {:ok, found_pid} = Bus.whereis(bus_name)
-      assert found_pid == bus_pid
+      assert Process.alive?(found_pid)
+      refute found_pid == bus_pid
     end
 
     test "bus handles invalid startup options gracefully" do
@@ -524,8 +544,12 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       # Wait for all publishes to complete
       Enum.each(publish_tasks, &Task.await/1)
 
-      # Give time for signal delivery
-      Process.sleep(500)
+      wait_until(fn ->
+        clients
+        |> Enum.map(&TestClient.get_signals/1)
+        |> Enum.map(&length/1)
+        |> Enum.sum() > 0
+      end)
 
       # Verify signals were delivered
       total_signals =
@@ -542,6 +566,20 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       end)
 
       Enum.each(clients, &TestClient.stop/1)
+    end
+  end
+
+  defp wait_until(fun, attempts \\ 500)
+  defp wait_until(_fun, 0), do: flunk("condition not met in wait_until/2")
+
+  defp wait_until(fun, attempts) when is_function(fun, 0) do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        10 -> wait_until(fun, attempts - 1)
+      end
     end
   end
 end

@@ -1,0 +1,58 @@
+defmodule Jido.Signal.Bus.ErrorContractTest do
+  use ExUnit.Case, async: false
+
+  alias Jido.Signal
+  alias Jido.Signal.Bus
+  alias Jido.Signal.Error
+
+  test "reconnect returns normalized validation error for missing subscription" do
+    bus_name = :"bus_error_reconnect_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name})
+
+    assert {:error, %Error.InvalidInputError{} = error} =
+             Bus.reconnect(bus_name, "missing-subscription", self())
+
+    assert error.details[:reason] == :subscription_not_found
+  end
+
+  test "dlq APIs return normalized execution errors when journal adapter is absent" do
+    bus_name = :"bus_error_dlq_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name})
+
+    assert {:error, %Error.ExecutionFailureError{} = entries_error} =
+             Bus.dlq_entries(bus_name, "sub-1")
+
+    assert entries_error.details[:reason] == :no_journal_adapter
+
+    assert {:error, %Error.ExecutionFailureError{} = clear_error} =
+             Bus.clear_dlq(bus_name, "sub-1")
+
+    assert clear_error.details[:reason] == :no_journal_adapter
+  end
+
+  test "ack returns normalized execution error when persistent subscriber is unavailable" do
+    bus_name = :"bus_error_ack_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name})
+
+    {:ok, subscription_id} =
+      Bus.subscribe(bus_name, "test.error.ack",
+        persistent?: true,
+        dispatch: {:pid, target: self(), delivery_mode: :async}
+      )
+
+    signal = Signal.new!(type: "test.error.ack", source: "/test", data: %{value: 1})
+    {:ok, [recorded]} = Bus.publish(bus_name, [signal])
+    assert_receive {:signal, %Signal{type: "test.error.ack"}}, 1_000
+
+    {:ok, bus_pid} = Bus.whereis(bus_name)
+    bus_state = :sys.get_state(bus_pid)
+    %{persistence_pid: persistence_pid} = Map.fetch!(bus_state.subscriptions, subscription_id)
+
+    GenServer.stop(persistence_pid, :kill)
+
+    assert {:error, %Error.ExecutionFailureError{} = error} =
+             Bus.ack(bus_name, subscription_id, recorded.id)
+
+    assert error.details[:reason] == :subscription_not_available
+  end
+end

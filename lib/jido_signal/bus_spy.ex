@@ -158,11 +158,13 @@ defmodule Jido.Signal.BusSpy do
   def init(_opts) do
     # Attach telemetry handlers for all bus events
     for event <- @events do
+      handler_id = {__MODULE__, self(), event}
+
       Telemetry.attach(
-        {__MODULE__, self(), event},
+        handler_id,
         event,
         &handle_telemetry_event/4,
-        %{spy_pid: self()}
+        %{spy_pid: self(), handler_id: handler_id}
       )
     end
 
@@ -288,8 +290,17 @@ defmodule Jido.Signal.BusSpy do
   end
 
   # Telemetry event handler - forwards events to the spy process
-  def handle_telemetry_event(event_name, measurements, metadata, %{spy_pid: spy_pid}) do
-    send(spy_pid, {:telemetry_event, event_name, measurements, metadata})
+  def handle_telemetry_event(
+        event_name,
+        measurements,
+        metadata,
+        %{spy_pid: spy_pid, handler_id: handler_id}
+      ) do
+    if Process.alive?(spy_pid) do
+      send(spy_pid, {:telemetry_event, event_name, measurements, metadata})
+    else
+      Telemetry.detach(handler_id)
+    end
   end
 
   # Simple glob-style pattern matching for signal types

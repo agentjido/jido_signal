@@ -83,17 +83,9 @@ defmodule JidoTest.Signal.Bus.JournalConfigTest do
 
     test "fails when journal_pid is provided without journal_adapter" do
       bus_name = :"test_bus_invalid_journal_pair_#{:erlang.unique_integer([:positive])}"
-      parent = self()
 
-      {pid, ref} =
-        spawn_monitor(fn ->
-          send(parent, {:start_result, Bus.start_link(name: bus_name, journal_pid: self())})
-        end)
-
-      assert_receive {:DOWN, ^ref, :process, ^pid,
-                      {:bus_init_failed, :journal_pid_without_adapter}}
-
-      refute_receive {:start_result, _}
+      assert {:error, {:bus_init_failed, :journal_pid_without_adapter}} =
+               Bus.start_link(name: bus_name, journal_pid: self())
     end
 
     test "failed bus init does not leak runtime supervisor children" do
@@ -103,17 +95,8 @@ defmodule JidoTest.Signal.Bus.JournalConfigTest do
       before_children =
         runtime_supervisor |> Supervisor.which_children() |> Enum.map(&elem(&1, 1))
 
-      parent = self()
-
-      {pid, ref} =
-        spawn_monitor(fn ->
-          send(parent, {:start_result, Bus.start_link(name: bus_name, journal_pid: self())})
-        end)
-
-      assert_receive {:DOWN, ^ref, :process, ^pid,
-                      {:bus_init_failed, :journal_pid_without_adapter}}
-
-      refute_receive {:start_result, _}
+      assert {:error, {:bus_init_failed, :journal_pid_without_adapter}} =
+               Bus.start_link(name: bus_name, journal_pid: self())
 
       after_children = runtime_supervisor |> Supervisor.which_children() |> Enum.map(&elem(&1, 1))
       assert Enum.sort(after_children) == Enum.sort(before_children)
@@ -216,28 +199,17 @@ defmodule JidoTest.Signal.Bus.JournalConfigTest do
         Application.delete_env(:jido_signal, :tracking_journal_notify_pid)
       end)
 
-      {pid, ref} =
-        spawn_monitor(fn ->
-          send(
-            parent,
-            {:start_result,
-             Bus.start_link(
-               name: bus_name,
-               journal_adapter: TrackingJournalAdapter,
-               middleware: [{InitFailMiddleware, []}]
-             )}
-          )
-        end)
+      assert {:error,
+              {:bus_init_failed, {:middleware_init_failed, InitFailMiddleware, :init_failed}}} =
+               Bus.start_link(
+                 name: bus_name,
+                 journal_adapter: TrackingJournalAdapter,
+                 middleware: [{InitFailMiddleware, []}]
+               )
 
       assert_receive {:tracking_journal_pid, journal_pid}
       journal_ref = Process.monitor(journal_pid)
-
-      assert_receive {:DOWN, ^ref, :process, ^pid,
-                      {:bus_init_failed,
-                       {:middleware_init_failed, InitFailMiddleware, :init_failed}}}
-
       assert_receive {:DOWN, ^journal_ref, :process, ^journal_pid, _reason}
-      refute_receive {:start_result, _}
     end
 
     test "middleware init failure does not leak runtime supervisor children" do
@@ -247,22 +219,9 @@ defmodule JidoTest.Signal.Bus.JournalConfigTest do
       before_children =
         runtime_supervisor |> Supervisor.which_children() |> Enum.map(&elem(&1, 1))
 
-      parent = self()
-
-      {pid, ref} =
-        spawn_monitor(fn ->
-          send(
-            parent,
-            {:start_result,
-             Bus.start_link(name: bus_name, middleware: [{InitFailMiddleware, []}])}
-          )
-        end)
-
-      assert_receive {:DOWN, ^ref, :process, ^pid,
-                      {:bus_init_failed,
-                       {:middleware_init_failed, InitFailMiddleware, :init_failed}}}
-
-      refute_receive {:start_result, _}
+      assert {:error,
+              {:bus_init_failed, {:middleware_init_failed, InitFailMiddleware, :init_failed}}} =
+               Bus.start_link(name: bus_name, middleware: [{InitFailMiddleware, []}])
 
       after_children = runtime_supervisor |> Supervisor.which_children() |> Enum.map(&elem(&1, 1))
       assert Enum.sort(after_children) == Enum.sort(before_children)

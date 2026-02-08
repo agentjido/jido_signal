@@ -2,6 +2,7 @@ defmodule Jido.Signal.Router.CacheTest do
   use ExUnit.Case, async: false
 
   alias Jido.Signal
+  alias Jido.Signal.Error
   alias Jido.Signal.ID
   alias Jido.Signal.Router
   alias Jido.Signal.Router.Cache
@@ -26,8 +27,9 @@ defmodule Jido.Signal.Router.CacheTest do
       assert cached.route_count == 1
     end
 
-    test "returns :not_found for uncached router" do
-      assert {:error, :not_found} = Cache.get(:nonexistent)
+    test "returns normalized error for uncached router" do
+      assert {:error, %Error.RoutingError{} = error} = Cache.get(:nonexistent)
+      assert error.details[:reason] == :not_found
     end
 
     test "supports tuple cache_ids for namespacing" do
@@ -85,7 +87,7 @@ defmodule Jido.Signal.Router.CacheTest do
       assert {:ok, [:handler1]} = Cache.route(:route_test, signal)
     end
 
-    test "returns :not_cached error for uncached router" do
+    test "returns normalized cache-miss error for uncached router" do
       signal = %Signal{
         id: ID.generate!(),
         source: "/test",
@@ -93,7 +95,8 @@ defmodule Jido.Signal.Router.CacheTest do
         data: %{}
       }
 
-      assert {:error, :not_cached} = Cache.route(:not_there, signal)
+      assert {:error, %Error.RoutingError{} = error} = Cache.route(:not_there, signal)
+      assert error.details[:reason] == :not_found
     end
 
     test "returns error for nil signal type" do

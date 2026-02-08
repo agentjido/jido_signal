@@ -6,6 +6,7 @@ defmodule Jido.Signal.BusSpyTest do
   alias Jido.Signal
   alias Jido.Signal.Bus
   alias Jido.Signal.BusSpy
+  alias Jido.Signal.Telemetry
 
   setup do
     # Generate unique bus name for this test
@@ -245,6 +246,60 @@ defmodule Jido.Signal.BusSpyTest do
     assert :erlang.read_timer(timer_ref) == false
 
     BusSpy.stop_spy(spy)
+  end
+
+  test "handlers self-detach after brutal kill once matching telemetry events fire" do
+    spy = BusSpy.start_spy()
+
+    events = [
+      [:jido, :signal, :bus, :before_dispatch],
+      [:jido, :signal, :bus, :after_dispatch],
+      [:jido, :signal, :bus, :dispatch_skipped],
+      [:jido, :signal, :bus, :dispatch_error]
+    ]
+
+    handler_ids = Enum.map(events, &{BusSpy, spy, &1})
+
+    Enum.each(events, fn event ->
+      handlers = :telemetry.list_handlers(event)
+      assert Enum.any?(handlers, &(&1.id == {BusSpy, spy, event}))
+    end)
+
+    Process.unlink(spy)
+    mon_ref = Process.monitor(spy)
+    Process.exit(spy, :kill)
+    assert_receive {:DOWN, ^mon_ref, :process, ^spy, :killed}, 1_000
+
+    base_metadata = %{
+      bus_name: :leak_test_bus,
+      signal_id: "signal-id",
+      signal_type: "leak.test",
+      subscription_id: "subscription-id",
+      subscription_path: "leak.*",
+      signal: %Signal{
+        id: "signal-id",
+        source: "/test",
+        type: "leak.test",
+        data: %{}
+      },
+      subscription: %{},
+      dispatch_result: :ok,
+      error: nil,
+      reason: nil
+    }
+
+    Enum.each(events, fn event ->
+      Telemetry.execute(
+        event,
+        %{timestamp: System.monotonic_time(:microsecond)},
+        base_metadata
+      )
+    end)
+
+    Enum.each(events, fn event ->
+      handlers = :telemetry.list_handlers(event)
+      refute Enum.any?(handlers, &(&1.id in handler_ids))
+    end)
   end
 
   defp wait_for_registered_waiter(spy, attempts \\ 500)

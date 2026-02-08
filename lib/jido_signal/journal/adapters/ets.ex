@@ -29,7 +29,8 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
               effects_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               conversations_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               checkpoints_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
-              dlq_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              dlq_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              dlq_subscription_index_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
             }
           )
 
@@ -62,12 +63,21 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl Jido.Signal.Journal.Persistence
   def put_signal(signal, pid) do
-    GenServer.call(pid, {:put_signal, signal})
+    safe_genserver_call(pid, {:put_signal, signal})
   end
 
   @impl Jido.Signal.Journal.Persistence
   def get_signal(signal_id, pid) do
-    GenServer.call(pid, {:get_signal, signal_id})
+    case get_table_refs(pid) do
+      {:ok, %{signals_table: signals_table}} ->
+        case :ets.lookup(signals_table, signal_id) do
+          [{^signal_id, signal}] -> {:ok, signal}
+          [] -> {:error, :not_found}
+        end
+
+      :error ->
+        GenServer.call(pid, {:get_signal, signal_id})
+    end
   end
 
   @impl Jido.Signal.Journal.Persistence
@@ -77,12 +87,36 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl Jido.Signal.Journal.Persistence
   def get_effects(signal_id, pid) do
-    GenServer.call(pid, {:get_effects, signal_id})
+    case get_table_refs(pid) do
+      {:ok, %{causes_table: causes_table}} ->
+        effects =
+          case :ets.lookup(causes_table, signal_id) do
+            [{^signal_id, found}] -> found
+            [] -> MapSet.new()
+          end
+
+        {:ok, effects}
+
+      :error ->
+        GenServer.call(pid, {:get_effects, signal_id})
+    end
   end
 
   @impl Jido.Signal.Journal.Persistence
   def get_cause(signal_id, pid) do
-    GenServer.call(pid, {:get_cause, signal_id})
+    case get_table_refs(pid) do
+      {:ok, %{effects_table: effects_table}} ->
+        case :ets.lookup(effects_table, signal_id) do
+          [{^signal_id, causes}] ->
+            first_cause(causes)
+
+          [] ->
+            {:error, :not_found}
+        end
+
+      :error ->
+        GenServer.call(pid, {:get_cause, signal_id})
+    end
   end
 
   @impl Jido.Signal.Journal.Persistence
@@ -92,7 +126,19 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl Jido.Signal.Journal.Persistence
   def get_conversation(conversation_id, pid) do
-    GenServer.call(pid, {:get_conversation, conversation_id})
+    case get_table_refs(pid) do
+      {:ok, %{conversations_table: conversations_table}} ->
+        signals =
+          case :ets.lookup(conversations_table, conversation_id) do
+            [{^conversation_id, found}] -> found
+            [] -> MapSet.new()
+          end
+
+        {:ok, signals}
+
+      :error ->
+        GenServer.call(pid, {:get_conversation, conversation_id})
+    end
   end
 
   @impl Jido.Signal.Journal.Persistence
@@ -102,7 +148,21 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl Jido.Signal.Journal.Persistence
   def get_checkpoint(subscription_id, pid) do
-    GenServer.call(pid, {:get_checkpoint, subscription_id})
+    case get_table_refs(pid) do
+      {:ok, %{checkpoints_table: checkpoints_table}} ->
+        case :ets.lookup(checkpoints_table, subscription_id) do
+          [{^subscription_id, checkpoint}] ->
+            Helpers.emit_checkpoint_get(subscription_id, true)
+            {:ok, checkpoint}
+
+          [] ->
+            Helpers.emit_checkpoint_get(subscription_id, false)
+            {:error, :not_found}
+        end
+
+      :error ->
+        GenServer.call(pid, {:get_checkpoint, subscription_id})
+    end
   end
 
   @impl Jido.Signal.Journal.Persistence
@@ -117,6 +177,30 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl Jido.Signal.Journal.Persistence
   def get_dlq_entries(subscription_id, pid) do
+    get_dlq_entries(subscription_id, pid, [])
+  end
+
+  @impl Jido.Signal.Journal.Persistence
+  def get_dlq_entries(subscription_id, pid, opts) when is_list(opts) do
+    limit = Keyword.get(opts, :limit, :infinity)
+
+    case get_table_refs(pid) do
+      {:ok, table_refs} ->
+        entries =
+          table_refs
+          |> dlq_entries_for_subscription(subscription_id)
+          |> maybe_limit_entries(limit)
+
+        Helpers.emit_dlq_get(subscription_id, length(entries))
+        {:ok, entries}
+
+      :error ->
+        GenServer.call(pid, {:get_dlq_entries, subscription_id, opts})
+    end
+  end
+
+  @impl Jido.Signal.Journal.Persistence
+  def get_dlq_entries(subscription_id, pid, _opts) do
     GenServer.call(pid, {:get_dlq_entries, subscription_id})
   end
 
@@ -127,6 +211,16 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl Jido.Signal.Journal.Persistence
   def clear_dlq(subscription_id, pid) do
+    clear_dlq(subscription_id, pid, [])
+  end
+
+  @impl Jido.Signal.Journal.Persistence
+  def clear_dlq(subscription_id, pid, opts) when is_list(opts) do
+    GenServer.call(pid, {:clear_dlq, subscription_id, opts})
+  end
+
+  @impl Jido.Signal.Journal.Persistence
+  def clear_dlq(subscription_id, pid, _opts) do
     GenServer.call(pid, {:clear_dlq, subscription_id})
   end
 
@@ -134,7 +228,27 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   Gets all signals in the journal.
   """
   def get_all_signals(pid) do
-    GenServer.call(pid, :get_all_signals)
+    get_all_signals(pid, [])
+  end
+
+  @doc """
+  Gets signals in the journal with optional bounded reads.
+
+  ## Options
+  - `:limit` - Maximum number of signals to return
+  """
+  @spec get_all_signals(pid(), keyword()) :: [Jido.Signal.t()]
+  def get_all_signals(pid, opts) when is_list(opts) do
+    limit = Keyword.get(opts, :limit, :infinity)
+
+    case get_table_refs(pid) do
+      {:ok, %{signals_table: signals_table}} ->
+        select_signals(signals_table, limit)
+
+      :error ->
+        GenServer.call(pid, :get_all_signals)
+        |> maybe_limit_entries(limit)
+    end
   end
 
   @doc """
@@ -183,14 +297,20 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   @spec init(String.t()) :: {:ok, t()} | {:error, term()}
   @impl GenServer
   def init(_prefix) do
+    table_opts = [:set, :protected, read_concurrency: true]
+
     adapter = %__MODULE__{
-      signals_table: :ets.new(:signals, [:set, :private]),
-      causes_table: :ets.new(:causes, [:set, :private]),
-      effects_table: :ets.new(:effects, [:set, :private]),
-      conversations_table: :ets.new(:conversations, [:set, :private]),
-      checkpoints_table: :ets.new(:checkpoints, [:set, :private]),
-      dlq_table: :ets.new(:dlq, [:set, :private])
+      signals_table: :ets.new(:signals, table_opts),
+      causes_table: :ets.new(:causes, table_opts),
+      effects_table: :ets.new(:effects, table_opts),
+      conversations_table: :ets.new(:conversations, table_opts),
+      checkpoints_table: :ets.new(:checkpoints, table_opts),
+      dlq_table: :ets.new(:dlq, table_opts),
+      dlq_subscription_index_table:
+        :ets.new(:dlq_subscription_index, [:duplicate_bag, :protected, read_concurrency: true])
     }
+
+    cache_table_refs(self(), adapter)
 
     {:ok, adapter}
   end
@@ -344,6 +464,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
     entry_id = entry.id
 
     true = :ets.insert(adapter.dlq_table, {entry_id, entry})
+    true = :ets.insert(adapter.dlq_subscription_index_table, {subscription_id, entry_id})
 
     Helpers.emit_dlq_put(subscription_id, entry_id)
 
@@ -352,48 +473,52 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl GenServer
   def handle_call({:get_dlq_entries, subscription_id}, _from, adapter) do
-    entries =
-      :ets.tab2list(adapter.dlq_table)
-      |> Enum.map(fn {_id, entry} -> entry end)
-      |> Enum.filter(fn entry -> entry.subscription_id == subscription_id end)
-      |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
+    entries = get_dlq_entries_for_subscription(adapter, subscription_id, :infinity)
+    {:reply, {:ok, entries}, adapter}
+  end
 
-    Helpers.emit_dlq_get(subscription_id, length(entries))
-
+  @impl GenServer
+  def handle_call({:get_dlq_entries, subscription_id, opts}, _from, adapter) when is_list(opts) do
+    limit = Keyword.get(opts, :limit, :infinity)
+    entries = get_dlq_entries_for_subscription(adapter, subscription_id, limit)
     {:reply, {:ok, entries}, adapter}
   end
 
   @impl GenServer
   def handle_call({:delete_dlq_entry, entry_id}, _from, adapter) do
+    maybe_delete_dlq_index(adapter, entry_id)
     :ets.delete(adapter.dlq_table, entry_id)
     {:reply, :ok, adapter}
   end
 
   @impl GenServer
   def handle_call({:clear_dlq, subscription_id}, _from, adapter) do
-    entries_to_delete =
-      :ets.tab2list(adapter.dlq_table)
-      |> Enum.filter(fn {_id, entry} -> entry.subscription_id == subscription_id end)
-      |> Enum.map(fn {id, _entry} -> id end)
+    clear_dlq_entries(adapter, subscription_id, :infinity)
+    {:reply, :ok, adapter}
+  end
 
-    Enum.each(entries_to_delete, fn id ->
-      :ets.delete(adapter.dlq_table, id)
-    end)
-
+  @impl GenServer
+  def handle_call({:clear_dlq, subscription_id, opts}, _from, adapter) when is_list(opts) do
+    limit = Keyword.get(opts, :limit, :infinity)
+    clear_dlq_entries(adapter, subscription_id, limit)
     {:reply, :ok, adapter}
   end
 
   @impl GenServer
   def handle_call(:get_all_signals, _from, adapter) do
-    signals =
-      :ets.tab2list(adapter.signals_table)
-      |> Enum.map(fn {_id, signal} -> signal end)
+    signals = select_signals(adapter.signals_table, :infinity)
 
     {:reply, signals, adapter}
   end
 
   @impl GenServer
+  def handle_call(:tables, _from, adapter) do
+    {:reply, table_refs_from_adapter(adapter), adapter}
+  end
+
+  @impl GenServer
   def handle_call(:cleanup, _from, adapter) do
+    clear_cached_table_refs(self())
     delete_tables(adapter)
 
     {:reply, :ok, adapter}
@@ -401,6 +526,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl GenServer
   def terminate(_reason, adapter) do
+    clear_cached_table_refs(self())
     delete_tables(adapter)
     :ok
   end
@@ -412,7 +538,8 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
       adapter.effects_table,
       adapter.conversations_table,
       adapter.checkpoints_table,
-      adapter.dlq_table
+      adapter.dlq_table,
+      adapter.dlq_subscription_index_table
     ]
     |> Enum.each(fn table ->
       case :ets.info(table) do
@@ -421,4 +548,178 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
       end
     end)
   end
+
+  defp maybe_delete_dlq_index(adapter, entry_id) do
+    case :ets.lookup(adapter.dlq_table, entry_id) do
+      [{^entry_id, %{subscription_id: subscription_id}}] ->
+        delete_dlq_index_entry(adapter, subscription_id, entry_id)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp delete_dlq_index_entry(%{dlq_subscription_index_table: nil}, _subscription_id, _entry_id),
+    do: :ok
+
+  defp delete_dlq_index_entry(adapter, subscription_id, entry_id) do
+    :ets.match_delete(adapter.dlq_subscription_index_table, {subscription_id, entry_id})
+    :ok
+  end
+
+  defp maybe_limit_entries(entries, :infinity), do: entries
+
+  defp maybe_limit_entries(entries, limit) when is_integer(limit) and limit >= 0,
+    do: Enum.take(entries, limit)
+
+  defp maybe_limit_entries(entries, _invalid_limit), do: entries
+
+  defp get_dlq_entries_for_subscription(adapter, subscription_id, limit) do
+    entries =
+      adapter
+      |> dlq_entries_for_subscription(subscription_id)
+      |> maybe_limit_entries(limit)
+
+    Helpers.emit_dlq_get(subscription_id, length(entries))
+    entries
+  end
+
+  defp clear_dlq_entries(adapter, subscription_id, limit) do
+    adapter
+    |> dlq_entries_for_subscription(subscription_id)
+    |> maybe_limit_entries(limit)
+    |> Enum.each(fn entry ->
+      :ets.delete(adapter.dlq_table, entry.id)
+      delete_dlq_index_entry(adapter, entry.subscription_id, entry.id)
+    end)
+  end
+
+  defp dlq_entries_for_subscription(
+         %{dlq_subscription_index_table: nil} = adapter,
+         subscription_id
+       ) do
+    adapter.dlq_table
+    |> :ets.tab2list()
+    |> Enum.map(fn {_id, entry} -> entry end)
+    |> Enum.filter(fn entry -> entry.subscription_id == subscription_id end)
+    |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
+  end
+
+  defp dlq_entries_for_subscription(adapter, subscription_id) do
+    adapter.dlq_subscription_index_table
+    |> :ets.lookup(subscription_id)
+    |> Enum.map(fn {^subscription_id, entry_id} -> entry_id end)
+    |> Enum.reduce([], fn entry_id, acc ->
+      case :ets.lookup(adapter.dlq_table, entry_id) do
+        [{^entry_id, entry}] -> [entry | acc]
+        [] -> acc
+      end
+    end)
+    |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
+  end
+
+  defp select_signals(signals_table, :infinity) do
+    :ets.select(signals_table, [{{:_, :"$1"}, [], [:"$1"]}])
+  end
+
+  defp select_signals(signals_table, limit) when is_integer(limit) and limit >= 0 do
+    case :ets.select(signals_table, [{{:_, :"$1"}, [], [:"$1"]}], limit) do
+      :"$end_of_table" -> []
+      {signals, _continuation} -> signals
+    end
+  end
+
+  defp select_signals(signals_table, _invalid_limit) do
+    select_signals(signals_table, :infinity)
+  end
+
+  defp table_refs_from_adapter(adapter) do
+    %{
+      signals_table: adapter.signals_table,
+      causes_table: adapter.causes_table,
+      effects_table: adapter.effects_table,
+      conversations_table: adapter.conversations_table,
+      checkpoints_table: adapter.checkpoints_table,
+      dlq_table: adapter.dlq_table,
+      dlq_subscription_index_table: adapter.dlq_subscription_index_table
+    }
+  end
+
+  defp table_cache_key(pid), do: {__MODULE__, :tables, pid}
+
+  defp cache_table_refs(pid, adapter) do
+    :persistent_term.put(table_cache_key(pid), table_refs_from_adapter(adapter))
+    :ok
+  end
+
+  defp clear_cached_table_refs(pid) do
+    _ = :persistent_term.erase(table_cache_key(pid))
+    :ok
+  end
+
+  defp get_table_refs(pid) when is_pid(pid) do
+    key = table_cache_key(pid)
+
+    case :persistent_term.get(key, :not_found) do
+      :not_found ->
+        maybe_fetch_and_cache_table_refs(pid, key)
+
+      refs ->
+        if table_refs_available?(refs) do
+          {:ok, refs}
+        else
+          clear_cached_table_refs(pid)
+          maybe_fetch_and_cache_table_refs(pid, key)
+        end
+    end
+  end
+
+  defp get_table_refs(_pid), do: :error
+
+  defp maybe_fetch_and_cache_table_refs(pid, key) do
+    case fetch_table_refs(pid) do
+      {:ok, refs} ->
+        if table_refs_available?(refs) do
+          :persistent_term.put(key, refs)
+          {:ok, refs}
+        else
+          :error
+        end
+
+      :error ->
+        :error
+    end
+  end
+
+  defp fetch_table_refs(pid) do
+    {:ok, GenServer.call(pid, :tables, 50)}
+  catch
+    :exit, _ -> :error
+  end
+
+  defp first_cause(causes) do
+    case MapSet.to_list(causes) do
+      [cause_id | _] -> {:ok, cause_id}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  defp table_refs_available?(refs) when is_map(refs) do
+    refs
+    |> Map.values()
+    |> Enum.reject(&is_nil/1)
+    |> Enum.all?(fn table -> :ets.info(table) != :undefined end)
+  end
+
+  defp table_refs_available?(_refs), do: false
+
+  defp safe_genserver_call(pid, message) do
+    GenServer.call(pid, message)
+  catch
+    :exit, reason -> {:error, normalize_exit_reason(reason)}
+  end
+
+  defp normalize_exit_reason({:noproc, _}), do: :adapter_unavailable
+  defp normalize_exit_reason(:noproc), do: :adapter_unavailable
+  defp normalize_exit_reason(reason), do: reason
 end

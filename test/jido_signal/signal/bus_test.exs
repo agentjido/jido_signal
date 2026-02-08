@@ -3,6 +3,7 @@ defmodule JidoTest.Signal.Bus do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.Error
   alias Jido.Signal.ID
 
   @moduletag :capture_log
@@ -100,7 +101,10 @@ defmodule JidoTest.Signal.Bus do
       Process.exit(sub.persistence_pid, :kill)
       assert_receive {:DOWN, ^mon_ref, :process, _pid, _reason}
 
-      assert {:error, :subscription_not_available} = Bus.ack(bus, subscription_id, recorded.id)
+      assert {:error, %Error.ExecutionFailureError{} = error} =
+               Bus.ack(bus, subscription_id, recorded.id)
+
+      assert error.details[:reason] == :subscription_not_available
       assert Process.alive?(bus_pid)
     end
 

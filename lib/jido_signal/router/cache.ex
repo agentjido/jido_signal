@@ -90,19 +90,19 @@ defmodule Jido.Signal.Router.Cache do
 
   ## Returns
   - `{:ok, %Router{}}` if found
-  - `{:error, :not_found}` if not cached
+  - `{:error, %Jido.Signal.Error.RoutingError{}}` if not cached
 
   ## Example
 
       {:ok, router} = Router.Cache.get(:my_router)
   """
-  @spec get(cache_id()) :: {:ok, map()} | {:error, :not_found}
+  @spec get(cache_id()) :: {:ok, map()} | {:error, term()}
   def get(cache_id) when is_atom(cache_id) or is_tuple(cache_id) do
     alias Jido.Signal.Router.Router
 
     case :persistent_term.get(cache_key(cache_id), :not_found) do
       :not_found ->
-        {:error, :not_found}
+        {:error, cache_not_found_error(cache_id)}
 
       trie ->
         route_count = Engine.count_routes(trie)
@@ -155,7 +155,7 @@ defmodule Jido.Signal.Router.Cache do
 
   ## Returns
   - `{:ok, [targets]}` - List of matching targets
-  - `{:error, :not_cached}` - Router not in cache
+  - `{:error, %Jido.Signal.Error.RoutingError{}}` - Router not in cache
   - `{:error, reason}` - Routing error
 
   ## Example
@@ -174,7 +174,7 @@ defmodule Jido.Signal.Router.Cache do
   def route(cache_id, %Signal{} = signal) when is_atom(cache_id) or is_tuple(cache_id) do
     case :persistent_term.get(cache_key(cache_id), :not_found) do
       :not_found ->
-        {:error, :not_cached}
+        {:error, cache_not_found_error(cache_id)}
 
       trie ->
         start_time = System.monotonic_time(:microsecond)
@@ -253,21 +253,34 @@ defmodule Jido.Signal.Router.Cache do
     alias Jido.Signal.Router
     alias Jido.Signal.Router.Router, as: RouterStruct
 
-    router =
-      case get(cache_id) do
-        {:ok, existing} -> existing
-        {:error, :not_found} -> %RouterStruct{cache_id: cache_id}
-      end
-
-    case Router.add(router, routes) do
-      {:ok, updated} ->
-        put(cache_id, updated)
-        {:ok, updated}
-
-      error ->
-        error
+    with {:ok, router} <- fetch_or_initialize_router(cache_id, RouterStruct),
+         {:ok, updated} <- Router.add(router, routes) do
+      put(cache_id, updated)
+      {:ok, updated}
     end
   end
 
   defp cache_key(cache_id), do: {:jido_signal_router_cache, cache_id}
+
+  defp fetch_or_initialize_router(cache_id, router_struct_module) do
+    case get(cache_id) do
+      {:ok, existing} ->
+        {:ok, existing}
+
+      {:error, %Error.RoutingError{details: details} = error} ->
+        if details[:reason] == :not_found do
+          {:ok, struct(router_struct_module, cache_id: cache_id)}
+        else
+          {:error, error}
+        end
+    end
+  end
+
+  defp cache_not_found_error(cache_id) do
+    Error.routing_error("Router cache entry not found", %{
+      cache_id: cache_id,
+      reason: :not_found,
+      route: cache_id
+    })
+  end
 end

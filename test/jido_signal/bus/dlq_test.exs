@@ -3,6 +3,7 @@ defmodule JidoTest.Signal.Bus.DLQTest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.Error
   alias Jido.Signal.Journal.Adapters.ETS
 
   @moduletag :capture_log
@@ -59,7 +60,10 @@ defmodule JidoTest.Signal.Bus.DLQTest do
       bus_name = "no-journal-bus-#{:erlang.unique_integer([:positive])}"
       start_supervised!({Bus, name: bus_name})
 
-      assert {:error, :no_journal_adapter} = Bus.dlq_entries(bus_name, "any_sub")
+      assert {:error, %Error.ExecutionFailureError{} = error} =
+               Bus.dlq_entries(bus_name, "any_sub")
+
+      assert error.details[:reason] == :no_journal_adapter
     end
   end
 
@@ -119,7 +123,6 @@ defmodule JidoTest.Signal.Bus.DLQTest do
       for i <- 1..5 do
         signal = create_test_signal("test.signal.#{i}")
         {:ok, _} = ETS.put_dlq_entry(subscription_id, signal, :error, %{}, journal_pid)
-        Process.sleep(10)
       end
 
       {:ok, result} = Bus.redrive_dlq(bus, subscription_id, limit: 2)
@@ -135,14 +138,20 @@ defmodule JidoTest.Signal.Bus.DLQTest do
       signal = create_test_signal()
       {:ok, _} = ETS.put_dlq_entry("nonexistent_sub", signal, :error, %{}, journal_pid)
 
-      assert {:error, :subscription_not_found} = Bus.redrive_dlq(bus, "nonexistent_sub")
+      assert {:error, %Error.InvalidInputError{} = error} =
+               Bus.redrive_dlq(bus, "nonexistent_sub")
+
+      assert error.details[:reason] == :subscription_not_found
     end
 
     test "returns error when no journal adapter configured" do
       bus_name = "no-journal-bus-#{:erlang.unique_integer([:positive])}"
       start_supervised!({Bus, name: bus_name})
 
-      assert {:error, :no_journal_adapter} = Bus.redrive_dlq(bus_name, "any_sub")
+      assert {:error, %Error.ExecutionFailureError{} = error} =
+               Bus.redrive_dlq(bus_name, "any_sub")
+
+      assert error.details[:reason] == :no_journal_adapter
     end
 
     test "emits telemetry on redrive", %{bus: bus, journal_pid: journal_pid} do
@@ -226,7 +235,10 @@ defmodule JidoTest.Signal.Bus.DLQTest do
       bus_name = "no-journal-bus-#{:erlang.unique_integer([:positive])}"
       start_supervised!({Bus, name: bus_name})
 
-      assert {:error, :no_journal_adapter} = Bus.clear_dlq(bus_name, "any_sub")
+      assert {:error, %Error.ExecutionFailureError{} = error} =
+               Bus.clear_dlq(bus_name, "any_sub")
+
+      assert error.details[:reason] == :no_journal_adapter
     end
   end
 end

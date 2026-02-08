@@ -8,7 +8,6 @@ defmodule Jido.Signal.Bus.Partition do
   use GenServer
 
   alias Jido.Signal.Bus.DispatchPipeline
-  alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
@@ -28,6 +27,7 @@ defmodule Jido.Signal.Bus.Partition do
               journal_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               rate_limit_per_sec: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
               burst_size: Zoi.default(Zoi.integer(), 1_000) |> Zoi.optional(),
+              dispatch_tasks: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               tokens: Zoi.float(),
               last_refill: Zoi.integer()
             }
@@ -56,8 +56,42 @@ defmodule Jido.Signal.Bus.Partition do
   def start_link(opts) do
     partition_id = Keyword.fetch!(opts, :partition_id)
     bus_name = Keyword.fetch!(opts, :bus_name)
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id, opts))
+    do_start_link(opts, bus_name, partition_id, 3)
   end
+
+  defp do_start_link(opts, bus_name, partition_id, attempts) do
+    case GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id, opts)) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} when is_pid(pid) ->
+        resolve_existing_partition(
+          pid,
+          fn -> do_start_link(opts, bus_name, partition_id, attempts - 1) end,
+          attempts
+        )
+
+      other ->
+        other
+    end
+  end
+
+  defp resolve_existing_partition(pid, retry_fun, attempts) do
+    if Process.alive?(pid) do
+      {:ok, pid}
+    else
+      retry_or_conflict(retry_fun, attempts)
+    end
+  end
+
+  defp retry_or_conflict(retry_fun, attempts) when attempts > 0 do
+    receive do
+    after
+      10 -> retry_fun.()
+    end
+  end
+
+  defp retry_or_conflict(_retry_fun, _attempts), do: {:error, :name_conflict}
 
   @doc """
   Returns a via tuple for looking up a partition by bus name and partition ID.
@@ -92,6 +126,7 @@ defmodule Jido.Signal.Bus.Partition do
       journal_pid: Keyword.get(opts, :journal_pid),
       rate_limit_per_sec: Keyword.get(opts, :rate_limit_per_sec, 10_000),
       burst_size: burst_size,
+      dispatch_tasks: %{},
       tokens: burst_size * 1.0,
       last_refill: System.monotonic_time(:millisecond)
     }
@@ -100,7 +135,10 @@ defmodule Jido.Signal.Bus.Partition do
   end
 
   @impl GenServer
-  def terminate(_reason, _state), do: :ok
+  def terminate(_reason, state) do
+    shutdown_dispatch_tasks(state.dispatch_tasks)
+    :ok
+  end
 
   @impl GenServer
   def handle_cast({:dispatch, signals, uuid_signal_pairs, context}, state) do
@@ -109,8 +147,7 @@ defmodule Jido.Signal.Bus.Partition do
 
     case consume_tokens(state, signal_count) do
       {:ok, new_state} ->
-        dispatch_to_subscriptions(new_state, signals, uuid_signal_pairs, context)
-        {:noreply, new_state}
+        {:noreply, start_dispatch_task(new_state, signals, uuid_signal_pairs, context)}
 
       {:error, :rate_limited} ->
         Telemetry.execute(
@@ -163,6 +200,33 @@ defmodule Jido.Signal.Bus.Partition do
     {:reply, :ok, %{state | middleware: middleware}}
   end
 
+  @impl GenServer
+  def handle_info({ref, :ok}, state) when is_reference(ref) do
+    case Map.pop(state.dispatch_tasks, ref) do
+      {nil, _dispatch_tasks} ->
+        {:noreply, state}
+
+      {_task, dispatch_tasks} ->
+        Process.demonitor(ref, [:flush])
+        {:noreply, %{state | dispatch_tasks: dispatch_tasks}}
+    end
+  end
+
+  @impl GenServer
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.dispatch_tasks, ref) do
+      {nil, _dispatch_tasks} ->
+        {:noreply, state}
+
+      {_task, dispatch_tasks} ->
+        Logger.warning("Partition dispatch task exited: #{inspect(reason)}")
+        {:noreply, %{state | dispatch_tasks: dispatch_tasks}}
+    end
+  end
+
+  @impl GenServer
+  def handle_info(_msg, state), do: {:noreply, state}
+
   defp dispatch_to_subscriptions(state, signals, uuid_signal_pairs, context) do
     Enum.each(signals, fn signal ->
       dispatch_signal_to_matching_subscriptions(state, signal, uuid_signal_pairs, context)
@@ -211,117 +275,45 @@ defmodule Jido.Signal.Bus.Partition do
          uuid_signal_pairs,
          context
        ) do
-    DispatchPipeline.emit_before_dispatch(
-      state.bus_name,
-      signal,
-      subscription_id,
-      subscription,
-      %{partition_id: state.partition_id}
-    )
-
-    middleware_result =
-      MiddlewarePipeline.before_dispatch(
+    _ =
+      DispatchPipeline.dispatch_with_middleware(
         state.middleware,
         signal,
+        subscription_id,
         subscription,
         context,
-        state.middleware_timeout_ms
+        state.middleware_timeout_ms,
+        fn processed_signal, current_subscription ->
+          dispatch_to_subscription(
+            processed_signal,
+            current_subscription,
+            subscription_id,
+            uuid_signal_pairs,
+            state
+          )
+        end,
+        %{bus_name: state.bus_name, extra_metadata: %{partition_id: state.partition_id}}
       )
-
-    handle_middleware_result(
-      middleware_result,
-      state,
-      signal,
-      subscription,
-      subscription_id,
-      uuid_signal_pairs,
-      context
-    )
-  end
-
-  defp handle_middleware_result(
-         {:ok, processed_signal, _new_configs},
-         state,
-         _signal,
-         subscription,
-         subscription_id,
-         uuid_signal_pairs,
-         context
-       ) do
-    result =
-      dispatch_to_subscription(
-        processed_signal,
-        subscription,
-        subscription_id,
-        uuid_signal_pairs,
-        state
-      )
-
-    DispatchPipeline.emit_after_dispatch(
-      state.bus_name,
-      processed_signal,
-      subscription_id,
-      subscription,
-      result,
-      %{partition_id: state.partition_id}
-    )
-
-    MiddlewarePipeline.after_dispatch(
-      state.middleware,
-      processed_signal,
-      subscription,
-      result,
-      context,
-      state.middleware_timeout_ms
-    )
-  end
-
-  defp handle_middleware_result(
-         :skip,
-         state,
-         signal,
-         subscription,
-         subscription_id,
-         _uuid_signal_pairs,
-         _context
-       ) do
-    DispatchPipeline.emit_dispatch_skipped(
-      state.bus_name,
-      signal,
-      subscription_id,
-      subscription,
-      :middleware_skip,
-      %{partition_id: state.partition_id}
-    )
-
-    :ok
-  end
-
-  defp handle_middleware_result(
-         {:error, reason},
-         state,
-         signal,
-         subscription,
-         subscription_id,
-         _uuid_signal_pairs,
-         _context
-       ) do
-    DispatchPipeline.emit_dispatch_error(
-      state.bus_name,
-      signal,
-      subscription_id,
-      subscription,
-      reason,
-      %{partition_id: state.partition_id}
-    )
-
-    Logger.warning("Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}")
 
     :ok
   end
 
   defp dispatch_to_subscription(signal, subscription, _subscription_id, _uuid_signal_pairs, state) do
     DispatchPipeline.dispatch_async(signal, subscription, jido_opts(state))
+  end
+
+  defp start_dispatch_task(state, signals, uuid_signal_pairs, context) do
+    task =
+      Task.Supervisor.async_nolink(
+        Names.task_supervisor(jido_opts(state)),
+        fn ->
+          dispatch_to_subscriptions(state, signals, uuid_signal_pairs, context)
+          :ok
+        end
+      )
+
+    dispatch_tasks = Map.put(state.dispatch_tasks, task.ref, task)
+    %{state | dispatch_tasks: dispatch_tasks}
   end
 
   defp refill_tokens(state) do
@@ -350,6 +342,12 @@ defmodule Jido.Signal.Bus.Partition do
   defp remove_subscription_from_state(state, subscription_id) do
     new_subscriptions = Map.delete(state.subscriptions, subscription_id)
     %{state | subscriptions: new_subscriptions}
+  end
+
+  defp shutdown_dispatch_tasks(dispatch_tasks) do
+    Enum.each(dispatch_tasks, fn {_ref, task} ->
+      Task.shutdown(task, :brutal_kill)
+    end)
   end
 
   defp jido_opts(%{jido: nil}), do: []

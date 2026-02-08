@@ -30,7 +30,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
   def put_signal(signal, pid \\ nil) do
     target = pid || __MODULE__
 
-    Agent.update(target, fn state ->
+    safe_agent_update(target, fn state ->
       put_in(state, [:signals, signal.id], signal)
     end)
   end
@@ -213,4 +213,14 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
       |> Map.values()
     end)
   end
+
+  defp safe_agent_update(target, fun) do
+    Agent.update(target, fun)
+  catch
+    :exit, reason -> {:error, normalize_exit_reason(reason)}
+  end
+
+  defp normalize_exit_reason({:noproc, _}), do: :adapter_unavailable
+  defp normalize_exit_reason(:noproc), do: :adapter_unavailable
+  defp normalize_exit_reason(reason), do: reason
 end
