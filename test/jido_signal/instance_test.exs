@@ -1,6 +1,9 @@
 defmodule Jido.Signal.InstanceTest do
   use ExUnit.Case, async: true
 
+  alias Jido.Signal
+  alias Jido.Signal.Bus
+  alias Jido.Signal.Dispatch
   alias Jido.Signal.Instance
   alias Jido.Signal.Names
 
@@ -9,6 +12,7 @@ defmodule Jido.Signal.InstanceTest do
       assert Names.registry([]) == Jido.Signal.Registry
       assert Names.task_supervisor([]) == Jido.Signal.TaskSupervisor
       assert Names.supervisor([]) == Jido.Signal.Supervisor
+      assert Names.bus_runtime_supervisor([]) == Jido.Signal.Bus.RuntimeSupervisor
     end
 
     test "returns default when jido is nil" do
@@ -16,16 +20,51 @@ defmodule Jido.Signal.InstanceTest do
       assert Names.task_supervisor(jido: nil) == Jido.Signal.TaskSupervisor
     end
 
-    test "scopes names when jido instance provided" do
-      assert Names.registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Registry
-      assert Names.task_supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.TaskSupervisor
-      assert Names.supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.Supervisor
-      assert Names.ext_registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Ext.Registry
+    test "scopes names for registered instances only" do
+      instance = :"ScopedNames#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      assert Names.registry(jido: instance) ==
+               Module.concat([instance, "Signal", "Registry"])
+
+      assert Names.task_supervisor(jido: instance) ==
+               Module.concat([instance, "Signal", "TaskSupervisor"])
+
+      assert Names.supervisor(jido: instance) ==
+               Module.concat([instance, "Signal", "Supervisor"])
+
+      assert Names.ext_registry(jido: instance) ==
+               Module.concat([instance, "Signal", "Ext", "Registry"])
+
+      assert Names.bus_runtime_supervisor(jido: instance) ==
+               Module.concat([instance, "Signal", "Bus", "RuntimeSupervisor"])
+
+      Instance.stop(instance)
     end
 
-    test "handles deeply nested instance names" do
-      assert Names.registry(jido: MyApp.Multi.Level.Jido) ==
-               MyApp.Multi.Level.Jido.Signal.Registry
+    test "raises for unregistered jido instances" do
+      unknown_instance = :"UnknownScoped#{System.unique_integer([:positive])}"
+
+      assert_raise ArgumentError, fn ->
+        Names.registry(jido: unknown_instance)
+      end
+    end
+
+    test "recovers scoped resolution when registration entry is missing but supervisor is running" do
+      instance = :"ScopedRecover#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      # Simulate lost registration state while instance runtime is still alive.
+      assert :ok = Names.unregister_instance(instance)
+      refute Names.registered_instance?(instance)
+
+      assert Names.registry(jido: instance) ==
+               Module.concat([instance, "Signal", "Registry"])
+
+      # Resolution should self-heal registration state.
+      assert Names.registered_instance?(instance)
+
+      Instance.stop(instance)
     end
   end
 
@@ -38,6 +77,10 @@ defmodule Jido.Signal.InstanceTest do
   end
 
   describe "Instance.start_link/1" do
+    test "global signal supervisor uses rest_for_one strategy" do
+      assert :rest_for_one == Jido.Signal.Supervisor |> :sys.get_state() |> elem(2)
+    end
+
     test "starts instance supervisor with all children" do
       instance = :"TestInstance#{System.unique_integer()}"
       assert {:ok, pid} = Instance.start_link(name: instance)
@@ -50,8 +93,18 @@ defmodule Jido.Signal.InstanceTest do
       assert Process.whereis(Names.registry(instance_opts)) |> is_pid()
       assert Process.whereis(Names.task_supervisor(instance_opts)) |> is_pid()
       assert Process.whereis(Names.ext_registry(instance_opts)) |> is_pid()
+      assert Process.whereis(Names.bus_runtime_supervisor(instance_opts)) |> is_pid()
 
       # Cleanup
+      Instance.stop(instance)
+    end
+
+    test "instance supervisor uses rest_for_one strategy" do
+      instance = :"TestInstance#{System.unique_integer()}"
+      assert {:ok, pid} = Instance.start_link(name: instance)
+
+      assert :rest_for_one == pid |> :sys.get_state() |> elem(2)
+
       Instance.stop(instance)
     end
 
@@ -105,6 +158,97 @@ defmodule Jido.Signal.InstanceTest do
     test "stop/1 is idempotent" do
       instance = :"TestInstance#{System.unique_integer()}"
       assert :ok = Instance.stop(instance)
+    end
+
+    test "stop/1 tolerates supervisor disappearing between lookup and stop" do
+      instance = :"TestInstance#{System.unique_integer()}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      supervisor_name = Names.supervisor(jido: instance)
+      supervisor_pid = Process.whereis(supervisor_name)
+      mon_ref = Process.monitor(supervisor_pid)
+      Process.unlink(supervisor_pid)
+      Process.exit(supervisor_pid, :kill)
+      assert_receive {:DOWN, ^mon_ref, :process, ^supervisor_pid, _reason}
+
+      assert :ok = Instance.stop(instance)
+    end
+
+    test "stop/1 stops running instance even if registration entry is missing" do
+      instance = :"StopRecover#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      supervisor_name = Names.supervisor(jido: instance, allow_unregistered?: true)
+      supervisor_pid = Process.whereis(supervisor_name)
+      assert is_pid(supervisor_pid)
+      assert Process.alive?(supervisor_pid)
+
+      assert :ok = Names.unregister_instance(instance)
+      refute Names.registered_instance?(instance)
+
+      assert :ok = Instance.stop(instance)
+      refute Process.alive?(supervisor_pid)
+    end
+  end
+
+  describe "instance-scoped task supervisor usage" do
+    defmodule PassThroughMiddleware do
+      @behaviour Jido.Signal.Bus.Middleware
+
+      @impl true
+      def init(opts), do: {:ok, opts}
+
+      @impl true
+      def before_publish(signals, _context, state), do: {:cont, signals, state}
+    end
+
+    test "dispatch_batch uses instance task supervisor when jido option is provided" do
+      instance = :"DispatchScoped#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      signal =
+        Signal.new!(type: "instance.dispatch.batch", source: "/instance", data: %{ok: true})
+
+      task = Task.async(fn -> Dispatch.dispatch_batch(signal, [{:noop, []}], jido: instance) end)
+
+      :ok = :sys.suspend(Jido.Signal.TaskSupervisor)
+
+      try do
+        assert {:ok, :ok} = Task.yield(task, 300)
+      after
+        Task.shutdown(task, :brutal_kill)
+        :ok = :sys.resume(Jido.Signal.TaskSupervisor)
+        Instance.stop(instance)
+      end
+    end
+
+    test "middleware timeout runner uses instance task supervisor when bus is scoped" do
+      instance = :"MiddlewareScoped#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      bus_name = :"instance_bus_#{System.unique_integer([:positive])}"
+
+      {:ok, bus_pid} =
+        Bus.start_link(
+          name: bus_name,
+          jido: instance,
+          middleware: [{PassThroughMiddleware, []}]
+        )
+
+      signal =
+        Signal.new!(type: "instance.middleware.publish", source: "/instance", data: %{ok: true})
+
+      task = Task.async(fn -> Bus.publish(bus_pid, [signal]) end)
+
+      :ok = :sys.suspend(Jido.Signal.TaskSupervisor)
+
+      try do
+        assert {:ok, {:ok, [_recorded]}} = Task.yield(task, 300)
+      after
+        Task.shutdown(task, :brutal_kill)
+        :ok = :sys.resume(Jido.Signal.TaskSupervisor)
+        Instance.stop(instance)
+      end
     end
   end
 end

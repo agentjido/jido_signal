@@ -2,6 +2,7 @@ defmodule Jido.Signal.Router.CacheTest do
   use ExUnit.Case, async: false
 
   alias Jido.Signal
+  alias Jido.Signal.Error
   alias Jido.Signal.ID
   alias Jido.Signal.Router
   alias Jido.Signal.Router.Cache
@@ -26,8 +27,9 @@ defmodule Jido.Signal.Router.CacheTest do
       assert cached.route_count == 1
     end
 
-    test "returns :not_found for uncached router" do
-      assert {:error, :not_found} = Cache.get(:nonexistent)
+    test "returns normalized error for uncached router" do
+      assert {:error, %Error.RoutingError{} = error} = Cache.get(:nonexistent)
+      assert error.details[:reason] == :not_found
     end
 
     test "supports tuple cache_ids for namespacing" do
@@ -39,6 +41,61 @@ defmodule Jido.Signal.Router.CacheTest do
 
       # Clean up
       Cache.delete({:myapp, :user_router})
+    end
+  end
+
+  describe "managed lifecycle mode" do
+    test "put_managed/3 removes cache entry when owner process exits" do
+      {:ok, router} = Router.new([{"managed.created", :handler}])
+
+      owner =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      owner_ref = Process.monitor(owner)
+
+      assert :ok = Cache.put_managed(:managed_cache, router, owner)
+      assert Cache.cached?(:managed_cache)
+
+      send(owner, :stop)
+      assert_receive {:DOWN, ^owner_ref, :process, ^owner, :normal}, 1_000
+
+      assert_eventually(fn -> not Cache.cached?(:managed_cache) end)
+    end
+
+    test "put_managed/3 rebinds lifecycle ownership on cache overwrite" do
+      {:ok, router} = Router.new([{"managed.rebind", :handler}])
+
+      owner1 =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      owner2 =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      owner1_ref = Process.monitor(owner1)
+      owner2_ref = Process.monitor(owner2)
+
+      assert :ok = Cache.put_managed(:managed_rebind_cache, router, owner1)
+      assert :ok = Cache.put_managed(:managed_rebind_cache, router, owner2)
+
+      send(owner1, :stop)
+      assert_receive {:DOWN, ^owner1_ref, :process, ^owner1, :normal}, 1_000
+      assert Cache.cached?(:managed_rebind_cache)
+
+      send(owner2, :stop)
+      assert_receive {:DOWN, ^owner2_ref, :process, ^owner2, :normal}, 1_000
+      assert_eventually(fn -> not Cache.cached?(:managed_rebind_cache) end)
     end
   end
 
@@ -85,7 +142,7 @@ defmodule Jido.Signal.Router.CacheTest do
       assert {:ok, [:handler1]} = Cache.route(:route_test, signal)
     end
 
-    test "returns :not_cached error for uncached router" do
+    test "returns normalized cache-miss error for uncached router" do
       signal = %Signal{
         id: ID.generate!(),
         source: "/test",
@@ -93,7 +150,8 @@ defmodule Jido.Signal.Router.CacheTest do
         data: %{}
       }
 
-      assert {:error, :not_cached} = Cache.route(:not_there, signal)
+      assert {:error, %Error.RoutingError{} = error} = Cache.route(:not_there, signal)
+      assert error.details[:reason] == :not_found
     end
 
     test "returns error for nil signal type" do
@@ -399,6 +457,20 @@ defmodule Jido.Signal.Router.CacheTest do
       assert metadata.matched == false
 
       :telemetry.detach("test-router-telemetry-nomatch")
+    end
+  end
+
+  defp assert_eventually(fun, attempts \\ 100)
+  defp assert_eventually(_fun, 0), do: flunk("condition not met")
+
+  defp assert_eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        10 -> assert_eventually(fun, attempts - 1)
+      end
     end
   end
 end

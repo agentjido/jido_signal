@@ -7,7 +7,8 @@ defmodule Jido.Signal.Serialization.Config do
 
   ## Configuration Options
 
-  The following configuration keys are supported under the `:jido` application:
+  The following configuration keys are supported under the `:jido_signal` application
+  with fallback to `:jido` for backwards compatibility:
 
   - `:default_serializer` - The default serializer module to use (default: JsonSerializer)
   - `:default_type_provider` - The default type provider module to use (default: ModuleNameTypeProvider)
@@ -15,7 +16,7 @@ defmodule Jido.Signal.Serialization.Config do
   ## Example Configuration
 
       # In your config.exs or runtime.exs
-      config :jido,
+      config :jido_signal,
         default_serializer: Jido.Signal.Serialization.ErlangTermSerializer,
         default_type_provider: Jido.Signal.Serialization.ModuleNameTypeProvider
 
@@ -27,6 +28,7 @@ defmodule Jido.Signal.Serialization.Config do
       Jido.Signal.Serialization.Config.set_default_type_provider(MyCustomTypeProvider)
   """
 
+  alias Jido.Signal.Config, as: SignalConfig
   alias Jido.Signal.Serialization.{JsonSerializer, ModuleNameTypeProvider}
 
   @doc """
@@ -34,7 +36,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec default_serializer() :: module()
   def default_serializer do
-    Application.get_env(:jido, :default_serializer, JsonSerializer)
+    SignalConfig.get_env(:default_serializer, JsonSerializer)
   end
 
   @doc """
@@ -42,7 +44,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec default_type_provider() :: module()
   def default_type_provider do
-    Application.get_env(:jido, :default_type_provider, ModuleNameTypeProvider)
+    SignalConfig.get_env(:default_type_provider, ModuleNameTypeProvider)
   end
 
   @doc """
@@ -50,7 +52,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec set_default_serializer(module()) :: :ok
   def set_default_serializer(serializer) when is_atom(serializer) do
-    Application.put_env(:jido, :default_serializer, serializer)
+    SignalConfig.put_env(:default_serializer, serializer)
   end
 
   @doc """
@@ -58,7 +60,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec set_default_type_provider(module()) :: :ok
   def set_default_type_provider(type_provider) when is_atom(type_provider) do
-    Application.put_env(:jido, :default_type_provider, type_provider)
+    SignalConfig.put_env(:default_type_provider, type_provider)
   end
 
   @default_max_payload_bytes 10_000_000
@@ -72,7 +74,7 @@ defmodule Jido.Signal.Serialization.Config do
 
   Configure in your application config:
 
-      config :jido, :max_payload_bytes, 5_000_000  # 5MB
+      config :jido_signal, :max_payload_bytes, 5_000_000  # 5MB
 
   ## Examples
 
@@ -81,7 +83,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec max_payload_bytes() :: non_neg_integer()
   def max_payload_bytes do
-    Application.get_env(:jido, :max_payload_bytes, @default_max_payload_bytes)
+    SignalConfig.get_env(:max_payload_bytes, @default_max_payload_bytes)
   end
 
   @doc """

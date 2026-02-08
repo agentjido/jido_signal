@@ -3,7 +3,7 @@ defmodule Jido.Signal.Bus.Snapshot do
   Manages snapshots of the bus's signal log. A snapshot represents a filtered view
   of signals at a particular point in time, filtered by a path pattern.
 
-  Snapshots are immutable once created and are stored in :persistent_term for efficiency.
+  Snapshots are immutable once created and are stored in ETS.
   The bus state only maintains lightweight references to the snapshots.
 
   ## Usage
@@ -44,9 +44,11 @@ defmodule Jido.Signal.Bus.Snapshot do
 
   require Logger
 
+  @snapshot_table :jido_signal_bus_snapshots
+
   defmodule SnapshotRef do
     @moduledoc """
-    A lightweight reference to a snapshot stored in :persistent_term.
+    A lightweight reference to a snapshot stored in ETS.
     Contains only the metadata needed for listing and lookup.
 
     ## Fields
@@ -75,7 +77,7 @@ defmodule Jido.Signal.Bus.Snapshot do
 
   defmodule SnapshotData do
     @moduledoc """
-    The actual snapshot data stored in :persistent_term.
+    The actual snapshot data stored in ETS.
     Contains the full signal list and metadata.
 
     ## Fields
@@ -106,7 +108,7 @@ defmodule Jido.Signal.Bus.Snapshot do
 
   @doc """
   Creates a new snapshot of signals matching the given path pattern.
-  Stores the snapshot data in :persistent_term and returns a reference.
+  Stores the snapshot data in ETS and returns a reference.
   Returns {:ok, snapshot_ref, new_state} on success or {:error, reason} on failure.
 
   ## Options
@@ -168,8 +170,8 @@ defmodule Jido.Signal.Bus.Snapshot do
           created_at: now
         }
 
-        # Store the full data in persistent_term
-        :persistent_term.put({__MODULE__, id}, snapshot_data)
+        # Store the full data in ETS
+        :ok = put_snapshot_data(id, snapshot_data)
 
         # Store only the reference in the state
         new_state = %{state | snapshots: Map.put(state.snapshots, id, snapshot_ref)}
@@ -236,7 +238,7 @@ defmodule Jido.Signal.Bus.Snapshot do
 
   @doc """
   Deletes a snapshot by its ID.
-  Removes both the reference from the state and the data from persistent_term.
+  Removes both the reference from the state and the data from ETS.
   Returns {:ok, new_state} on success or {:error, :not_found} if snapshot doesn't exist.
 
   ## Examples
@@ -252,8 +254,8 @@ defmodule Jido.Signal.Bus.Snapshot do
   def delete(state, snapshot_id) do
     case Map.has_key?(state.snapshots, snapshot_id) do
       true ->
-        # Remove from persistent_term
-        :persistent_term.erase({__MODULE__, snapshot_id})
+        # Remove from ETS
+        :ok = delete_snapshot_data(snapshot_id)
         # Remove reference from state
         new_state = %{state | snapshots: Map.delete(state.snapshots, snapshot_id)}
         {:ok, new_state}
@@ -279,9 +281,9 @@ defmodule Jido.Signal.Bus.Snapshot do
   """
   @spec cleanup(BusState.t()) :: {:ok, BusState.t()} | {:error, :snapshot_cleanup_failed}
   def cleanup(state) do
-    # Delete all snapshots from persistent_term
+    # Delete all snapshots from ETS
     Enum.each(state.snapshots, fn {id, _ref} ->
-      :persistent_term.erase({__MODULE__, id})
+      :ok = delete_snapshot_data(id)
     end)
 
     # Return state with empty snapshots map
@@ -313,9 +315,9 @@ defmodule Jido.Signal.Bus.Snapshot do
       state.snapshots
       |> Enum.split_with(fn {_id, ref} -> filter_fn.(ref) end)
 
-    # Delete filtered snapshots from persistent_term
+    # Delete filtered snapshots from ETS
     Enum.each(to_remove, fn {id, _ref} ->
-      :persistent_term.erase({__MODULE__, id})
+      :ok = delete_snapshot_data(id)
     end)
 
     # Create new snapshots map with only the kept snapshots
@@ -333,9 +335,52 @@ defmodule Jido.Signal.Bus.Snapshot do
 
   @spec get_snapshot_data(String.t()) :: {:ok, SnapshotData.t()} | :error
   defp get_snapshot_data(snapshot_id) do
-    data = :persistent_term.get({__MODULE__, snapshot_id})
-    {:ok, data}
-  rescue
-    ArgumentError -> :error
+    case :ets.lookup(ensure_snapshot_table(), snapshot_key(snapshot_id)) do
+      [{_key, data}] -> {:ok, data}
+      [] -> :error
+    end
+  catch
+    :error, :badarg -> :error
+  end
+
+  defp put_snapshot_data(snapshot_id, snapshot_data) do
+    true = :ets.insert(ensure_snapshot_table(), {snapshot_key(snapshot_id), snapshot_data})
+    :ok
+  end
+
+  defp delete_snapshot_data(snapshot_id) do
+    :ets.delete(ensure_snapshot_table(), snapshot_key(snapshot_id))
+    :ok
+  end
+
+  defp snapshot_key(snapshot_id), do: snapshot_id
+
+  defp ensure_snapshot_table do
+    case :ets.whereis(@snapshot_table) do
+      :undefined ->
+        try do
+          :ets.new(@snapshot_table, [
+            :named_table,
+            :set,
+            :public,
+            {:heir, snapshot_table_heir(), :snapshot_table},
+            {:read_concurrency, true},
+            {:write_concurrency, true}
+          ])
+        rescue
+          ArgumentError ->
+            @snapshot_table
+        end
+
+      table ->
+        table
+    end
+  end
+
+  defp snapshot_table_heir do
+    case Process.whereis(Jido.Signal.Supervisor) do
+      pid when is_pid(pid) -> pid
+      _ -> self()
+    end
   end
 end

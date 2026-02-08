@@ -161,11 +161,15 @@ defmodule Jido.Signal.Dispatch.Http do
     timeout = Keyword.fetch!(opts, :timeout)
     retry_config = Keyword.fetch!(opts, :retry)
 
-    body = Jason.encode!(signal)
-    default_headers = [{"content-type", "application/json"}]
-    headers = default_headers ++ headers
+    case Jason.encode(signal) do
+      {:ok, body} ->
+        default_headers = [{"content-type", "application/json"}]
+        headers = default_headers ++ headers
+        do_request_with_retry(method, url, headers, body, timeout, retry_config)
 
-    do_request_with_retry(method, url, headers, body, timeout, retry_config)
+      {:error, reason} ->
+        {:error, {:json_encode_error, reason}}
+    end
   end
 
   # Private Helpers

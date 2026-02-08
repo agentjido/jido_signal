@@ -16,7 +16,9 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   alias Jido.Signal
   alias Jido.Signal.Bus.Middleware
   alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.Context
   alias Jido.Signal.Error
+  alias Jido.Signal.Names
   alias Jido.Signal.Telemetry
 
   @type middleware_config :: {module(), term()}
@@ -263,11 +265,16 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
 
   @spec run_with_timeout((-> term()), pos_integer(), module(), context()) :: term()
   defp run_with_timeout(fun, timeout_ms, module, context) do
-    task = Task.async(fun)
+    task_supervisor = Names.task_supervisor(Context.jido_opts(context))
+    task = Task.Supervisor.async_nolink(task_supervisor, fun)
 
     case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} ->
         result
+
+      {:exit, reason} ->
+        {:error,
+         Error.execution_error("Middleware crashed", %{module: module, reason: inspect(reason)})}
 
       nil ->
         Telemetry.execute(

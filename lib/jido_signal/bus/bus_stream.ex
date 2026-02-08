@@ -9,6 +9,8 @@ defmodule Jido.Signal.Bus.Stream do
   """
 
   alias Jido.Signal
+  alias Jido.Signal.Bus.PersistentRef
+  alias Jido.Signal.Bus.SignalValidation
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
@@ -26,22 +28,22 @@ defmodule Jido.Signal.Bus.Stream do
     batch_size = Keyword.get(opts, :batch_size, 1_000)
     correlation_id = Keyword.get(opts, :correlation_id)
 
-    # Get list of signals from log map
-    signals = BusState.log_to_list(state)
+    # Keep log entry IDs to preserve ordering and identity semantics.
+    signals =
+      state.log
+      |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
 
     # First filter by timestamp if provided
     timestamp_filtered =
       if start_timestamp do
         filtered =
-          Enum.filter(signals, fn signal ->
+          Enum.filter(signals, fn {log_id, _signal} ->
             # For UUID7 IDs, we can extract the timestamp directly from the ID
             # This is more efficient than converting DateTime to Unix time
             # Fall back to created_at if ID timestamp extraction fails
             signal_ts =
               try do
-                ts = ID.extract_timestamp(signal.id)
-
-                ts
+                ID.extract_timestamp(log_id)
               rescue
                 _error ->
                   # Default to 0 to include the signal
@@ -59,7 +61,7 @@ defmodule Jido.Signal.Bus.Stream do
     # Then filter by correlation_id if provided
     correlation_filtered =
       if correlation_id do
-        Enum.filter(timestamp_filtered, fn signal ->
+        Enum.filter(timestamp_filtered, fn {_log_id, signal} ->
           signal.correlation_id == correlation_id
         end)
       else
@@ -71,7 +73,7 @@ defmodule Jido.Signal.Bus.Stream do
     case Router.Validator.validate_path(type_pattern) do
       {:ok, _} ->
         # Create a simple pattern matcher function
-        matches_pattern? = fn signal ->
+        matches_pattern? = fn {_log_id, signal} ->
           matches = Router.matches?(signal.type, type_pattern)
 
           matches
@@ -82,10 +84,11 @@ defmodule Jido.Signal.Bus.Stream do
           correlation_filtered
           |> Enum.filter(matches_pattern?)
           |> Enum.take(batch_size)
-          |> Enum.map(fn signal ->
+          |> Enum.map(fn {log_id, signal} ->
             # Convert to RecordedSignal struct
             %Jido.Signal.Bus.RecordedSignal{
-              id: signal.id,
+              id: log_id,
+              log_id: log_id,
               type: signal.type,
               created_at: DateTime.utc_now(),
               signal: signal
@@ -116,7 +119,7 @@ defmodule Jido.Signal.Bus.Stream do
   end
 
   def publish(%BusState{} = state, signals) when is_list(signals) do
-    with :ok <- validate_signals(signals),
+    with :ok <- SignalValidation.validate_signals(signals),
          {:ok, new_state, _new_signals} <- BusState.append_signals(state, signals) do
       route_signals_to_subscribers(signals, new_state.subscriptions)
       {:ok, new_state}
@@ -147,9 +150,13 @@ defmodule Jido.Signal.Bus.Stream do
         {:error, :subscription_not_found}
 
       subscription ->
-        if subscription.persistent? && subscription.persistence_pid do
+        target =
+          PersistentRef.target(Map.get(subscription, :persistence_ref)) ||
+            PersistentRef.target(Map.get(subscription, :persistence_pid))
+
+        if subscription.persistent? && target do
           # Send ack to persistent subscription process
-          GenServer.cast(subscription.persistence_pid, {:ack, signal.id})
+          GenServer.cast(target, {:ack, signal.id})
           {:ok, state}
         else
           # Non-persistent subscriptions don't need acks
@@ -173,18 +180,5 @@ defmodule Jido.Signal.Bus.Stream do
   @spec clear(BusState.t()) :: {:ok, BusState.t()}
   def clear(%BusState{} = state) do
     BusState.clear_log(state)
-  end
-
-  @spec validate_signals(list(term())) :: :ok | {:error, term()}
-  defp validate_signals(signals) do
-    invalid_signals =
-      Enum.reject(signals, fn signal ->
-        is_struct(signal, Signal)
-      end)
-
-    case invalid_signals do
-      [] -> :ok
-      _ -> {:error, :invalid_signals}
-    end
   end
 end

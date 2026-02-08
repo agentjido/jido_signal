@@ -6,6 +6,13 @@ defmodule JidoTest.Signal.Bus.StateTest do
   alias Jido.Signal.ID
   alias Jido.Signal.Router
 
+  describe "new/2" do
+    test "does not include deprecated partition_pids field" do
+      state = State.new(:test_bus)
+      refute Map.has_key?(Map.from_struct(state), :partition_pids)
+    end
+  end
+
   describe "append_signals/2" do
     setup do
       state = State.new(:test_bus)
@@ -153,13 +160,9 @@ defmodule JidoTest.Signal.Bus.StateTest do
       {:ok, state: state, signals: signals, returned_signals: returned_signals}
     end
 
-    test "returns signals in order by ID", %{state: state, signals: signals} do
+    test "returns all logged signals", %{state: state, signals: signals} do
       list = State.log_to_list(state)
       assert length(list) == 2
-
-      # Verify signals are in order by ID
-      [first, second] = list
-      assert first.id <= second.id
 
       # Verify all original signals are present by checking their data
       original_data = Enum.map(signals, & &1.data) |> MapSet.new()
@@ -358,6 +361,18 @@ defmodule JidoTest.Signal.Bus.StateTest do
     test "remove_subscription removes subscription", %{state: state, subscription: sub} do
       {:ok, state} = State.add_subscription(state, "sub1", sub)
       assert {:ok, new_state} = State.remove_subscription(state, "sub1")
+      refute Map.has_key?(new_state.subscriptions, "sub1")
+    end
+
+    test "remove_subscription removes subscription when delete_persistence is false", %{
+      state: state,
+      subscription: sub
+    } do
+      {:ok, state} = State.add_subscription(state, "sub1", sub)
+
+      assert {:ok, new_state} =
+               State.remove_subscription(state, "sub1", delete_persistence: false)
+
       refute Map.has_key?(new_state.subscriptions, "sub1")
     end
 

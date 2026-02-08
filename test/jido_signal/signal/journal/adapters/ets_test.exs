@@ -43,10 +43,10 @@ defmodule Jido.Signal.Journal.Adapters.ETSTest do
   test "init creates ETS tables", %{pid: pid} do
     # Get the adapter state from the GenServer
     adapter = :sys.get_state(pid)
-    assert :ets.whereis(adapter.signals_table) != :undefined
-    assert :ets.whereis(adapter.causes_table) != :undefined
-    assert :ets.whereis(adapter.effects_table) != :undefined
-    assert :ets.whereis(adapter.conversations_table) != :undefined
+    assert :ets.info(adapter.signals_table) != :undefined
+    assert :ets.info(adapter.causes_table) != :undefined
+    assert :ets.info(adapter.effects_table) != :undefined
+    assert :ets.info(adapter.conversations_table) != :undefined
   end
 
   test "put_signal/2 and get_signal/2", %{pid: pid} do
@@ -120,10 +120,10 @@ defmodule Jido.Signal.Journal.Adapters.ETSTest do
 
     # Wait briefly for table deletion
     :timer.sleep(10)
-    assert :ets.whereis(adapter.signals_table) == :undefined
-    assert :ets.whereis(adapter.causes_table) == :undefined
-    assert :ets.whereis(adapter.effects_table) == :undefined
-    assert :ets.whereis(adapter.conversations_table) == :undefined
+    assert :ets.info(adapter.signals_table) == :undefined
+    assert :ets.info(adapter.causes_table) == :undefined
+    assert :ets.info(adapter.effects_table) == :undefined
+    assert :ets.info(adapter.conversations_table) == :undefined
   end
 
   test "multiple adapters can coexist" do
@@ -141,8 +141,8 @@ defmodule Jido.Signal.Journal.Adapters.ETSTest do
     adapter2 = :sys.get_state(pid2)
 
     # Verify tables exist for both adapters
-    assert :ets.whereis(adapter1.signals_table) != :undefined
-    assert :ets.whereis(adapter2.signals_table) != :undefined
+    assert :ets.info(adapter1.signals_table) != :undefined
+    assert :ets.info(adapter2.signals_table) != :undefined
 
     # Clean up both adapters
     :ok = ETS.cleanup(pid1)
@@ -150,8 +150,8 @@ defmodule Jido.Signal.Journal.Adapters.ETSTest do
 
     # Wait briefly for table deletion
     :timer.sleep(10)
-    assert :ets.whereis(adapter1.signals_table) == :undefined
-    assert :ets.whereis(adapter2.signals_table) == :undefined
+    assert :ets.info(adapter1.signals_table) == :undefined
+    assert :ets.info(adapter2.signals_table) == :undefined
 
     Process.exit(pid1, :normal)
     Process.exit(pid2, :normal)

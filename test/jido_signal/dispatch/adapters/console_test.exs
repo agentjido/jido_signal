@@ -10,6 +10,7 @@ defmodule JidoTest.Signal.Dispatch.ConsoleAdapterTest do
 
   describe "behaviour implementation" do
     test "implements Adapter behaviour" do
+      Code.ensure_loaded!(ConsoleAdapter)
       assert function_exported?(ConsoleAdapter, :validate_opts, 1)
       assert function_exported?(ConsoleAdapter, :deliver, 2)
 

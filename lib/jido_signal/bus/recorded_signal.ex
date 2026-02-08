@@ -3,15 +3,20 @@ defmodule Jido.Signal.Bus.RecordedSignal do
   Represents a signal that has been recorded in the bus log.
 
   This struct wraps a signal with additional metadata about when it was recorded.
+
+  Identity fields:
+  - `log_id` is the canonical journal/log entry identity.
+  - `id` is kept as a backwards-compatible alias of `log_id`.
   """
   alias Jido.Signal.Serialization.JsonSerializer
 
-  @derive {Jason.Encoder, only: [:id, :type, :created_at, :signal]}
+  @derive {Jason.Encoder, only: [:id, :log_id, :type, :created_at, :signal]}
 
   @schema Zoi.struct(
             __MODULE__,
             %{
               id: Zoi.string(),
+              log_id: Zoi.string() |> Zoi.optional(),
               type: Zoi.string(),
               created_at: Zoi.any(),
               signal: Zoi.any()
@@ -143,6 +148,7 @@ defmodule Jido.Signal.Bus.RecordedSignal do
     # Construct the RecordedSignal
     %__MODULE__{
       id: atomized_map[:id],
+      log_id: atomized_map[:log_id] || atomized_map[:id],
       type: atomized_map[:type],
       created_at: created_at,
       signal: signal

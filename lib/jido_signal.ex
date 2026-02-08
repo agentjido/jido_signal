@@ -550,8 +550,9 @@ defmodule Jido.Signal do
 
     %__MODULE__{
       data: signal,
-      id: ID.generate(),
+      id: ID.generate!(),
       source: source,
+      time: DateTime.utc_now() |> DateTime.to_iso8601(),
       type: TypeProvider.to_string(signal)
     }
   end

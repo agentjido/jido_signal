@@ -176,5 +176,29 @@ defmodule Jido.Signal.Dispatch.HttpTest do
       # Should have attempted 3 times with exponential backoff
       assert end_time - start_time >= 3
     end
+
+    test "returns json encode error instead of raising when signal data is not encodable" do
+      signal = %Jido.Signal{
+        id: "non_json_signal",
+        type: "test",
+        source: "test",
+        time: DateTime.utc_now(),
+        data: %{pid: self()}
+      }
+
+      opts = [
+        url: "https://example.com",
+        method: :post,
+        headers: [],
+        timeout: 1,
+        retry: %{
+          max_attempts: 1,
+          base_delay: 0,
+          max_delay: 0
+        }
+      ]
+
+      assert {:error, {:json_encode_error, _}} = Http.deliver(signal, opts)
+    end
   end
 end

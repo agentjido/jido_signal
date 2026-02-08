@@ -115,7 +115,9 @@ defmodule Jido.Signal.Dispatch do
       :ok = Dispatch.dispatch(signal, config)
   """
 
+  alias Jido.Signal.Config
   alias Jido.Signal.Error
+  alias Jido.Signal.Names
   alias Jido.Signal.Telemetry
 
   @type adapter ::
@@ -138,13 +140,7 @@ defmodule Jido.Signal.Dispatch do
 
   @default_batch_size 50
   @default_max_concurrency 5
-  @default_dispatch_max_concurrency Application.compile_env(
-                                      :jido,
-                                      :dispatch_max_concurrency,
-                                      8
-                                    )
-  @normalize_errors_compile_time Application.compile_env(:jido, :normalize_dispatch_errors, false)
-
+  @default_dispatch_timeout_ms 15_000
   @builtin_adapters %{
     pid: Jido.Signal.Dispatch.PidAdapter,
     named: Jido.Signal.Dispatch.Named,
@@ -224,15 +220,11 @@ defmodule Jido.Signal.Dispatch do
   end
 
   def validate_opts(invalid_config) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.validation_error(
-         "Invalid dispatch configuration",
-         %{field: "dispatch_config", value: invalid_config, reason: :invalid_dispatch_config}
-       )}
-    else
-      {:error, :invalid_dispatch_config}
-    end
+    {:error,
+     Error.validation_error(
+       "Invalid dispatch configuration",
+       %{field: "dispatch_config", value: invalid_config, reason: :invalid_dispatch_config}
+     )}
   end
 
   @doc """
@@ -281,21 +273,29 @@ defmodule Jido.Signal.Dispatch do
       {:error, [%Jido.Signal.Error{...}]}
   """
   @spec dispatch(Jido.Signal.t(), dispatch_configs()) :: :ok | {:error, term()}
+  def dispatch(signal, config), do: dispatch(signal, config, [])
+
+  @spec dispatch(Jido.Signal.t(), dispatch_configs(), keyword()) :: :ok | {:error, term()}
   # Handle single dispatcher
-  def dispatch(signal, {adapter, opts} = config) when is_atom(adapter) and is_list(opts) do
+  def dispatch(signal, {adapter, opts} = config, dispatch_opts)
+      when is_atom(adapter) and is_list(opts) and is_list(dispatch_opts) do
     dispatch_single(signal, config)
   end
 
   # Handle multiple dispatchers
-  def dispatch(signal, configs) when is_list(configs) do
+  def dispatch(signal, configs, dispatch_opts) when is_list(configs) and is_list(dispatch_opts) do
+    task_supervisor = task_supervisor(dispatch_opts)
+    timeout = dispatch_timeout(dispatch_opts)
+
     results =
       Task.Supervisor.async_stream(
-        Jido.Signal.TaskSupervisor,
+        task_supervisor,
         configs,
         fn config -> dispatch_single(signal, config) end,
-        max_concurrency: @default_dispatch_max_concurrency,
+        max_concurrency: dispatch_max_concurrency(),
         ordered: true,
-        timeout: :infinity
+        timeout: timeout,
+        on_timeout: :kill_task
       )
       |> Enum.map(fn
         {:ok, result} -> result
@@ -305,16 +305,24 @@ defmodule Jido.Signal.Dispatch do
     # Collect ALL errors instead of returning first error
     errors =
       Enum.filter(results, &match?({:error, _}, &1))
-      |> Enum.map(fn {:error, reason} -> reason end)
+      |> Enum.map(fn {:error, reason} -> normalize_aggregate_child_error(reason) end)
 
     case errors do
       [] -> :ok
-      _ -> {:error, errors}
+      _ -> {:error, aggregate_dispatch_error(errors, length(configs))}
     end
   end
 
-  def dispatch(_signal, _config) do
-    {:error, :invalid_dispatch_config}
+  def dispatch(_signal, _config, _dispatch_opts) do
+    {:error,
+     Error.validation_error(
+       "Invalid dispatch configuration",
+       %{
+         field: "dispatch_config",
+         value: :invalid_dispatch_config,
+         reason: :invalid_dispatch_config
+       }
+     )}
   end
 
   @doc """
@@ -338,12 +346,18 @@ defmodule Jido.Signal.Dispatch do
       :ok = Task.await(task)
   """
   @spec dispatch_async(Jido.Signal.t(), dispatch_configs()) :: {:ok, Task.t()} | {:error, term()}
-  def dispatch_async(signal, config) do
+  def dispatch_async(signal, config), do: dispatch_async(signal, config, [])
+
+  @spec dispatch_async(Jido.Signal.t(), dispatch_configs(), keyword()) ::
+          {:ok, Task.t()} | {:error, term()}
+  def dispatch_async(signal, config, dispatch_opts) when is_list(dispatch_opts) do
     case validate_opts(config) do
       {:ok, validated_config} ->
+        task_supervisor = task_supervisor(dispatch_opts)
+
         task =
-          Task.Supervisor.async_nolink(Jido.Signal.TaskSupervisor, fn ->
-            dispatch(signal, validated_config)
+          Task.Supervisor.async_nolink(task_supervisor, fn ->
+            dispatch(signal, validated_config, dispatch_opts)
           end)
 
         {:ok, task}
@@ -389,7 +403,7 @@ defmodule Jido.Signal.Dispatch do
     validated_configs_with_idx = extract_validated_configs(valid_configs)
 
     dispatch_results =
-      process_batches(signal, validated_configs_with_idx, batch_size, max_concurrency)
+      process_batches(signal, validated_configs_with_idx, batch_size, max_concurrency, opts)
 
     validation_errors = extract_validation_errors(validation_errors)
     dispatch_errors = extract_dispatch_errors(dispatch_results)
@@ -421,22 +435,35 @@ defmodule Jido.Signal.Dispatch do
     Enum.map(valid_configs, fn {:ok, {config, idx}} -> {config, idx} end)
   end
 
-  defp process_batches(signal, validated_configs_with_idx, _batch_size, max_concurrency) do
+  defp process_batches(signal, validated_configs_with_idx, _batch_size, max_concurrency, opts) do
+    timeout = dispatch_timeout(opts)
+
     # Single stream over all configs (batch_size is now a no-op for backwards compat)
-    Task.Supervisor.async_stream(
-      Jido.Signal.TaskSupervisor,
-      validated_configs_with_idx,
-      fn {config, original_idx} ->
-        case dispatch_single(signal, config) do
-          :ok -> {:ok, original_idx}
-          {:error, reason} -> {:error, {original_idx, reason}}
-        end
-      end,
-      max_concurrency: max_concurrency,
-      ordered: true,
-      timeout: :infinity
-    )
-    |> Enum.map(fn {:ok, result} -> result end)
+    stream_results =
+      Task.Supervisor.async_stream(
+        task_supervisor(opts),
+        validated_configs_with_idx,
+        fn {config, original_idx} ->
+          case dispatch_single(signal, config) do
+            :ok -> {:ok, original_idx}
+            {:error, reason} -> {:error, {original_idx, reason}}
+          end
+        end,
+        max_concurrency: max_concurrency,
+        ordered: true,
+        timeout: timeout,
+        on_timeout: :kill_task
+      )
+
+    validated_configs_with_idx
+    |> Enum.zip(stream_results)
+    |> Enum.map(fn
+      {{_config, _original_idx}, {:ok, result}} ->
+        result
+
+      {{_config, original_idx}, {:exit, reason}} ->
+        {:error, {original_idx, {:task_exit, reason}}}
+    end)
   end
 
   defp extract_validation_errors(validation_errors) do
@@ -461,57 +488,70 @@ defmodule Jido.Signal.Dispatch do
 
   # Private helpers
 
-  defp normalize_error(reason, adapter, config) when is_atom(reason) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.dispatch_error(
-         "Signal dispatch failed",
-         %{adapter: adapter, reason: reason, config: config}
-       )}
-    else
-      {:error, reason}
-    end
-  end
-
   defp normalize_error(reason, adapter, config) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.dispatch_error(
-         "Signal dispatch failed",
-         %{adapter: adapter, reason: reason, config: config}
-       )}
-    else
-      {:error, reason}
-    end
-  end
-
-  defp normalize_validation_error(reason, adapter, config) when is_atom(reason) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.validation_error(
-         "Invalid adapter configuration",
-         %{field: "config", value: config, adapter: adapter, reason: reason}
-       )}
-    else
-      {:error, reason}
-    end
+    {:error,
+     Error.dispatch_error(
+       "Signal dispatch failed",
+       %{adapter: adapter, reason: reason, config: config}
+     )}
   end
 
   defp normalize_validation_error(reason, adapter, config) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.validation_error(
-         "Invalid adapter configuration",
-         %{field: "config", value: config, adapter: adapter, reason: reason}
-       )}
-    else
-      {:error, reason}
+    {:error,
+     Error.validation_error(
+       "Invalid adapter configuration",
+       %{field: "config", value: config, adapter: adapter, reason: reason}
+     )}
+  end
+
+  defp normalize_aggregate_child_error(%{__exception__: true} = error), do: error
+
+  defp normalize_aggregate_child_error(reason) do
+    Error.dispatch_error("Signal dispatch failed", %{
+      adapter: :unknown,
+      reason: reason,
+      config: :unknown
+    })
+  end
+
+  defp aggregate_dispatch_error(errors, config_count) do
+    Error.dispatch_error("One or more dispatch targets failed", %{
+      reason: :multi_dispatch_failed,
+      errors: errors,
+      error_count: length(errors),
+      config_count: config_count
+    })
+  end
+
+  defp dispatch_max_concurrency do
+    Config.get_env(:dispatch_max_concurrency, 8)
+  end
+
+  defp dispatch_timeout(opts) when is_list(opts) do
+    timeout =
+      Keyword.get(
+        opts,
+        :timeout,
+        Keyword.get(
+          opts,
+          :dispatch_timeout_ms,
+          Config.get_env(:dispatch_timeout_ms, @default_dispatch_timeout_ms)
+        )
+      )
+
+    case timeout do
+      t when is_integer(t) and t > 0 -> t
+      :infinity -> :infinity
+      _ -> @default_dispatch_timeout_ms
     end
   end
 
-  defp should_normalize_errors? do
-    @normalize_errors_compile_time or
-      Application.get_env(:jido, :normalize_dispatch_errors, false)
+  defp task_supervisor(opts) do
+    if Keyword.has_key?(opts, :jido) do
+      Names.task_supervisor(opts)
+    else
+      Jido.Signal.TaskSupervisor
+    end
   end
 
   defp get_target_from_opts(opts) do
@@ -542,7 +582,7 @@ defmodule Jido.Signal.Dispatch do
   defp validate_adapter_opts(nil, opts, _adapter), do: {:ok, opts}
 
   defp validate_adapter_opts(adapter_module, opts, _adapter) do
-    adapter_module.validate_opts(opts)
+    safe_validate_adapter_opts(adapter_module, opts)
   end
 
   defp dispatch_single(_signal, {nil, _opts}), do: :ok
@@ -610,10 +650,34 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp dispatch_deliver(signal, adapter_module, adapter, opts) do
-    case adapter_module.deliver(signal, opts) do
+    case safe_deliver(adapter_module, signal, opts) do
       :ok -> :ok
       {:error, reason} -> normalize_error(reason, adapter, {adapter, opts})
     end
+  end
+
+  defp safe_validate_adapter_opts(adapter_module, opts) do
+    adapter_module.validate_opts(opts)
+  rescue
+    exception ->
+      {:error, {:adapter_validate_exception, inspect(exception)}}
+  catch
+    kind, reason ->
+      {:error, {:adapter_validate_exit, kind, reason}}
+  end
+
+  defp safe_deliver(adapter_module, signal, opts) do
+    case adapter_module.deliver(signal, opts) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:invalid_adapter_response, other}}
+    end
+  rescue
+    exception ->
+      {:error, {:adapter_exception, inspect(exception)}}
+  catch
+    kind, reason ->
+      {:error, {:adapter_exit, kind, reason}}
   end
 
   defp resolve_adapter(nil), do: {:ok, nil}

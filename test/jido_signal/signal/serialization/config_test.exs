@@ -10,22 +10,17 @@ defmodule Jido.Signal.Serialization.ConfigTest do
 
   setup do
     # Store original config
-    original_serializer = Application.get_env(:jido, :default_serializer)
-    original_type_provider = Application.get_env(:jido, :default_type_provider)
+    original_serializer_jido = Application.get_env(:jido, :default_serializer)
+    original_serializer_signal = Application.get_env(:jido_signal, :default_serializer)
+    original_type_provider_jido = Application.get_env(:jido, :default_type_provider)
+    original_type_provider_signal = Application.get_env(:jido_signal, :default_type_provider)
 
     on_exit(fn ->
       # Restore original config
-      if original_serializer do
-        Application.put_env(:jido, :default_serializer, original_serializer)
-      else
-        Application.delete_env(:jido, :default_serializer)
-      end
-
-      if original_type_provider do
-        Application.put_env(:jido, :default_type_provider, original_type_provider)
-      else
-        Application.delete_env(:jido, :default_type_provider)
-      end
+      restore_env(:jido, :default_serializer, original_serializer_jido)
+      restore_env(:jido_signal, :default_serializer, original_serializer_signal)
+      restore_env(:jido, :default_type_provider, original_type_provider_jido)
+      restore_env(:jido_signal, :default_type_provider, original_type_provider_signal)
     end)
 
     :ok
@@ -34,11 +29,24 @@ defmodule Jido.Signal.Serialization.ConfigTest do
   describe "default_serializer/0" do
     test "returns JsonSerializer by default" do
       Application.delete_env(:jido, :default_serializer)
+      Application.delete_env(:jido_signal, :default_serializer)
       assert Config.default_serializer() == JsonSerializer
     end
 
-    test "returns configured serializer" do
+    test "returns configured serializer from jido_signal app config" do
+      Application.put_env(:jido_signal, :default_serializer, ErlangTermSerializer)
+      assert Config.default_serializer() == ErlangTermSerializer
+    end
+
+    test "falls back to jido app config" do
+      Application.delete_env(:jido_signal, :default_serializer)
       Application.put_env(:jido, :default_serializer, ErlangTermSerializer)
+      assert Config.default_serializer() == ErlangTermSerializer
+    end
+
+    test "jido_signal app config takes precedence over jido fallback" do
+      Application.put_env(:jido, :default_serializer, JsonSerializer)
+      Application.put_env(:jido_signal, :default_serializer, ErlangTermSerializer)
       assert Config.default_serializer() == ErlangTermSerializer
     end
   end
@@ -46,10 +54,17 @@ defmodule Jido.Signal.Serialization.ConfigTest do
   describe "default_type_provider/0" do
     test "returns ModuleNameTypeProvider by default" do
       Application.delete_env(:jido, :default_type_provider)
+      Application.delete_env(:jido_signal, :default_type_provider)
       assert Config.default_type_provider() == ModuleNameTypeProvider
     end
 
-    test "returns configured type provider" do
+    test "returns configured type provider from jido_signal app config" do
+      Application.put_env(:jido_signal, :default_type_provider, SomeCustomProvider)
+      assert Config.default_type_provider() == SomeCustomProvider
+    end
+
+    test "falls back to jido app config" do
+      Application.delete_env(:jido_signal, :default_type_provider)
       Application.put_env(:jido, :default_type_provider, SomeCustomProvider)
       assert Config.default_type_provider() == SomeCustomProvider
     end
@@ -135,4 +150,7 @@ defmodule Jido.Signal.Serialization.ConfigTest do
       assert Enum.any?(errors, &String.contains?(&1, "TypeProvider behaviour"))
     end
   end
+
+  defp restore_env(app, key, nil), do: Application.delete_env(app, key)
+  defp restore_env(app, key, value), do: Application.put_env(app, key, value)
 end

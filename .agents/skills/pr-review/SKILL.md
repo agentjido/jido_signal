@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Review Pull Requests for code quality, tests, and merge readiness. Use when asked to review a PR, check a pull request, or analyze changes in a PR. Triggers on: review PR, check pull request, PR feedback, is this ready to merge.
+description: "Review Pull Requests for code quality, tests, and merge readiness. Use when asked to review a PR, check a pull request, or analyze changes in a PR. Triggers on: review PR, check pull request, PR feedback, is this ready to merge."
 ---
 
 # PR Review

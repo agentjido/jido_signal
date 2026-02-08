@@ -46,6 +46,12 @@ defmodule Jido.Signal.BusSpy do
   - `[:jido, :signal, :bus, :dispatch_error]` - When dispatch fails
 
   Each event includes full signal and subscription metadata for test verification.
+
+  ## Lifecycle
+
+  `BusSpy` is intended for test/runtime instrumentation and should be stopped with
+  `stop_spy/1` so telemetry handlers are detached deterministically. As with all OTP
+  processes, `:brutal_kill` bypasses `terminate/2`.
   """
 
   use GenServer
@@ -78,12 +84,63 @@ defmodule Jido.Signal.BusSpy do
   @doc """
   Starts a new bus spy process to collect telemetry events.
 
+  This compatibility API starts the spy directly. For deterministic lifecycle in tests,
+  prefer `start_supervised_spy/1`.
+
   Returns a spy reference that can be used to query captured events.
   """
   @spec start_spy() :: spy_ref()
   def start_spy do
-    {:ok, pid} = GenServer.start_link(__MODULE__, [])
+    {:ok, pid} = start_link([])
     pid
+  end
+
+  @doc """
+  Starts a bus spy under a dedicated supervisor.
+
+  This helper is preferred for tests because stopping the returned supervisor
+  deterministically stops the spy and detaches telemetry handlers.
+  """
+  @spec start_supervised_spy(keyword()) :: {:ok, spy_ref(), pid()} | {:error, term()}
+  def start_supervised_spy(opts \\ []) do
+    child_opts = Keyword.drop(opts, [:supervisor_name])
+    supervisor_name = Keyword.get(opts, :supervisor_name)
+
+    supervisor_opts =
+      [strategy: :one_for_one]
+      |> maybe_put_supervisor_name(supervisor_name)
+
+    with {:ok, supervisor_pid} <-
+           Supervisor.start_link([{__MODULE__, child_opts}], supervisor_opts),
+         {:ok, spy_pid} <- supervised_spy_pid(supervisor_pid) do
+      {:ok, spy_pid, supervisor_pid}
+    end
+  end
+
+  @doc """
+  Starts a BusSpy process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name)
+    genserver_opts = if is_nil(name), do: [], else: [name: name]
+    GenServer.start_link(__MODULE__, opts, genserver_opts)
+  end
+
+  @doc """
+  Returns a child specification for supervised startup.
+  """
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    name = Keyword.get(opts, :name)
+
+    %{
+      id: if(is_nil(name), do: {__MODULE__, make_ref()}, else: {__MODULE__, name}),
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :temporary,
+      shutdown: 5_000
+    }
   end
 
   @doc """
@@ -152,11 +209,13 @@ defmodule Jido.Signal.BusSpy do
   def init(_opts) do
     # Attach telemetry handlers for all bus events
     for event <- @events do
+      handler_id = {__MODULE__, self(), event}
+
       Telemetry.attach(
-        {__MODULE__, self(), event},
+        handler_id,
         event,
         &handle_telemetry_event/4,
-        %{spy_pid: self()}
+        %{spy_pid: self(), handler_id: handler_id}
       )
     end
 
@@ -195,8 +254,8 @@ defmodule Jido.Signal.BusSpy do
       nil ->
         # Add to waiters list and set timeout
         ref = Process.monitor(elem(from, 0))
-        waiter = %{from: from, pattern: pattern, ref: ref}
-        Process.send_after(self(), {:wait_timeout, ref}, timeout)
+        timer_ref = Process.send_after(self(), {:wait_timeout, ref}, timeout)
+        waiter = %{from: from, pattern: pattern, ref: ref, timer_ref: timer_ref}
         {:noreply, %{state | waiters: [waiter | state.waiters]}}
 
       event ->
@@ -237,6 +296,7 @@ defmodule Jido.Signal.BusSpy do
     # Reply to satisfied waiters
     for waiter <- satisfied_waiters do
       GenServer.reply(waiter.from, {:ok, signal_event})
+      cancel_waiter_timer(waiter)
       Process.demonitor(waiter.ref, [:flush])
     end
 
@@ -258,12 +318,20 @@ defmodule Jido.Signal.BusSpy do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    # Remove any waiters for the dead process
-    remaining_waiters = Enum.reject(state.waiters, &(&1.ref == ref))
+    # Remove any waiters for the dead process and cancel their timers.
+    {removed_waiters, remaining_waiters} =
+      Enum.split_with(state.waiters, fn waiter -> waiter.ref == ref end)
+
+    Enum.each(removed_waiters, &cancel_waiter_timer/1)
     {:noreply, %{state | waiters: remaining_waiters}}
   end
 
-  def terminate(_reason, _state) do
+  def terminate(_reason, state) do
+    Enum.each(state.waiters, fn waiter ->
+      cancel_waiter_timer(waiter)
+      Process.demonitor(waiter.ref, [:flush])
+    end)
+
     # Detach all telemetry handlers
     for event <- @events do
       Telemetry.detach({__MODULE__, self(), event})
@@ -273,8 +341,17 @@ defmodule Jido.Signal.BusSpy do
   end
 
   # Telemetry event handler - forwards events to the spy process
-  def handle_telemetry_event(event_name, measurements, metadata, %{spy_pid: spy_pid}) do
-    send(spy_pid, {:telemetry_event, event_name, measurements, metadata})
+  def handle_telemetry_event(
+        event_name,
+        measurements,
+        metadata,
+        %{spy_pid: spy_pid, handler_id: handler_id}
+      ) do
+    if Process.alive?(spy_pid) do
+      send(spy_pid, {:telemetry_event, event_name, measurements, metadata})
+    else
+      Telemetry.detach(handler_id)
+    end
   end
 
   # Simple glob-style pattern matching for signal types
@@ -318,6 +395,25 @@ defmodule Jido.Signal.BusSpy do
 
       _ ->
         false
+    end
+  end
+
+  defp cancel_waiter_timer(%{timer_ref: timer_ref}) when is_reference(timer_ref) do
+    Process.cancel_timer(timer_ref)
+  end
+
+  defp cancel_waiter_timer(_waiter), do: false
+
+  defp maybe_put_supervisor_name(opts, nil), do: opts
+  defp maybe_put_supervisor_name(opts, name), do: Keyword.put(opts, :name, name)
+
+  defp supervised_spy_pid(supervisor_pid) do
+    case Supervisor.which_children(supervisor_pid) do
+      [{_id, spy_pid, :worker, [__MODULE__]}] when is_pid(spy_pid) ->
+        {:ok, spy_pid}
+
+      _ ->
+        {:error, :spy_child_not_found}
     end
   end
 end

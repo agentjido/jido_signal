@@ -53,6 +53,8 @@ defmodule Jido.Signal.Dispatch.Named do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Dispatch.AdapterValidation
+
   @type delivery_target :: {:name, atom()}
   @type delivery_mode :: :sync | :async
   @type message_format :: (Jido.Signal.t() -> term())
@@ -89,22 +91,12 @@ defmodule Jido.Signal.Dispatch.Named do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
   def validate_opts(opts) do
-    with {:ok, target} <- validate_target(Keyword.get(opts, :target)),
-         {:ok, mode} <- validate_mode(Keyword.get(opts, :delivery_mode, :async)) do
-      {:ok,
-       opts
-       |> Keyword.put(:target, target)
-       |> Keyword.put(:delivery_mode, mode)}
-    end
+    AdapterValidation.validate_target_and_mode(opts, &validate_target/1)
   end
 
   # Private helper to validate the target name tuple
   defp validate_target({:name, name}) when is_atom(name), do: {:ok, {:name, name}}
   defp validate_target(_), do: {:error, :invalid_target}
-
-  # Private helper to validate the delivery mode
-  defp validate_mode(mode) when mode in [:sync, :async], do: {:ok, mode}
-  defp validate_mode(_), do: {:error, :invalid_delivery_mode}
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -145,16 +137,7 @@ defmodule Jido.Signal.Dispatch.Named do
   defp resolve_process({:name, name}) do
     case Process.whereis(name) do
       nil -> {:error, :process_not_found}
-      pid -> check_process_alive(pid)
-    end
-  end
-
-  # Checks if the process is alive
-  defp check_process_alive(pid) do
-    if Process.alive?(pid) do
-      {:ok, pid}
-    else
-      {:error, :process_not_alive}
+      pid -> {:ok, pid}
     end
   end
 

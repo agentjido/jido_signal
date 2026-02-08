@@ -48,6 +48,12 @@ defmodule Jido.Signal.Router.Cache do
   - Reads from persistent_term are extremely fast (no copying)
   - Writes trigger a global garbage collection of all persistent_terms
   - Best for routers that are configured at startup and rarely change
+
+  ## Lifecycle Contract
+
+  Cache entries are process-independent `:persistent_term` values. Callers that create
+  cache entries are responsible for deleting them with `delete/1` (or `list_cached/0`
+  followed by `delete/1`) during shutdown/reconfiguration.
   """
 
   alias Jido.Signal
@@ -56,6 +62,7 @@ defmodule Jido.Signal.Router.Cache do
   alias Jido.Signal.Telemetry
 
   @type cache_id :: atom() | {atom(), term()}
+  @managed_lifecycle_table :jido_signal_router_cache_managed_lifecycle
 
   @doc """
   Stores a router's trie in persistent_term cache.
@@ -77,6 +84,36 @@ defmodule Jido.Signal.Router.Cache do
   end
 
   @doc """
+  Stores a router trie and binds its lifecycle to an owner process.
+
+  When `owner_pid` exits, the cache entry is removed automatically. This provides
+  deterministic cleanup for long-running systems without changing the manual API.
+
+  ## Parameters
+  - cache_id: Unique cache identifier (atom or tuple)
+  - router: Router struct (or struct with `:trie`)
+  - owner_pid: Process that owns this cache entry (defaults to caller)
+  """
+  @spec put_managed(cache_id(), map(), pid()) :: :ok | {:error, term()}
+  def put_managed(cache_id, router, owner_pid \\ self())
+
+  def put_managed(cache_id, %{trie: _trie} = router, owner_pid)
+      when (is_atom(cache_id) or is_tuple(cache_id)) and is_pid(owner_pid) do
+    :ok = put(cache_id, router)
+    register_managed_entry(cache_id, owner_pid)
+    :ok
+  end
+
+  def put_managed(_cache_id, _router, owner_pid) do
+    {:error,
+     Error.validation_error("Invalid managed cache owner", %{
+       field: :owner_pid,
+       value: owner_pid,
+       reason: :invalid_owner_pid
+     })}
+  end
+
+  @doc """
   Retrieves a cached router trie and wraps it in a Router struct.
 
   ## Parameters
@@ -84,19 +121,19 @@ defmodule Jido.Signal.Router.Cache do
 
   ## Returns
   - `{:ok, %Router{}}` if found
-  - `{:error, :not_found}` if not cached
+  - `{:error, %Jido.Signal.Error.RoutingError{}}` if not cached
 
   ## Example
 
       {:ok, router} = Router.Cache.get(:my_router)
   """
-  @spec get(cache_id()) :: {:ok, map()} | {:error, :not_found}
+  @spec get(cache_id()) :: {:ok, map()} | {:error, term()}
   def get(cache_id) when is_atom(cache_id) or is_tuple(cache_id) do
     alias Jido.Signal.Router.Router
 
     case :persistent_term.get(cache_key(cache_id), :not_found) do
       :not_found ->
-        {:error, :not_found}
+        {:error, cache_not_found_error(cache_id)}
 
       trie ->
         route_count = Engine.count_routes(trie)
@@ -119,7 +156,8 @@ defmodule Jido.Signal.Router.Cache do
   """
   @spec delete(cache_id()) :: :ok
   def delete(cache_id) when is_atom(cache_id) or is_tuple(cache_id) do
-    _ = :persistent_term.erase(cache_key(cache_id))
+    delete_cache_entry(cache_id)
+    maybe_stop_managed_monitor(cache_id)
     :ok
   end
 
@@ -149,7 +187,7 @@ defmodule Jido.Signal.Router.Cache do
 
   ## Returns
   - `{:ok, [targets]}` - List of matching targets
-  - `{:error, :not_cached}` - Router not in cache
+  - `{:error, %Jido.Signal.Error.RoutingError{}}` - Router not in cache
   - `{:error, reason}` - Routing error
 
   ## Example
@@ -168,7 +206,7 @@ defmodule Jido.Signal.Router.Cache do
   def route(cache_id, %Signal{} = signal) when is_atom(cache_id) or is_tuple(cache_id) do
     case :persistent_term.get(cache_key(cache_id), :not_found) do
       :not_found ->
-        {:error, :not_cached}
+        {:error, cache_not_found_error(cache_id)}
 
       trie ->
         start_time = System.monotonic_time(:microsecond)
@@ -236,26 +274,122 @@ defmodule Jido.Signal.Router.Cache do
   """
   @spec update(cache_id(), term()) :: {:ok, map()} | {:error, term()}
   def update(cache_id, routes) when is_atom(cache_id) or is_tuple(cache_id) do
-    alias Jido.Signal.Router
-    alias Jido.Signal.Router.Router, as: RouterStruct
-
-    router =
-      case get(cache_id) do
-        {:ok, existing} -> existing
-        {:error, :not_found} -> %RouterStruct{cache_id: cache_id}
-      end
-
-    case Router.add(router, routes) do
-      {:ok, updated} ->
-        put(cache_id, updated)
-        {:ok, updated}
-
-      error ->
-        error
-    end
+    :global.trans({__MODULE__, cache_id}, fn ->
+      do_update(cache_id, routes)
+    end)
   end
 
   # Private helpers
 
+  defp do_update(cache_id, routes) do
+    alias Jido.Signal.Router
+    alias Jido.Signal.Router.Router, as: RouterStruct
+
+    with {:ok, router} <- fetch_or_initialize_router(cache_id, RouterStruct),
+         {:ok, updated} <- Router.add(router, routes) do
+      put(cache_id, updated)
+      {:ok, updated}
+    end
+  end
+
   defp cache_key(cache_id), do: {:jido_signal_router_cache, cache_id}
+
+  defp delete_cache_entry(cache_id) do
+    _ = :persistent_term.erase(cache_key(cache_id))
+    :ok
+  end
+
+  defp fetch_or_initialize_router(cache_id, router_struct_module) do
+    case get(cache_id) do
+      {:ok, existing} ->
+        {:ok, existing}
+
+      {:error, %Error.RoutingError{details: details} = error} ->
+        if details[:reason] == :not_found do
+          {:ok, struct(router_struct_module, cache_id: cache_id)}
+        else
+          {:error, error}
+        end
+    end
+  end
+
+  defp cache_not_found_error(cache_id) do
+    Error.routing_error("Router cache entry not found", %{
+      cache_id: cache_id,
+      reason: :not_found,
+      route: cache_id
+    })
+  end
+
+  defp register_managed_entry(cache_id, owner_pid) do
+    maybe_stop_managed_monitor(cache_id)
+    table = ensure_managed_lifecycle_table()
+    monitor_pid = spawn(fn -> monitor_owner(cache_id, owner_pid) end)
+    true = :ets.insert(table, {cache_id, monitor_pid})
+    :ok
+  end
+
+  defp monitor_owner(cache_id, owner_pid) do
+    ref = Process.monitor(owner_pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^owner_pid, _reason} ->
+        maybe_delete_managed_entry(cache_id, self())
+    end
+  end
+
+  defp maybe_delete_managed_entry(cache_id, monitor_pid) do
+    table = ensure_managed_lifecycle_table()
+
+    case :ets.lookup(table, cache_id) do
+      [{^cache_id, ^monitor_pid}] ->
+        :ets.delete(table, cache_id)
+        delete_cache_entry(cache_id)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp maybe_stop_managed_monitor(cache_id) do
+    table = ensure_managed_lifecycle_table()
+
+    case :ets.lookup(table, cache_id) do
+      [{^cache_id, monitor_pid}] ->
+        :ets.delete(table, cache_id)
+        stop_managed_monitor(monitor_pid)
+
+      [] ->
+        :ok
+    end
+  end
+
+  defp stop_managed_monitor(monitor_pid) when is_pid(monitor_pid) do
+    if monitor_pid != self() and Process.alive?(monitor_pid) do
+      Process.exit(monitor_pid, :kill)
+    end
+
+    :ok
+  end
+
+  defp ensure_managed_lifecycle_table do
+    case :ets.whereis(@managed_lifecycle_table) do
+      :undefined ->
+        try do
+          :ets.new(@managed_lifecycle_table, [
+            :named_table,
+            :set,
+            :public,
+            {:read_concurrency, true},
+            {:write_concurrency, true}
+          ])
+        rescue
+          ArgumentError ->
+            @managed_lifecycle_table
+        end
+
+      table ->
+        table
+    end
+  end
 end

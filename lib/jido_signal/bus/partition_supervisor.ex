@@ -8,6 +8,8 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   use Supervisor
 
   alias Jido.Signal.Bus.Partition
+  alias Jido.Signal.Names
+  alias Jido.Signal.Retry
 
   @doc """
   Starts the partition supervisor.
@@ -15,7 +17,6 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   ## Options
 
     * `:bus_name` - The name of the parent bus (required)
-    * `:bus_pid` - The PID of the parent bus (required)
     * `:partition_count` - Number of partitions to create (default: 1)
     * `:middleware` - Middleware configurations (optional)
     * `:middleware_timeout_ms` - Timeout for middleware execution (default: 100)
@@ -25,26 +26,45 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     bus_name = Keyword.fetch!(opts, :bus_name)
-    Supervisor.start_link(__MODULE__, opts, name: via_tuple(bus_name))
+    name = via_tuple(bus_name, opts)
+
+    Retry.until(3, fn -> do_start_link(opts, name) end,
+      delay_ms: 10,
+      factor: 1.0,
+      on_exhausted: {:error, :name_conflict}
+    )
+  end
+
+  defp do_start_link(opts, name) do
+    case Supervisor.start_link(__MODULE__, opts, name: name) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} when is_pid(pid) ->
+        if Process.alive?(pid), do: {:ok, pid}, else: :retry
+
+      other ->
+        other
+    end
   end
 
   @doc """
   Returns a via tuple for looking up a partition supervisor by bus name.
   """
-  @spec via_tuple(atom()) :: {:via, Registry, {module(), tuple()}}
-  def via_tuple(bus_name) do
-    {:via, Registry, {Jido.Signal.Registry, {:partition_supervisor, bus_name}}}
+  @spec via_tuple(atom(), keyword()) :: {:via, Registry, {module(), tuple()}}
+  def via_tuple(bus_name, opts \\ []) do
+    {:via, Registry, {Names.registry(opts), {:partition_supervisor, bus_name}}}
   end
 
   @impl Supervisor
   def init(opts) do
     partition_count = Keyword.get(opts, :partition_count, 1)
     bus_name = Keyword.fetch!(opts, :bus_name)
-    bus_pid = Keyword.fetch!(opts, :bus_pid)
     middleware = Keyword.get(opts, :middleware, [])
     middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
     journal_adapter = Keyword.get(opts, :journal_adapter)
     journal_pid = Keyword.get(opts, :journal_pid)
+    jido = Keyword.get(opts, :jido)
     rate_limit_per_sec = Keyword.get(opts, :rate_limit_per_sec, 10_000)
     burst_size = Keyword.get(opts, :burst_size, 1_000)
 
@@ -55,7 +75,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
            [
              partition_id: i,
              bus_name: bus_name,
-             bus_pid: bus_pid,
+             jido: jido,
              middleware: middleware,
              middleware_timeout_ms: middleware_timeout_ms,
              journal_adapter: journal_adapter,

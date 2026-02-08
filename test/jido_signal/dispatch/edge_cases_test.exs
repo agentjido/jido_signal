@@ -265,15 +265,14 @@ defmodule Jido.Signal.DispatchEdgeCasesTest do
   end
 
   describe "adapter option variations" do
-    test "pid adapter with dead process returns error" do
+    test "pid adapter async mode is best-effort for dead process targets" do
       dead_pid = spawn(fn -> :ok end)
       Process.sleep(10)
 
       {:ok, signal} = Signal.new("test.dead_pid", %{})
 
       result = Dispatch.dispatch_batch(signal, [{:pid, [target: dead_pid]}])
-      # Error can be either a struct or an atom depending on normalization
-      assert {:error, [{0, _error}]} = result
+      assert :ok = result
     end
 
     test "named adapter with non-existent name returns error" do

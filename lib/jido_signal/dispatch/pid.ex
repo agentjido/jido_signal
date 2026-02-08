@@ -50,6 +50,8 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Dispatch.AdapterValidation
+
   @type delivery_target :: pid()
   @type delivery_mode :: :sync | :async
   @type message_format :: (Jido.Signal.t() -> term())
@@ -85,22 +87,12 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
   def validate_opts(opts) do
-    with {:ok, target} <- validate_target(Keyword.get(opts, :target)),
-         {:ok, mode} <- validate_mode(Keyword.get(opts, :delivery_mode, :async)) do
-      {:ok,
-       opts
-       |> Keyword.put(:target, target)
-       |> Keyword.put(:delivery_mode, mode)}
-    end
+    AdapterValidation.validate_target_and_mode(opts, &validate_target/1)
   end
 
   # Private helper to validate the target PID
   defp validate_target(pid) when is_pid(pid), do: {:ok, pid}
   defp validate_target(_), do: {:error, :invalid_target}
-
-  # Private helper to validate the delivery mode
-  defp validate_mode(mode) when mode in [:sync, :async], do: {:ok, mode}
-  defp validate_mode(_), do: {:error, :invalid_delivery_mode}
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -134,30 +126,22 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
 
     case mode do
       :async ->
-        if Process.alive?(target) do
-          send(target, message_format.(signal))
-          :ok
-        else
-          {:error, :process_not_alive}
-        end
+        send(target, message_format.(signal))
+        :ok
 
       :sync ->
-        if Process.alive?(target) do
-          try do
-            message = message_format.(signal)
+        try do
+          message = message_format.(signal)
 
-            if target == self() do
-              {:error, {:calling_self, {GenServer, :call, [target, message, timeout]}}}
-            else
-              GenServer.call(target, message, timeout)
-            end
-          catch
-            :exit, {:timeout, _} -> {:error, :timeout}
-            :exit, {:noproc, _} -> {:error, :process_not_alive}
-            :exit, reason -> {:error, reason}
+          if target == self() do
+            {:error, {:calling_self, {GenServer, :call, [target, message, timeout]}}}
+          else
+            GenServer.call(target, message, timeout)
           end
-        else
-          {:error, :process_not_alive}
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+          :exit, {:noproc, _} -> {:error, :process_not_alive}
+          :exit, reason -> {:error, reason}
         end
     end
   end

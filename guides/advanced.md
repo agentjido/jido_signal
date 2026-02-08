@@ -114,7 +114,7 @@ For reliable message delivery, persistent subscriptions provide:
 ```elixir
 # Configure for aggressive retry
 {:ok, sub_id} = Bus.subscribe(:my_bus, "critical.*",
-  persistent: true,
+  persistent?: true,
   dispatch: {:pid, target: self()},
   max_in_flight: 50,
   max_attempts: 10,
@@ -123,7 +123,7 @@ For reliable message delivery, persistent subscriptions provide:
 
 # Configure for fail-fast with DLQ review
 {:ok, sub_id} = Bus.subscribe(:my_bus, "batch.*",
-  persistent: true,
+  persistent?: true,
   dispatch: {:pid, target: self()},
   max_in_flight: 1000,
   max_attempts: 2,

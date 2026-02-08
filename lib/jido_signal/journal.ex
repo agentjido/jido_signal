@@ -5,6 +5,9 @@ defmodule Jido.Signal.Journal do
   temporal ordering and causal relationships.
   """
   alias Jido.Signal
+  require Logger
+
+  @fetch_timeout_ms 5_000
 
   @schema Zoi.struct(
             __MODULE__,
@@ -89,10 +92,43 @@ defmodule Jido.Signal.Journal do
   defp fetch_and_sort_signals(journal, signal_ids) do
     signal_ids
     |> MapSet.to_list()
-    |> Task.async_stream(&fetch_signal(journal, &1))
+    |> fetch_signals_async(journal)
     |> Stream.map(fn {:ok, signal} -> signal end)
     |> Stream.reject(&is_nil/1)
     |> Enum.sort_by(& &1.time, &sort_time_compare/2)
+  end
+
+  defp fetch_signals_async(signal_ids, journal) do
+    task_supervisor = Jido.Signal.TaskSupervisor
+
+    stream =
+      if Process.whereis(task_supervisor) do
+        Task.Supervisor.async_stream_nolink(
+          task_supervisor,
+          signal_ids,
+          &fetch_signal(journal, &1),
+          timeout: @fetch_timeout_ms,
+          on_timeout: :kill_task,
+          ordered: false
+        )
+      else
+        Task.async_stream(
+          signal_ids,
+          &fetch_signal(journal, &1),
+          timeout: @fetch_timeout_ms,
+          on_timeout: :kill_task,
+          ordered: false
+        )
+      end
+
+    Stream.map(stream, fn
+      {:ok, signal} ->
+        {:ok, signal}
+
+      {:exit, reason} ->
+        Logger.debug("Journal signal fetch task exited: #{inspect(reason)}")
+        {:ok, nil}
+    end)
   end
 
   defp fetch_signal(journal, id) do
@@ -231,12 +267,28 @@ defmodule Jido.Signal.Journal do
     call_adapter(journal, :put_signal, [signal])
   end
 
-  defp get_all_signals(%__MODULE__{adapter_pid: pid} = journal) when not is_nil(pid) do
-    call_adapter(journal, :get_all_signals, [])
+  defp get_all_signals(%__MODULE__{adapter: adapter, adapter_pid: pid} = journal)
+       when not is_nil(pid) do
+    if function_exported?(adapter, :get_all_signals, 1) do
+      call_adapter(journal, :get_all_signals, [])
+    else
+      Logger.debug("Journal adapter #{inspect(adapter)} does not support get_all_signals/1")
+      []
+    end
   end
 
   defp get_all_signals(%__MODULE__{adapter: adapter}) do
-    adapter.get_all_signals()
+    cond do
+      function_exported?(adapter, :get_all_signals, 0) ->
+        adapter.get_all_signals()
+
+      function_exported?(adapter, :get_all_signals, 1) ->
+        adapter.get_all_signals(nil)
+
+      true ->
+        Logger.debug("Journal adapter #{inspect(adapter)} does not support get_all_signals")
+        []
+    end
   end
 
   defp call_adapter({:error, {:already_started, pid}}, function, args) do
@@ -249,7 +301,16 @@ defmodule Jido.Signal.Journal do
   end
 
   defp call_adapter(%__MODULE__{adapter: adapter} = _journal, function, args) do
-    apply(adapter, function, args)
+    cond do
+      function_exported?(adapter, function, length(args)) ->
+        apply(adapter, function, args)
+
+      function_exported?(adapter, function, length(args) + 1) ->
+        apply(adapter, function, args ++ [nil])
+
+      true ->
+        {:error, {:unsupported_adapter_callback, function, length(args)}}
+    end
   end
 
   defp do_trace_chain(_journal, chain, _direction, _visited) when length(chain) > 100 do

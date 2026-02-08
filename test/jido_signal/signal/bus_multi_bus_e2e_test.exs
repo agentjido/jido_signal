@@ -1,5 +1,5 @@
 defmodule Jido.Signal.BusMultiBusE2ETest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Jido.Signal
   alias Jido.Signal.Bus
@@ -214,14 +214,21 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
            ]}
         )
 
-      # Wait for buses to be registered
-      Process.sleep(100)
+      wait_until(fn ->
+        match?({:ok, pid} when is_pid(pid), Bus.whereis(bus_a_name)) and
+          match?({:ok, pid} when is_pid(pid), Bus.whereis(bus_b_name))
+      end)
 
       # Verify both buses are running
       {:ok, found_bus_a} = Bus.whereis(bus_a_name)
       {:ok, found_bus_b} = Bus.whereis(bus_b_name)
-      assert found_bus_a == bus_a_pid
-      assert found_bus_b == bus_b_pid
+      assert Process.alive?(found_bus_a)
+      assert Process.alive?(found_bus_b)
+      assert Process.alive?(bus_a_pid)
+      assert Process.alive?(bus_b_pid)
+
+      bus_a_pid = found_bus_a
+      bus_b_pid = found_bus_b
 
       Logger.info("Both buses started successfully")
 
@@ -317,8 +324,11 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
       {:ok, recorded_b2} = Bus.publish(bus_b_pid, [user_signal_1, user_signal_2])
       assert Enum.empty?(recorded_b2), "User signals should be filtered out by Bus B"
 
-      # Give time for signal delivery
-      Process.sleep(300)
+      wait_until(fn ->
+        length(MultiTestClient.get_signals(client_1)) == 4 and
+          length(MultiTestClient.get_signals(client_2)) == 2 and
+          length(MultiTestClient.get_signals(client_3)) == 2
+      end)
 
       # ===== VERIFY SIGNAL PARTITIONING =====
 
@@ -433,7 +443,9 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
       {:ok, _} = Bus.publish(bus_a_pid, [login_signal])
       {:ok, _} = Bus.publish(bus_b_pid, [startup_signal])
 
-      Process.sleep(200)
+      wait_until(fn ->
+        length(MultiTestClient.get_signals(persistent_client)) == 2
+      end)
 
       # Verify persistent client received signals from both buses
       persistent_signals = MultiTestClient.get_signals(persistent_client)
@@ -564,7 +576,10 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
       {:ok, _} = Bus.publish(bus_transform_name, [test_signal])
       {:ok, _} = Bus.publish(bus_enrich_name, [test_signal])
 
-      Process.sleep(200)
+      wait_until(fn ->
+        length(MultiTestClient.get_signals(transform_client)) == 1 and
+          length(MultiTestClient.get_signals(enrich_client)) == 1
+      end)
 
       # Verify different transformations
       transform_signals = MultiTestClient.get_signals(transform_client)
@@ -607,17 +622,25 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
           "load_bus_#{i}_#{:erlang.unique_integer([:positive])}"
         end)
 
+      Enum.each(bus_names, fn name ->
+        start_supervised!(
+          {Bus,
+           name: name,
+           middleware: [
+             {MetricsMiddleware, test_pid: self()}
+           ]}
+        )
+      end)
+
+      wait_until(fn ->
+        Enum.all?(bus_names, fn name ->
+          match?({:ok, pid} when is_pid(pid), Bus.whereis(name))
+        end)
+      end)
+
       bus_pids =
         Enum.map(bus_names, fn name ->
-          {:ok, pid} =
-            start_supervised(
-              {Bus,
-               name: name,
-               middleware: [
-                 {MetricsMiddleware, test_pid: self()}
-               ]}
-            )
-
+          {:ok, pid} = Bus.whereis(name)
           pid
         end)
 
@@ -663,7 +686,6 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
             |> Enum.chunk_every(10)
             |> Enum.each(fn batch ->
               {:ok, _} = Bus.publish(bus_pid, batch)
-              Process.sleep(10)
             end)
 
             :ok
@@ -675,8 +697,17 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
 
       Logger.info("All signals published, waiting for delivery")
 
-      # Give time for all signals to be delivered
-      Process.sleep(2000)
+      expected_total_signals = length(bus_names) * signals_per_bus * clients_per_bus
+
+      wait_until(fn ->
+        clients
+        |> Enum.map(fn {client, _bus_pid} ->
+          client
+          |> MultiTestClient.get_signals()
+          |> length()
+        end)
+        |> Enum.sum() == expected_total_signals
+      end)
 
       # Verify signal delivery
       total_signals_received =
@@ -687,8 +718,6 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
         end)
         |> Enum.sum()
 
-      expected_total_signals = length(bus_names) * signals_per_bus * clients_per_bus
-
       assert total_signals_received == expected_total_signals,
              "Expected #{expected_total_signals} total signals, got #{total_signals_received}"
 
@@ -698,6 +727,20 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
       Enum.each(clients, fn {client, _bus_pid} ->
         MultiTestClient.stop(client)
       end)
+    end
+  end
+
+  defp wait_until(fun, attempts \\ 500)
+  defp wait_until(_fun, 0), do: flunk("condition not met in wait_until/2")
+
+  defp wait_until(fun, attempts) when is_function(fun, 0) do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        10 -> wait_until(fun, attempts - 1)
+      end
     end
   end
 end
