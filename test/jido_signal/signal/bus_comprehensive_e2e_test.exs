@@ -355,10 +355,9 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       # Create new client and reconnect
       {:ok, new_reconnect_client} = TestClient.start_link(id: "new_reconnect_client")
       {:ok, checkpoint} = Bus.reconnect(bus_pid, reconnect_sub_id, new_reconnect_client)
-      # The checkpoint can be either a timestamp string or integer (0 if no signals)
-      assert (is_binary(checkpoint) and String.match?(checkpoint, ~r/\d{4}-\d{2}-\d{2}T/)) or
-               checkpoint == 0,
-             "Reconnect should return a timestamp string or 0"
+      # Reconnect now returns a millisecond timestamp extracted from log IDs.
+      assert is_integer(checkpoint) and checkpoint >= 0,
+             "Reconnect should return a non-negative integer timestamp"
 
       # Test error cases for reconnect
       assert {:error, %Error.InvalidInputError{} = reconnect_error} =

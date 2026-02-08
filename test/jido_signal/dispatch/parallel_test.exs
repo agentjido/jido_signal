@@ -16,6 +16,17 @@ defmodule Jido.Signal.DispatchParallelTest do
     end
   end
 
+  defmodule HungAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    def validate_opts(opts), do: {:ok, opts}
+
+    def deliver(_signal, _opts) do
+      receive do
+      end
+    end
+  end
+
   test "dispatches to multiple targets in parallel" do
     {:ok, signal} = Signal.new("test.event", %{})
 
@@ -72,5 +83,25 @@ defmodule Jido.Signal.DispatchParallelTest do
     assert error.details[:reason] == :multi_dispatch_failed
     assert error.details[:error_count] == 3
     assert length(error.details[:errors]) == 3
+  end
+
+  test "bounds multi-target dispatch with timeout" do
+    {:ok, signal} = Signal.new("test.event", %{})
+
+    configs = [
+      {HungAdapter, []},
+      {SlowAdapter, [delay: 10]}
+    ]
+
+    {elapsed_us, result} =
+      :timer.tc(fn ->
+        Dispatch.dispatch(signal, configs, timeout: 50)
+      end)
+
+    elapsed_ms = div(elapsed_us, 1000)
+
+    assert {:error, %Jido.Signal.Error.DispatchError{} = error} = result
+    assert error.details[:reason] == :multi_dispatch_failed
+    assert elapsed_ms < 1_000
   end
 end

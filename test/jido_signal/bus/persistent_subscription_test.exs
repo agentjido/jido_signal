@@ -168,6 +168,37 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       assert checkpoint == highest_timestamp
     end
+
+    test "persistent subscription recovers after process restart without resubscribe", %{
+      bus: bus
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.recover.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_state = :sys.get_state(bus_pid)
+      subscription = Map.get(bus_state.subscriptions, subscription_id)
+      old_persistent_pid = subscription.persistence_pid
+
+      down_ref = Process.monitor(old_persistent_pid)
+      Process.exit(old_persistent_pid, :kill)
+      assert_receive {:DOWN, ^down_ref, :process, ^old_persistent_pid, _reason}
+
+      new_persistent_pid = wait_for_persistent_pid(bus, subscription_id, old_persistent_pid)
+      assert is_pid(new_persistent_pid)
+      assert new_persistent_pid != old_persistent_pid
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.recover.signal",
+          source: "/test",
+          data: %{value: 42}
+        })
+
+      {:ok, [recorded]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.recover.signal"}}, 1_000
+      assert :ok = Bus.ack(bus, subscription_id, recorded.id)
+    end
   end
 
   describe "backward compatibility without journal adapter" do
@@ -726,6 +757,24 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       after
         10 -> assert_checkpoint(pid, expected, attempts - 1)
       end
+    end
+  end
+
+  defp wait_for_persistent_pid(bus, subscription_id, old_pid, attempts \\ 100)
+
+  defp wait_for_persistent_pid(_bus, _subscription_id, _old_pid, 0),
+    do: flunk("persistent subscription did not restart")
+
+  defp wait_for_persistent_pid(bus, subscription_id, old_pid, attempts) do
+    case PersistentSubscription.whereis(bus, subscription_id) do
+      pid when is_pid(pid) and pid != old_pid ->
+        pid
+
+      _ ->
+        receive do
+        after
+          10 -> wait_for_persistent_pid(bus, subscription_id, old_pid, attempts - 1)
+        end
     end
   end
 

@@ -7,6 +7,7 @@ defmodule Jido.Signal.Bus.Subscriber do
   persistent subscriptions, handling subscription lifetime and signal delivery.
   """
 
+  alias Jido.Signal.Bus.PersistentSubscription
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
@@ -24,6 +25,7 @@ defmodule Jido.Signal.Bus.Subscriber do
               dispatch: @dispatch_schema,
               persistent?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               persistence_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
+              persistence_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               disconnected?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               created_at: Zoi.default(Zoi.datetime(), DateTime.utc_now())
             }
@@ -69,6 +71,7 @@ defmodule Jido.Signal.Bus.Subscriber do
       dispatch: dispatch,
       persistent?: persistent?,
       persistence_pid: nil,
+      persistence_ref: nil,
       created_at: DateTime.utc_now()
     }
 
@@ -136,7 +139,10 @@ defmodule Jido.Signal.Bus.Subscriber do
   end
 
   defp finalize_persistent_subscription(state, subscription_id, subscription, pid) do
-    subscription = %{subscription | persistence_pid: pid}
+    persistence_ref =
+      PersistentSubscription.via_tuple(state.name, subscription_id, jido_opts(state))
+
+    subscription = %{subscription | persistence_pid: pid, persistence_ref: persistence_ref}
 
     case BusState.add_subscription(state, subscription_id, subscription) do
       {:ok, new_state} ->
@@ -204,15 +210,7 @@ defmodule Jido.Signal.Bus.Subscriber do
 
     case BusState.remove_subscription(state, subscription_id, opts) do
       {:ok, new_state} ->
-        # If this was a persistent subscription, terminate the process
-        if subscription && subscription.persistent? && subscription.persistence_pid do
-          stop_persistent_subscription(state.child_supervisor, subscription.persistence_pid)
-        end
-
-        if subscription && subscription.persistent? && delete_persistence do
-          delete_persistent_data(state, subscription_id)
-        end
-
+        cleanup_persistent_subscription(state, subscription, subscription_id, delete_persistence)
         {:ok, new_state}
 
       {:error, :subscription_not_found} ->
@@ -222,6 +220,18 @@ defmodule Jido.Signal.Bus.Subscriber do
            %{field: :subscription_id, value: subscription_id}
          )}
     end
+  end
+
+  defp cleanup_persistent_subscription(_state, nil, _subscription_id, _delete_persistence),
+    do: :ok
+
+  defp cleanup_persistent_subscription(_state, %{persistent?: false}, _sub_id, _del), do: :ok
+
+  defp cleanup_persistent_subscription(state, subscription, subscription_id, delete_persistence) do
+    target = Map.get(subscription, :persistence_ref) || Map.get(subscription, :persistence_pid)
+    if target, do: stop_persistent_subscription(state.child_supervisor, target)
+    if delete_persistence, do: delete_persistent_data(state, subscription_id)
+    :ok
   end
 
   # Helper function to extract client PID from dispatch configuration
@@ -240,8 +250,20 @@ defmodule Jido.Signal.Bus.Subscriber do
     :exit, _ -> :ok
   end
 
+  defp stop_persistent_subscription(nil, target) do
+    GenServer.stop(target, :normal)
+  catch
+    :exit, _ -> :ok
+  end
+
   defp stop_persistent_subscription(child_supervisor, pid) when is_pid(pid) do
     DynamicSupervisor.terminate_child(child_supervisor, pid)
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp stop_persistent_subscription(_child_supervisor, target) do
+    GenServer.stop(target, :normal)
   catch
     :exit, _ -> :ok
   end
@@ -281,4 +303,7 @@ defmodule Jido.Signal.Bus.Subscriber do
       :ok
     end
   end
+
+  defp jido_opts(%{jido: nil}), do: []
+  defp jido_opts(%{jido: instance}), do: [jido: instance]
 end

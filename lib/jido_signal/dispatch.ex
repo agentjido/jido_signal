@@ -140,6 +140,7 @@ defmodule Jido.Signal.Dispatch do
 
   @default_batch_size 50
   @default_max_concurrency 5
+  @default_dispatch_timeout_ms 15_000
   @builtin_adapters %{
     pid: Jido.Signal.Dispatch.PidAdapter,
     named: Jido.Signal.Dispatch.Named,
@@ -284,6 +285,7 @@ defmodule Jido.Signal.Dispatch do
   # Handle multiple dispatchers
   def dispatch(signal, configs, dispatch_opts) when is_list(configs) and is_list(dispatch_opts) do
     task_supervisor = task_supervisor(dispatch_opts)
+    timeout = dispatch_timeout(dispatch_opts)
 
     results =
       Task.Supervisor.async_stream(
@@ -292,7 +294,8 @@ defmodule Jido.Signal.Dispatch do
         fn config -> dispatch_single(signal, config) end,
         max_concurrency: dispatch_max_concurrency(),
         ordered: true,
-        timeout: :infinity
+        timeout: timeout,
+        on_timeout: :kill_task
       )
       |> Enum.map(fn
         {:ok, result} -> result
@@ -433,21 +436,34 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp process_batches(signal, validated_configs_with_idx, _batch_size, max_concurrency, opts) do
+    timeout = dispatch_timeout(opts)
+
     # Single stream over all configs (batch_size is now a no-op for backwards compat)
-    Task.Supervisor.async_stream(
-      task_supervisor(opts),
-      validated_configs_with_idx,
-      fn {config, original_idx} ->
-        case dispatch_single(signal, config) do
-          :ok -> {:ok, original_idx}
-          {:error, reason} -> {:error, {original_idx, reason}}
-        end
-      end,
-      max_concurrency: max_concurrency,
-      ordered: true,
-      timeout: :infinity
-    )
-    |> Enum.map(fn {:ok, result} -> result end)
+    stream_results =
+      Task.Supervisor.async_stream(
+        task_supervisor(opts),
+        validated_configs_with_idx,
+        fn {config, original_idx} ->
+          case dispatch_single(signal, config) do
+            :ok -> {:ok, original_idx}
+            {:error, reason} -> {:error, {original_idx, reason}}
+          end
+        end,
+        max_concurrency: max_concurrency,
+        ordered: true,
+        timeout: timeout,
+        on_timeout: :kill_task
+      )
+
+    validated_configs_with_idx
+    |> Enum.zip(stream_results)
+    |> Enum.map(fn
+      {{_config, _original_idx}, {:ok, result}} ->
+        result
+
+      {{_config, original_idx}, {:exit, reason}} ->
+        {:error, {original_idx, {:task_exit, reason}}}
+    end)
   end
 
   defp extract_validation_errors(validation_errors) do
@@ -509,6 +525,25 @@ defmodule Jido.Signal.Dispatch do
 
   defp dispatch_max_concurrency do
     Config.get_env(:dispatch_max_concurrency, 8)
+  end
+
+  defp dispatch_timeout(opts) when is_list(opts) do
+    timeout =
+      Keyword.get(
+        opts,
+        :timeout,
+        Keyword.get(
+          opts,
+          :dispatch_timeout_ms,
+          Config.get_env(:dispatch_timeout_ms, @default_dispatch_timeout_ms)
+        )
+      )
+
+    case timeout do
+      t when is_integer(t) and t > 0 -> t
+      :infinity -> :infinity
+      _ -> @default_dispatch_timeout_ms
+    end
   end
 
   defp task_supervisor(opts) do

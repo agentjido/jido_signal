@@ -53,6 +53,7 @@ defmodule JidoTest.Signal.Bus.SubscriberTest do
       assert subscription.path == path
       assert subscription.persistent? == true
       assert subscription.persistence_pid != nil
+      assert subscription.persistence_ref != nil
       assert Process.alive?(subscription.persistence_pid)
 
       # For persistent subscriptions, the dispatch target should be the persistence process

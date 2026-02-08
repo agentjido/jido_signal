@@ -148,9 +148,12 @@ defmodule Jido.Signal.Bus.Stream do
         {:error, :subscription_not_found}
 
       subscription ->
-        if subscription.persistent? && subscription.persistence_pid do
+        target =
+          Map.get(subscription, :persistence_ref) || Map.get(subscription, :persistence_pid)
+
+        if subscription.persistent? && target do
           # Send ack to persistent subscription process
-          GenServer.cast(subscription.persistence_pid, {:ack, signal.id})
+          GenServer.cast(target, {:ack, signal.id})
           {:ok, state}
         else
           # Non-persistent subscriptions don't need acks

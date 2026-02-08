@@ -44,6 +44,7 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Bus.DispatchPipeline
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Partition
+  alias Jido.Signal.Bus.PersistentSubscription
   alias Jido.Signal.Bus.Snapshot
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
@@ -796,7 +797,7 @@ defmodule Jido.Signal.Bus do
       # Otherwise, acknowledge the signal by forwarding to PersistentSubscription
       true ->
         start_async_reply(state, from, fn ->
-          ack_persistent_subscription(subscription, signal_id)
+          ack_persistent_subscription(subscription, signal_id, state)
         end)
     end
   end
@@ -934,9 +935,14 @@ defmodule Jido.Signal.Bus do
   defp do_reconnect(state, subscriber_id, client_pid, %{persistent?: true} = subscription) do
     updated_subscription = update_subscription_dispatch(subscription, client_pid)
     {final_state, latest_timestamp} = apply_reconnect(state, subscriber_id, updated_subscription)
-    checkpoint = fetch_persistent_checkpoint(subscription.persistence_pid)
+    persistence_target = persistence_target(subscription, state)
+    checkpoint = fetch_persistent_checkpoint(persistence_target)
     missed_signals = replayable_signals(final_state, updated_subscription.path, checkpoint)
-    GenServer.cast(subscription.persistence_pid, {:reconnect, client_pid, missed_signals})
+
+    if persistence_target do
+      GenServer.cast(persistence_target, {:reconnect, client_pid, missed_signals})
+    end
+
     {:reply, {:ok, latest_timestamp}, final_state}
   end
 
@@ -962,15 +968,19 @@ defmodule Jido.Signal.Bus do
 
   defp get_latest_log_timestamp(state) do
     state.log
-    |> Map.values()
-    |> Enum.map(& &1.time)
-    |> Enum.max(fn -> 0 end)
+    |> Map.keys()
+    |> Enum.reduce(0, fn log_id, acc ->
+      case safe_log_timestamp(log_id) do
+        {:ok, timestamp} -> max(acc, timestamp)
+        :error -> acc
+      end
+    end)
   end
 
   defp fetch_persistent_checkpoint(nil), do: 0
 
-  defp fetch_persistent_checkpoint(persistence_pid) do
-    GenServer.call(persistence_pid, :checkpoint)
+  defp fetch_persistent_checkpoint(persistence_target) do
+    GenServer.call(persistence_target, :checkpoint)
   catch
     :exit, _ -> 0
   end
@@ -1106,6 +1116,7 @@ defmodule Jido.Signal.Bus do
     |> Enum.reduce([], fn {subscription_id, subscription}, acc ->
       enqueue_persistent_subscription(
         acc,
+        state,
         subscription_id,
         subscription,
         signals,
@@ -1116,6 +1127,7 @@ defmodule Jido.Signal.Bus do
 
   defp enqueue_persistent_subscription(
          acc,
+         _state,
          _subscription_id,
          %{persistent?: false},
          _signals,
@@ -1125,6 +1137,7 @@ defmodule Jido.Signal.Bus do
 
   defp enqueue_persistent_subscription(
          acc,
+         state,
          subscription_id,
          subscription,
          signals,
@@ -1135,7 +1148,13 @@ defmodule Jido.Signal.Bus do
         acc
 
       signal_batch ->
-        [{subscription_id, enqueue_persistent_batch(subscription, signal_batch)} | acc]
+        persistence_target = persistence_target(subscription, state)
+
+        [
+          {subscription_id,
+           enqueue_persistent_batch(subscription, persistence_target, signal_batch)}
+          | acc
+        ]
     end
   end
 
@@ -1269,11 +1288,13 @@ defmodule Jido.Signal.Bus do
   # For persistent subscriptions, use synchronous call to get backpressure feedback
   # For regular subscriptions, use normal async dispatch
   defp dispatch_to_subscription(signal, subscription, signal_log_id_map, state) do
-    if subscription.persistent? && subscription.persistence_pid do
+    persistence_target = persistence_target(subscription, state)
+
+    if subscription.persistent? && persistence_target do
       signal_log_id = Map.get(signal_log_id_map, signal.id)
 
       if is_binary(signal_log_id) do
-        enqueue_persistent_batch(subscription, [{signal_log_id, signal}])
+        enqueue_persistent_batch(subscription, persistence_target, [{signal_log_id, signal}])
       else
         {:error, :missing_signal_log_id}
       end
@@ -1283,15 +1304,15 @@ defmodule Jido.Signal.Bus do
     end
   end
 
-  defp enqueue_persistent_batch(%{persistence_pid: nil}, _signal_batch),
+  defp enqueue_persistent_batch(_subscription, nil, _signal_batch),
     do: {:error, :subscription_not_available}
 
-  defp enqueue_persistent_batch(subscription, signal_batch) do
+  defp enqueue_persistent_batch(_subscription, persistence_target, signal_batch) do
     publish_ref = make_ref()
 
     try do
       GenServer.cast(
-        subscription.persistence_pid,
+        persistence_target,
         {:signal_batch, signal_batch, self(), publish_ref}
       )
 
@@ -1489,29 +1510,38 @@ defmodule Jido.Signal.Bus do
 
   defp stop_gc_task(_state), do: :ok
 
-  defp ack_persistent_subscription(%{persistence_pid: nil}, _signal_id), do: :ok
+  defp ack_persistent_subscription(subscription, signal_id, state) do
+    case persistence_target(subscription, state) do
+      nil ->
+        {:error,
+         Error.execution_error("Persistent subscription is unavailable", %{
+           reason: :subscription_not_available
+         })}
 
-  defp ack_persistent_subscription(subscription, signal_id) do
-    GenServer.call(subscription.persistence_pid, {:ack, signal_id})
-    :ok
-  catch
-    :exit, {:noproc, _} ->
-      {:error,
-       Error.execution_error("Persistent subscription is unavailable", %{
-         reason: :subscription_not_available
-       })}
+      target ->
+        try do
+          GenServer.call(target, {:ack, signal_id})
+          :ok
+        catch
+          :exit, {:noproc, _} ->
+            {:error,
+             Error.execution_error("Persistent subscription is unavailable", %{
+               reason: :subscription_not_available
+             })}
 
-    :exit, {:timeout, _} ->
-      {:error,
-       Error.timeout_error("Persistent subscription acknowledgement timed out", %{
-         reason: :timeout
-       })}
+          :exit, {:timeout, _} ->
+            {:error,
+             Error.timeout_error("Persistent subscription acknowledgement timed out", %{
+               reason: :timeout
+             })}
 
-    :exit, _ ->
-      {:error,
-       Error.execution_error("Persistent subscription is unavailable", %{
-         reason: :subscription_not_available
-       })}
+          :exit, _ ->
+            {:error,
+             Error.execution_error("Persistent subscription is unavailable", %{
+               reason: :subscription_not_available
+             })}
+        end
+    end
   end
 
   defp jido_opts(%{jido: nil}), do: []
@@ -1648,5 +1678,19 @@ defmodule Jido.Signal.Bus do
       action: action,
       reason: :subscription_not_found
     })
+  end
+
+  defp persistence_target(subscription) when is_map(subscription) do
+    Map.get(subscription, :persistence_ref) || Map.get(subscription, :persistence_pid)
+  end
+
+  defp persistence_target(subscription, state) when is_map(subscription) do
+    case {Map.get(subscription, :persistent?), Map.get(subscription, :id)} do
+      {true, id} when is_binary(id) ->
+        PersistentSubscription.via_tuple(state.name, id, jido_opts(state))
+
+      _ ->
+        persistence_target(subscription)
+    end
   end
 end

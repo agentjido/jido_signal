@@ -11,7 +11,9 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.ID
+  alias Jido.Signal.Names
   alias Jido.Signal.Telemetry
+  alias Jido.Signal.Util
 
   require Logger
 
@@ -87,15 +89,45 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
     case validate_init_opts(opts) do
       :ok ->
-        GenServer.start_link(__MODULE__, opts, name: via_tuple(id))
+        bus_name = Keyword.get(opts, :bus_name, :unknown)
+        GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, id, jido_opts(opts)))
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defdelegate via_tuple(id), to: Jido.Signal.Util
-  defdelegate whereis(id), to: Jido.Signal.Util
+  @doc """
+  Returns a bus-scoped registry tuple for a persistent subscription process.
+  """
+  @spec via_tuple(atom(), String.t(), keyword()) :: {:via, Registry, {module(), tuple()}}
+  def via_tuple(bus_name, id, opts \\ []) do
+    {:via, Registry, {Names.registry(opts), {:persistent_subscription, bus_name, id}}}
+  end
+
+  @doc """
+  Legacy lookup tuple helper retained for backwards compatibility.
+  """
+  @spec via_tuple(String.t()) :: {:via, Registry, {module(), String.t()}}
+  def via_tuple(id) do
+    Util.via_tuple(id)
+  end
+
+  @doc """
+  Resolves the persistent subscription pid by bus and subscription id.
+  """
+  @spec whereis(atom(), String.t(), keyword()) :: pid() | nil
+  def whereis(bus_name, id, opts \\ []) do
+    GenServer.whereis(via_tuple(bus_name, id, opts))
+  end
+
+  @doc """
+  Legacy process lookup retained for backwards compatibility.
+  """
+  @spec whereis(String.t()) :: {:ok, pid()} | {:error, :not_found}
+  def whereis(id) do
+    Util.whereis(id)
+  end
 
   @impl GenServer
   def init(opts) do
@@ -708,6 +740,13 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   defp jido_opts(%{jido: nil}), do: []
   defp jido_opts(%{jido: instance}), do: [jido: instance]
+
+  defp jido_opts(opts) when is_list(opts) do
+    case Keyword.get(opts, :jido) do
+      nil -> []
+      instance -> [jido: instance]
+    end
+  end
 
   defp clear_signal_tracking(state, signal_log_id) do
     %{
