@@ -7,6 +7,19 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
 
   @moduletag :capture_log
 
+  describe "state schema" do
+    test "partition state does not include deprecated bus_pid coupling" do
+      bus_name = :"test-bus-state-#{:erlang.unique_integer([:positive])}"
+      start_supervised!({Bus, name: bus_name, partition_count: 2})
+
+      partition_pid = GenServer.whereis(Partition.via_tuple(bus_name, 0))
+      assert is_pid(partition_pid)
+
+      partition_state = :sys.get_state(partition_pid)
+      refute Map.has_key?(Map.from_struct(partition_state), :bus_pid)
+    end
+  end
+
   describe "rate limiting" do
     test "rate limiting triggers when burst size exceeded" do
       bus_name = :"test-bus-rate-limit-#{:erlang.unique_integer([:positive])}"

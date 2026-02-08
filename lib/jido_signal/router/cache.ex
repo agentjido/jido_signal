@@ -236,6 +236,14 @@ defmodule Jido.Signal.Router.Cache do
   """
   @spec update(cache_id(), term()) :: {:ok, map()} | {:error, term()}
   def update(cache_id, routes) when is_atom(cache_id) or is_tuple(cache_id) do
+    :global.trans({__MODULE__, cache_id}, fn ->
+      do_update(cache_id, routes)
+    end)
+  end
+
+  # Private helpers
+
+  defp do_update(cache_id, routes) do
     alias Jido.Signal.Router
     alias Jido.Signal.Router.Router, as: RouterStruct
 
@@ -254,8 +262,6 @@ defmodule Jido.Signal.Router.Cache do
         error
     end
   end
-
-  # Private helpers
 
   defp cache_key(cache_id), do: {:jido_signal_router_cache, cache_id}
 end

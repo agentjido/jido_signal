@@ -9,6 +9,7 @@ defmodule Jido.Signal.Bus.Partition do
 
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
@@ -19,7 +20,7 @@ defmodule Jido.Signal.Bus.Partition do
             %{
               partition_id: Zoi.integer(),
               bus_name: Zoi.atom(),
-              bus_pid: Zoi.any(),
+              jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
               middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
@@ -46,7 +47,6 @@ defmodule Jido.Signal.Bus.Partition do
 
     * `:partition_id` - The partition number (required)
     * `:bus_name` - The name of the parent bus (required)
-    * `:bus_pid` - The PID of the parent bus (required)
     * `:middleware` - Middleware configurations (optional)
     * `:middleware_timeout_ms` - Timeout for middleware execution (default: 100)
     * `:journal_adapter` - Journal adapter module (optional)
@@ -56,15 +56,15 @@ defmodule Jido.Signal.Bus.Partition do
   def start_link(opts) do
     partition_id = Keyword.fetch!(opts, :partition_id)
     bus_name = Keyword.fetch!(opts, :bus_name)
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id))
+    GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id, opts))
   end
 
   @doc """
   Returns a via tuple for looking up a partition by bus name and partition ID.
   """
-  @spec via_tuple(atom(), non_neg_integer()) :: {:via, Registry, {module(), tuple()}}
-  def via_tuple(bus_name, partition_id) do
-    {:via, Registry, {Jido.Signal.Registry, {:partition, bus_name, partition_id}}}
+  @spec via_tuple(atom(), non_neg_integer(), keyword()) :: {:via, Registry, {module(), tuple()}}
+  def via_tuple(bus_name, partition_id, opts \\ []) do
+    {:via, Registry, {Names.registry(opts), {:partition, bus_name, partition_id}}}
   end
 
   @doc """
@@ -84,7 +84,7 @@ defmodule Jido.Signal.Bus.Partition do
     state = %__MODULE__{
       partition_id: Keyword.fetch!(opts, :partition_id),
       bus_name: Keyword.fetch!(opts, :bus_name),
-      bus_pid: Keyword.fetch!(opts, :bus_pid),
+      jido: Keyword.get(opts, :jido),
       middleware: Keyword.get(opts, :middleware, []),
       middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
       journal_adapter: Keyword.get(opts, :journal_adapter),
@@ -130,15 +130,23 @@ defmodule Jido.Signal.Bus.Partition do
   end
 
   @impl GenServer
+  def handle_cast({:add_subscription, subscription_id, subscription}, state) do
+    {:noreply, add_subscription_to_state(state, subscription_id, subscription)}
+  end
+
+  @impl GenServer
+  def handle_cast({:remove_subscription, subscription_id}, state) do
+    {:noreply, remove_subscription_from_state(state, subscription_id)}
+  end
+
+  @impl GenServer
   def handle_call({:add_subscription, subscription_id, subscription}, _from, state) do
-    new_subscriptions = Map.put(state.subscriptions, subscription_id, subscription)
-    {:reply, :ok, %{state | subscriptions: new_subscriptions}}
+    {:reply, :ok, add_subscription_to_state(state, subscription_id, subscription)}
   end
 
   @impl GenServer
   def handle_call({:remove_subscription, subscription_id}, _from, state) do
-    new_subscriptions = Map.delete(state.subscriptions, subscription_id)
-    {:reply, :ok, %{state | subscriptions: new_subscriptions}}
+    {:reply, :ok, remove_subscription_from_state(state, subscription_id)}
   end
 
   @impl GenServer
@@ -248,7 +256,8 @@ defmodule Jido.Signal.Bus.Partition do
         processed_signal,
         subscription,
         subscription_id,
-        uuid_signal_pairs
+        uuid_signal_pairs,
+        state
       )
 
     Telemetry.execute(
@@ -335,7 +344,7 @@ defmodule Jido.Signal.Bus.Partition do
     :ok
   end
 
-  defp dispatch_to_subscription(signal, subscription, _subscription_id, uuid_signal_pairs) do
+  defp dispatch_to_subscription(signal, subscription, _subscription_id, uuid_signal_pairs, state) do
     if subscription.persistent? and subscription.persistence_pid do
       uuid = find_signal_uuid(signal, uuid_signal_pairs)
 
@@ -349,7 +358,10 @@ defmodule Jido.Signal.Bus.Partition do
           {:error, :timeout}
       end
     else
-      Dispatch.dispatch(signal, subscription.dispatch)
+      case Dispatch.dispatch_async(signal, subscription.dispatch, jido_opts(state)) do
+        {:ok, _task} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -377,4 +389,17 @@ defmodule Jido.Signal.Bus.Partition do
       {:error, :rate_limited}
     end
   end
+
+  defp add_subscription_to_state(state, subscription_id, subscription) do
+    new_subscriptions = Map.put(state.subscriptions, subscription_id, subscription)
+    %{state | subscriptions: new_subscriptions}
+  end
+
+  defp remove_subscription_from_state(state, subscription_id) do
+    new_subscriptions = Map.delete(state.subscriptions, subscription_id)
+    %{state | subscriptions: new_subscriptions}
+  end
+
+  defp jido_opts(%{jido: nil}), do: []
+  defp jido_opts(%{jido: instance}), do: [jido: instance]
 end

@@ -105,6 +105,18 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
     end
   end
 
+  defmodule RaisingMiddleware do
+    use Jido.Signal.Bus.Middleware
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def before_publish(_signals, _context, _state) do
+      raise "middleware crashed"
+    end
+  end
+
   describe "init_middleware/1" do
     test "initializes empty middleware list" do
       assert {:ok, []} = MiddlewarePipeline.init_middleware([])
@@ -252,6 +264,18 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
       # Third call
       {:ok, _, configs3} = MiddlewarePipeline.before_publish(configs2, signals, context)
       assert [{CounterMiddleware, %{publish_count: 3}}] = configs3
+    end
+
+    test "returns an execution error when middleware crashes" do
+      {:ok, configs} = MiddlewarePipeline.init_middleware([{RaisingMiddleware, []}])
+
+      signals = [%Signal{id: "test-1", type: "test.signal", source: "/test", data: %{}}]
+      context = %{bus_name: :test, timestamp: DateTime.utc_now(), metadata: %{}}
+
+      assert {:error, %Jido.Signal.Error.ExecutionFailureError{} = error} =
+               MiddlewarePipeline.before_publish(configs, signals, context)
+
+      assert Exception.message(error) =~ "Middleware crashed"
     end
   end
 
@@ -415,36 +439,56 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
 
       @impl true
       def init(opts) do
-        {:ok, %{sleep_ms: Keyword.get(opts, :sleep_ms, 200)}}
+        {:ok, %{wait_ms: Keyword.get(opts, :wait_ms, 200)}}
       end
 
       @impl true
       def before_publish(signals, _context, state) do
-        Process.sleep(state.sleep_ms)
+        receive do
+          :continue -> :ok
+        after
+          state.wait_ms -> :ok
+        end
+
         {:cont, signals, state}
       end
 
       @impl true
       def before_dispatch(signal, _subscriber, _context, state) do
-        Process.sleep(state.sleep_ms)
+        receive do
+          :continue -> :ok
+        after
+          state.wait_ms -> :ok
+        end
+
         {:cont, signal, state}
       end
 
       @impl true
       def after_publish(signals, _context, state) do
-        Process.sleep(state.sleep_ms)
+        receive do
+          :continue -> :ok
+        after
+          state.wait_ms -> :ok
+        end
+
         {:cont, signals, state}
       end
 
       @impl true
       def after_dispatch(_signal, _subscriber, _result, _context, state) do
-        Process.sleep(state.sleep_ms)
+        receive do
+          :continue -> :ok
+        after
+          state.wait_ms -> :ok
+        end
+
         {:cont, state}
       end
     end
 
     test "before_publish times out when middleware exceeds timeout" do
-      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, sleep_ms: 200}])
+      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, wait_ms: 200}])
 
       signals = [%Signal{id: "test-1", type: "test.signal", source: "/test", data: %{}}]
       context = %{bus_name: :test, timestamp: DateTime.utc_now(), metadata: %{}}
@@ -456,7 +500,7 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
     end
 
     test "before_publish succeeds when middleware is within timeout" do
-      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, sleep_ms: 10}])
+      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, wait_ms: 10}])
 
       signals = [%Signal{id: "test-1", type: "test.signal", source: "/test", data: %{}}]
       context = %{bus_name: :test, timestamp: DateTime.utc_now(), metadata: %{}}
@@ -467,7 +511,7 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
     end
 
     test "before_dispatch times out when middleware exceeds timeout" do
-      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, sleep_ms: 200}])
+      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, wait_ms: 200}])
 
       signal = %Signal{id: "test-1", type: "test.signal", source: "/test", data: %{}}
 
@@ -488,7 +532,7 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
     end
 
     test "emits telemetry event on timeout" do
-      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, sleep_ms: 200}])
+      {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, wait_ms: 200}])
 
       signals = [%Signal{id: "test-1", type: "test.signal", source: "/test", data: %{}}]
       # Use unique bus name to avoid interference from concurrent tests
@@ -769,7 +813,7 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
     test "duration_us is properly calculated", %{signal: signal, context: context} do
       {:ok, configs} =
         MiddlewarePipeline.init_middleware([
-          {JidoTest.Signal.Bus.MiddlewarePipeline.SlowMiddleware, sleep_ms: 10}
+          {JidoTest.Signal.Bus.MiddlewarePipeline.SlowMiddleware, wait_ms: 10}
         ])
 
       {:ok, _, _} = MiddlewarePipeline.before_publish(configs, [signal], context, 100)

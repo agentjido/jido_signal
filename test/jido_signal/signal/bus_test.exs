@@ -3,6 +3,7 @@ defmodule JidoTest.Signal.Bus do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.ID
 
   @moduletag :capture_log
 
@@ -72,6 +73,43 @@ defmodule JidoTest.Signal.Bus do
       # Try to resubscribe with the same ID
       {:ok, new_subscription_id} = Bus.subscribe(bus, "test.signal", persistent: true)
       assert is_binary(new_subscription_id)
+    end
+  end
+
+  describe "fault tolerance" do
+    test "ack returns an error when persistent subscription pid is no longer available", %{
+      bus: bus
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [recorded]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_state = :sys.get_state(bus_pid)
+      sub = Map.fetch!(bus_state.subscriptions, subscription_id)
+      mon_ref = Process.monitor(sub.persistence_pid)
+      Process.exit(sub.persistence_pid, :kill)
+      assert_receive {:DOWN, ^mon_ref, :process, _pid, _reason}
+
+      assert {:error, :subscription_not_available} = Bus.ack(bus, subscription_id, recorded.id)
+      assert Process.alive?(bus_pid)
+    end
+
+    test "bus ignores spurious DOWN messages without crashing", %{bus: bus} do
+      {:ok, bus_pid} = Bus.whereis(bus)
+      send(bus_pid, {:DOWN, make_ref(), :process, self(), :normal})
+      # Synchronous call ensures previously sent message was processed.
+      assert [] == Bus.snapshot_list(bus)
+      assert Process.alive?(bus_pid)
     end
   end
 
@@ -208,13 +246,18 @@ defmodule JidoTest.Signal.Bus do
 
       {:ok, [recorded1]} = Bus.publish(bus, [signal1])
 
-      # Get timestamp from first signal
-      timestamp = DateTime.to_unix(recorded1.created_at, :millisecond)
+      first_timestamp = ID.extract_timestamp(recorded1.id)
 
-      # Add a delay to ensure second signal has a later timestamp
-      Process.sleep(10)
+      wait_for_next_millisecond = fn wait_for_next_millisecond ->
+        if System.system_time(:millisecond) > first_timestamp do
+          :ok
+        else
+          wait_for_next_millisecond.(wait_for_next_millisecond)
+        end
+      end
 
-      # Publish another signal
+      :ok = wait_for_next_millisecond.(wait_for_next_millisecond)
+
       {:ok, signal2} =
         Signal.new(%{
           type: "test.signal",
@@ -224,8 +267,8 @@ defmodule JidoTest.Signal.Bus do
 
       {:ok, _} = Bus.publish(bus, [signal2])
 
-      # Replay from first signal's timestamp + 1 to get only the second signal
-      {:ok, replayed} = Bus.replay(bus, "**", timestamp + 1)
+      # Replay from first signal timestamp to get newer signals only.
+      {:ok, replayed} = Bus.replay(bus, "**", first_timestamp)
       assert replayed != []
       # Find the signal with value 2
       signal_with_value_2 = Enum.find(replayed, fn r -> r.signal.data.value == 2 end)
@@ -421,12 +464,17 @@ defmodule JidoTest.Signal.Bus do
 
       @impl true
       def init(opts) do
-        {:ok, %{sleep_ms: Keyword.get(opts, :sleep_ms, 200)}}
+        {:ok, %{wait_ms: Keyword.get(opts, :wait_ms, 200)}}
       end
 
       @impl true
       def before_publish(signals, _context, state) do
-        Process.sleep(state.sleep_ms)
+        receive do
+          :continue -> :ok
+        after
+          state.wait_ms -> :ok
+        end
+
         {:cont, signals, state}
       end
     end
@@ -437,7 +485,7 @@ defmodule JidoTest.Signal.Bus do
       start_supervised!(
         {Bus,
          name: bus_name,
-         middleware: [{SlowBusMiddleware, sleep_ms: 200}],
+         middleware: [{SlowBusMiddleware, wait_ms: 200}],
          middleware_timeout_ms: 50}
       )
 
@@ -455,7 +503,7 @@ defmodule JidoTest.Signal.Bus do
       start_supervised!(
         {Bus,
          name: bus_name,
-         middleware: [{SlowBusMiddleware, sleep_ms: 50}],
+         middleware: [{SlowBusMiddleware, wait_ms: 50}],
          middleware_timeout_ms: 200}
       )
 
@@ -773,18 +821,18 @@ defmodule JidoTest.Signal.Bus do
       # Use a short TTL for testing
       start_supervised!({Bus, name: bus_name, log_ttl_ms: 100})
 
-      # Publish signals
+      # Publish an old signal that should be pruned immediately.
       {:ok, signal1} =
         Signal.new(%{
           type: "test.signal.1",
           source: "/test",
-          data: %{value: 1}
+          data: %{value: 1},
+          time: DateTime.add(DateTime.utc_now(), -1, :second) |> DateTime.to_iso8601()
         })
 
       {:ok, _} = Bus.publish(bus_name, [signal1])
-
-      # Wait for TTL + GC cycle
-      Process.sleep(250)
+      {:ok, bus_pid} = Bus.whereis(bus_name)
+      send(bus_pid, :gc_log)
 
       # Publish a new signal to trigger activity
       {:ok, signal2} =
@@ -796,12 +844,9 @@ defmodule JidoTest.Signal.Bus do
 
       {:ok, _} = Bus.publish(bus_name, [signal2])
 
-      # The old signal should have been GC'd, only the new one should remain
       {:ok, replayed} = Bus.replay(bus_name, "**")
-
-      # The old signal should be gone (or the new one should exist)
-      # Note: Timing can be tricky in tests, so we just verify GC mechanism works
-      assert replayed != []
+      assert Enum.any?(replayed, &(&1.signal.type == "test.signal.2"))
+      refute Enum.any?(replayed, &(&1.signal.type == "test.signal.1"))
     end
   end
 end

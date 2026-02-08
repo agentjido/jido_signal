@@ -10,15 +10,13 @@ defmodule Jido.Signal.Serialization.PayloadLimitTest do
 
   setup do
     # Save original config
-    original = Application.get_env(:jido, :max_payload_bytes)
+    original_jido = Application.get_env(:jido, :max_payload_bytes)
+    original_signal = Application.get_env(:jido_signal, :max_payload_bytes)
 
     on_exit(fn ->
       # Restore original config
-      if original do
-        Application.put_env(:jido, :max_payload_bytes, original)
-      else
-        Application.delete_env(:jido, :max_payload_bytes)
-      end
+      restore_env(:jido, :max_payload_bytes, original_jido)
+      restore_env(:jido_signal, :max_payload_bytes, original_signal)
     end)
 
     :ok
@@ -27,10 +25,17 @@ defmodule Jido.Signal.Serialization.PayloadLimitTest do
   describe "config" do
     test "max_payload_bytes/0 returns default" do
       Application.delete_env(:jido, :max_payload_bytes)
+      Application.delete_env(:jido_signal, :max_payload_bytes)
       assert Config.max_payload_bytes() == 10_000_000
     end
 
-    test "max_payload_bytes/0 returns configured value" do
+    test "max_payload_bytes/0 returns configured value from jido_signal app config" do
+      Application.put_env(:jido_signal, :max_payload_bytes, 5_000_000)
+      assert Config.max_payload_bytes() == 5_000_000
+    end
+
+    test "max_payload_bytes/0 falls back to jido app config" do
+      Application.delete_env(:jido_signal, :max_payload_bytes)
       Application.put_env(:jido, :max_payload_bytes, 5_000_000)
       assert Config.max_payload_bytes() == 5_000_000
     end
@@ -94,11 +99,14 @@ defmodule Jido.Signal.Serialization.PayloadLimitTest do
 
   describe "custom payload limits" do
     test "respects custom configuration" do
-      Application.put_env(:jido, :max_payload_bytes, 100)
+      Application.put_env(:jido_signal, :max_payload_bytes, 100)
 
       medium_json = String.duplicate("x", 200)
 
       assert {:error, {:payload_too_large, 200, 100}} = JsonSerializer.deserialize(medium_json)
     end
   end
+
+  defp restore_env(app, key, nil), do: Application.delete_env(app, key)
+  defp restore_env(app, key, value), do: Application.put_env(app, key, value)
 end

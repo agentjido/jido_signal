@@ -47,9 +47,18 @@ defmodule Jido.Signal.Bus.Subscriber do
   end
 
   defp do_subscribe(state, subscription_id, path, opts) do
-    persistent? = Keyword.get(opts, :persistent?, false)
+    persistent? = Keyword.get(opts, :persistent?, Keyword.get(opts, :persistent, false))
     dispatch = Keyword.get(opts, :dispatch)
 
+    if is_nil(dispatch) do
+      {:error,
+       Error.validation_error("dispatch is required", %{field: :dispatch, value: dispatch})}
+    else
+      do_subscribe_with_dispatch(state, subscription_id, path, opts, persistent?, dispatch)
+    end
+  end
+
+  defp do_subscribe_with_dispatch(state, subscription_id, path, opts, persistent?, dispatch) do
     subscription = %Subscriber{
       id: subscription_id,
       path: path,
@@ -67,6 +76,18 @@ defmodule Jido.Signal.Bus.Subscriber do
   end
 
   defp create_persistent_subscription(state, subscription_id, subscription, opts) do
+    if is_nil(state.child_supervisor) do
+      {:error,
+       Error.execution_error(
+         "Failed to start persistent subscription",
+         %{action: "start_persistent_subscription", reason: :missing_child_supervisor}
+       )}
+    else
+      do_create_persistent_subscription(state, subscription_id, subscription, opts)
+    end
+  end
+
+  defp do_create_persistent_subscription(state, subscription_id, subscription, opts) do
     client_pid = extract_client_pid(subscription.dispatch)
 
     persistent_sub_opts =
@@ -160,7 +181,8 @@ defmodule Jido.Signal.Bus.Subscriber do
 
   - `state`: The current bus state
   - `subscription_id`: The unique identifier of the subscription to remove
-  - `opts`: Additional options (currently unused)
+  - `opts`: Additional options
+    - `:delete_persistence` - whether to remove checkpoint + DLQ persistence data (default: false)
 
   ## Returns
 
@@ -169,16 +191,21 @@ defmodule Jido.Signal.Bus.Subscriber do
   """
   @spec unsubscribe(BusState.t(), String.t(), keyword()) ::
           {:ok, BusState.t()} | {:error, Exception.t()}
-  def unsubscribe(%BusState{} = state, subscription_id, _opts \\ []) do
+  def unsubscribe(%BusState{} = state, subscription_id, opts \\ []) do
+    delete_persistence = Keyword.get(opts, :delete_persistence, false)
+
     # Get the subscription before removing it
     subscription = BusState.get_subscription(state, subscription_id)
 
-    case BusState.remove_subscription(state, subscription_id) do
+    case BusState.remove_subscription(state, subscription_id, opts) do
       {:ok, new_state} ->
         # If this was a persistent subscription, terminate the process
         if subscription && subscription.persistent? && subscription.persistence_pid do
-          # Send shutdown message to terminate the process gracefully
-          Process.send(subscription.persistence_pid, {:shutdown, :normal}, [])
+          stop_persistent_subscription(state.child_supervisor, subscription.persistence_pid)
+        end
+
+        if subscription && subscription.persistent? && delete_persistence do
+          delete_persistent_data(state, subscription_id)
         end
 
         {:ok, new_state}
@@ -200,5 +227,53 @@ defmodule Jido.Signal.Bus.Subscriber do
 
   defp extract_client_pid(_) do
     nil
+  end
+
+  defp stop_persistent_subscription(nil, pid) when is_pid(pid) do
+    GenServer.stop(pid, :normal)
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp stop_persistent_subscription(child_supervisor, pid) when is_pid(pid) do
+    DynamicSupervisor.terminate_child(child_supervisor, pid)
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp delete_persistent_data(%{journal_adapter: nil}, _subscription_id), do: :ok
+
+  defp delete_persistent_data(state, subscription_id) do
+    checkpoint_key = "#{state.name}:#{subscription_id}"
+
+    _ =
+      safe_persistence_cleanup(
+        state.journal_adapter,
+        :delete_checkpoint,
+        checkpoint_key,
+        state.journal_pid
+      )
+
+    _ =
+      safe_persistence_cleanup(
+        state.journal_adapter,
+        :clear_dlq,
+        subscription_id,
+        state.journal_pid
+      )
+
+    :ok
+  end
+
+  defp safe_persistence_cleanup(adapter, function, id, journal_pid) do
+    if function_exported?(adapter, function, 2) do
+      try do
+        apply(adapter, function, [id, journal_pid])
+      catch
+        :exit, _ -> :ok
+      end
+    else
+      :ok
+    end
   end
 end

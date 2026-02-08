@@ -145,16 +145,7 @@ defmodule Jido.Signal.Dispatch.Named do
   defp resolve_process({:name, name}) do
     case Process.whereis(name) do
       nil -> {:error, :process_not_found}
-      pid -> check_process_alive(pid)
-    end
-  end
-
-  # Checks if the process is alive
-  defp check_process_alive(pid) do
-    if Process.alive?(pid) do
-      {:ok, pid}
-    else
-      {:error, :process_not_alive}
+      pid -> {:ok, pid}
     end
   end
 

@@ -93,7 +93,8 @@ defmodule Jido.Signal.Instance do
     children = [
       {Registry, keys: :unique, name: Names.registry(instance_opts)},
       Jido.Signal.Ext.Registry.child_spec(name: Names.ext_registry(instance_opts)),
-      {Task.Supervisor, name: Names.task_supervisor(instance_opts)}
+      {Task.Supervisor, name: Names.task_supervisor(instance_opts)},
+      {Jido.Signal.Bus.RuntimeSupervisor, name: Names.bus_runtime_supervisor(instance_opts)}
     ]
 
     supervisor_name = Names.supervisor(instance_opts)
@@ -134,8 +135,15 @@ defmodule Jido.Signal.Instance do
     supervisor_name = Names.supervisor(instance_opts)
 
     case Process.whereis(supervisor_name) do
-      nil -> :ok
-      pid -> Supervisor.stop(pid, :normal, timeout)
+      nil ->
+        :ok
+
+      pid ->
+        try do
+          Supervisor.stop(pid, :normal, timeout)
+        catch
+          :exit, {:noproc, _} -> :ok
+        end
     end
   end
 end

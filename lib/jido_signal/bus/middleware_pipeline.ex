@@ -263,11 +263,15 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
 
   @spec run_with_timeout((-> term()), pos_integer(), module(), context()) :: term()
   defp run_with_timeout(fun, timeout_ms, module, context) do
-    task = Task.async(fun)
+    task = Task.Supervisor.async_nolink(Jido.Signal.TaskSupervisor, fun)
 
     case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} ->
         result
+
+      {:exit, reason} ->
+        {:error,
+         Error.execution_error("Middleware crashed", %{module: module, reason: inspect(reason)})}
 
       nil ->
         Telemetry.execute(

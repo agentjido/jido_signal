@@ -3,6 +3,8 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.Bus.PersistentSubscription
+  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.ID
   alias Jido.Signal.Journal.Adapters.ETS, as: ETSAdapter
 
@@ -40,8 +42,6 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
 
-      Process.sleep(50)
-
       checkpoint_key = "#{bus}:#{subscription_id}"
       {:ok, checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
       assert checkpoint > 0
@@ -72,13 +72,9 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       assert_receive {:signal, %Signal{type: "test.signal.one"}}
       :ok = Bus.ack(bus, subscription_id, recorded1.id)
 
-      Process.sleep(50)
-
       {:ok, [recorded2]} = Bus.publish(bus, [signal2])
       assert_receive {:signal, %Signal{type: "test.signal.two"}}
       :ok = Bus.ack(bus, subscription_id, recorded2.id)
-
-      Process.sleep(50)
 
       checkpoint_key = "#{bus}:#{subscription_id}"
       {:ok, checkpoint_before} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
@@ -89,9 +85,9 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       assert subscription.persistence_pid != nil
 
       old_persistent_pid = subscription.persistence_pid
+      down_ref = Process.monitor(old_persistent_pid)
       GenServer.stop(old_persistent_pid, :normal)
-
-      Process.sleep(100)
+      assert_receive {:DOWN, ^down_ref, :process, ^old_persistent_pid, _reason}
 
       {:ok, checkpoint_after} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
       assert checkpoint_after == checkpoint_before
@@ -127,8 +123,6 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       bus_state = Bus.whereis(bus) |> elem(1) |> :sys.get_state()
       subscription = Map.get(bus_state.subscriptions, subscription_id)
       :ok = GenServer.call(subscription.persistence_pid, {:ack, signal_ids})
-
-      Process.sleep(50)
 
       checkpoint_key = "#{bus}:#{subscription_id}"
       {:ok, checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
@@ -191,6 +185,125 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
     end
   end
 
+  describe "reconnect replay checkpoint semantics" do
+    test "replays missed signals using log entry ids after checkpoint" do
+      bus_name = :"test_bus_replay_#{:erlang.unique_integer([:positive])}"
+      start_supervised!({Bus, name: bus_name})
+      {:ok, bus_pid} = Bus.whereis(bus_name)
+
+      {:ok, first_signal} =
+        Signal.new(%{
+          type: "test.replay",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [first_recorded]} = Bus.publish(bus_name, [first_signal])
+      checkpoint = ID.extract_timestamp(first_recorded.id)
+
+      publish_after_checkpoint = fn publish_after_checkpoint ->
+        {:ok, signal} =
+          Signal.new(%{
+            type: "test.replay",
+            source: "/test",
+            data: %{value: 2}
+          })
+
+        {:ok, [recorded]} = Bus.publish(bus_name, [signal])
+
+        if ID.extract_timestamp(recorded.id) > checkpoint do
+          :ok
+        else
+          publish_after_checkpoint.(publish_after_checkpoint)
+        end
+      end
+
+      :ok = publish_after_checkpoint.(publish_after_checkpoint)
+
+      bus_state = :sys.get_state(bus_pid)
+
+      missed_signals =
+        bus_state.log
+        |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
+        |> Enum.filter(fn {log_id, signal} ->
+          ID.extract_timestamp(log_id) > checkpoint and signal.type == "test.replay"
+        end)
+        |> Enum.map(fn {_log_id, signal} -> signal end)
+
+      old_client =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      subscription = %Subscriber{
+        id: "replay-sub",
+        path: "test.replay",
+        dispatch: {:pid, target: old_client, delivery_mode: :async},
+        persistent?: true,
+        persistence_pid: nil,
+        created_at: DateTime.utc_now()
+      }
+
+      {:ok, pid} =
+        PersistentSubscription.start_link(
+          id: "replay-sub",
+          bus_pid: bus_pid,
+          bus_name: bus_name,
+          bus_subscription: subscription,
+          checkpoint: checkpoint,
+          client_pid: old_client
+        )
+
+      GenServer.cast(pid, {:reconnect, self(), missed_signals})
+
+      assert_receive {:signal, %Signal{type: "test.replay", data: %{value: 2}}}, 500
+      send(old_client, :stop)
+    end
+  end
+
+  describe "start_link option validation" do
+    test "returns explicit error when bus_subscription is missing" do
+      subscription_id = "missing-subscription-#{System.unique_integer([:positive])}"
+
+      assert {:error, {:missing_option, :bus_subscription}} =
+               PersistentSubscription.start_link(
+                 id: subscription_id,
+                 bus_pid: self(),
+                 bus_name: :validation_bus,
+                 client_pid: self()
+               )
+    end
+
+    test "allows nil client_pid for disconnected persistent subscribers" do
+      subscription_id = "nil-client-#{System.unique_integer([:positive])}"
+
+      subscription = %Subscriber{
+        id: subscription_id,
+        path: "test.validation",
+        dispatch: {:pid, target: self(), delivery_mode: :async},
+        persistent?: true,
+        persistence_pid: nil,
+        created_at: DateTime.utc_now()
+      }
+
+      assert {:ok, pid} =
+               PersistentSubscription.start_link(
+                 id: subscription_id,
+                 bus_pid: self(),
+                 bus_name: :validation_bus,
+                 bus_subscription: subscription,
+                 client_pid: nil
+               )
+
+      state = :sys.get_state(pid)
+      assert state.client_pid == nil
+
+      GenServer.stop(pid, :normal)
+    end
+  end
+
   describe "max_attempts and DLQ" do
     setup do
       {:ok, journal_pid} = ETSAdapter.start_link("test_dlq_journal_")
@@ -202,7 +315,8 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       # Create a dead PID for failing dispatch
       {:ok, dead_pid} = Task.start(fn -> :ok end)
-      Process.sleep(10)
+      down_ref = Process.monitor(dead_pid)
+      assert_receive {:DOWN, ^down_ref, :process, ^dead_pid, _reason}
 
       {:ok, bus: bus_name, journal_pid: journal_pid, dead_pid: dead_pid}
     end
@@ -212,6 +326,18 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       journal_pid: journal_pid,
       dead_pid: dead_pid
     } do
+      test_pid = self()
+      handler_id = "test-signal-to-dlq-handler-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:jido, :signal, :subscription, :dlq],
+        fn _event, _measurements, metadata, _config ->
+          send(test_pid, {:dlq_event, metadata})
+        end,
+        nil
+      )
+
       # Subscribe with a dispatch that always fails (dead pid)
       {:ok, subscription_id} =
         Bus.subscribe(bus, "test.**",
@@ -230,8 +356,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
-      # Wait for retries to be exhausted
-      Process.sleep(200)
+      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 3}}, 1_000
 
       # Check that the signal is in the DLQ
       {:ok, dlq_entries} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
@@ -240,6 +365,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       [dlq_entry] = dlq_entries
       assert dlq_entry.signal.type == "test.signal"
       assert dlq_entry.metadata.attempt_count == 3
+      :telemetry.detach(handler_id)
     end
 
     test "retry telemetry is emitted on dispatch failure", %{bus: bus, dead_pid: dead_pid} do
@@ -347,14 +473,30 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
-      # Wait for DLQ
-      Process.sleep(200)
+      assert_receive :retry_event, 1_000
+
+      dlq_handler_id = "test-no-more-retries-dlq-handler-#{subscription_id}"
+
+      :telemetry.attach(
+        dlq_handler_id,
+        [:jido, :signal, :subscription, :dlq],
+        fn _event, _measurements, metadata, config ->
+          if metadata.subscription_id == config.subscription_id do
+            send(config.test_pid, :dlq_event)
+          end
+        end,
+        %{subscription_id: subscription_id, test_pid: test_pid}
+      )
+
+      assert_receive :dlq_event, 1_000
 
       # Count retries - should be exactly 1 (first failure, then DLQ on second)
       count = :counters.get(retry_count, 1)
       assert count == 1, "Expected exactly 1 retry, got #{count}"
+      refute_receive :retry_event, 200
 
       :telemetry.detach(handler_id)
+      :telemetry.detach(dlq_handler_id)
     end
 
     test "custom max_attempts is respected", %{
@@ -362,6 +504,18 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       journal_pid: journal_pid,
       dead_pid: dead_pid
     } do
+      test_pid = self()
+      handler_id = "test-custom-attempts-dlq-handler-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:jido, :signal, :subscription, :dlq],
+        fn _event, _measurements, metadata, _config ->
+          send(test_pid, {:dlq_event, metadata})
+        end,
+        nil
+      )
+
       {:ok, subscription_id} =
         Bus.subscribe(bus, "test.**",
           persistent?: true,
@@ -379,14 +533,14 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
-      # Wait for all retries to be exhausted
-      Process.sleep(300)
+      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 5}}, 2_000
 
       {:ok, dlq_entries} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
       assert length(dlq_entries) == 1
 
       [dlq_entry] = dlq_entries
       assert dlq_entry.metadata.attempt_count == 5
+      :telemetry.detach(handler_id)
     end
 
     test "successful dispatch clears attempt counter", %{bus: bus} do

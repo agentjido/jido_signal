@@ -23,14 +23,19 @@ defmodule Jido.Signal.Bus.State do
               snapshots: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               child_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              child_supervisor_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
               middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
               journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_owned?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
+              async_calls: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
-              partition_pids: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              partition_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              partition_supervisor_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               max_log_size: Zoi.default(Zoi.integer(), 100_000) |> Zoi.optional(),
-              log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional()
+              log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional(),
+              gc_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
             }
           )
 
@@ -61,6 +66,7 @@ defmodule Jido.Signal.Bus.State do
       router: router,
       jido: Keyword.get(opts, :jido),
       child_supervisor: Keyword.get(opts, :child_supervisor),
+      child_supervisor_monitor_ref: Keyword.get(opts, :child_supervisor_monitor_ref),
       log: Keyword.get(opts, :log, %{}),
       snapshots: Keyword.get(opts, :snapshots, %{}),
       subscriptions: Keyword.get(opts, :subscriptions, %{}),
@@ -68,10 +74,14 @@ defmodule Jido.Signal.Bus.State do
       middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
       journal_adapter: Keyword.get(opts, :journal_adapter),
       journal_pid: Keyword.get(opts, :journal_pid),
+      journal_owned?: Keyword.get(opts, :journal_owned?, false),
+      async_calls: Keyword.get(opts, :async_calls, %{}),
       partition_count: Keyword.get(opts, :partition_count, 1),
-      partition_pids: Keyword.get(opts, :partition_pids, []),
+      partition_supervisor: Keyword.get(opts, :partition_supervisor),
+      partition_supervisor_monitor_ref: Keyword.get(opts, :partition_supervisor_monitor_ref),
       max_log_size: Keyword.get(opts, :max_log_size, 100_000),
-      log_ttl_ms: Keyword.get(opts, :log_ttl_ms)
+      log_ttl_ms: Keyword.get(opts, :log_ttl_ms),
+      gc_timer_ref: Keyword.get(opts, :gc_timer_ref)
     }
   end
 
@@ -168,8 +178,8 @@ defmodule Jido.Signal.Bus.State do
   @spec log_to_list(t()) :: list(Signal.t())
   def log_to_list(%__MODULE__{} = state) do
     state.log
-    |> Map.values()
-    |> Enum.sort_by(fn signal -> signal.id end)
+    |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
+    |> Enum.map(fn {_log_id, signal} -> signal end)
   end
 
   @doc """
@@ -182,18 +192,7 @@ defmodule Jido.Signal.Bus.State do
       # No truncation needed
       {:ok, state}
     else
-      sorted_signals =
-        state.log
-        |> Enum.sort_by(fn {key, _signal} -> key end)
-        |> Enum.map(fn {_key, signal} -> signal end)
-
-      # Keep only the most recent max_size signals
-      to_keep = Enum.take(sorted_signals, -max_size)
-
-      # Convert back to map
-      truncated_log = Map.new(to_keep, fn signal -> {signal.id, signal} end)
-
-      {:ok, %{state | log: truncated_log}}
+      {:ok, %{state | log: truncate_to_size(state.log, max_size)}}
     end
   end
 
@@ -241,21 +240,8 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec remove_route(t(), Router.Route.t() | String.t()) ::
           {:ok, t()} | {:error, :route_not_found}
-  def remove_route(%__MODULE__{} = state, %Router.Route{} = route) do
-    # Extract the path from the route
-    path = route.path
-
-    # Check if the route exists before trying to remove it
-    {:ok, routes} = Router.list(state.router)
-    route_exists = Enum.any?(routes, fn r -> r.path == path end)
-
-    if route_exists do
-      {:ok, new_router} = Router.remove(state.router, path)
-      {:ok, %{state | router: new_router}}
-    else
-      {:error, :route_not_found}
-    end
-  end
+  def remove_route(%__MODULE__{} = state, %Router.Route{path: path}),
+    do: remove_route(state, path)
 
   def remove_route(%__MODULE__{} = state, path) when is_binary(path) do
     # Check if the route exists before trying to remove it
@@ -341,7 +327,7 @@ defmodule Jido.Signal.Bus.State do
   - `state`: The current bus state
   - `subscription_id`: The ID of the subscription to remove
   - `opts`: Options including:
-    - `:delete_persistence` - Whether to delete persistence (default: true)
+    - `:delete_persistence` - Whether to delete persistence (default: false)
 
   ## Returns
 
@@ -350,9 +336,9 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec remove_subscription(t(), String.t(), keyword()) :: {:ok, t()} | {:error, atom()}
   def remove_subscription(%__MODULE__{} = state, subscription_id, opts \\ []) do
-    delete_persistence = Keyword.get(opts, :delete_persistence, true)
+    _opts = opts
 
-    if has_subscription?(state, subscription_id) && delete_persistence do
+    if has_subscription?(state, subscription_id) do
       {subscription, new_subscriptions} = Map.pop(state.subscriptions, subscription_id)
       new_state = %{state | subscriptions: new_subscriptions}
 

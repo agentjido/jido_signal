@@ -8,7 +8,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   """
   use GenServer
 
-  alias Jido.Signal.Bus
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
   alias Jido.Signal.Telemetry
@@ -20,8 +19,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
             %{
               id: Zoi.string(),
               bus_pid: Zoi.any(),
-              bus_subscription: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
-              client_pid: Zoi.any(),
+              bus_subscription: Zoi.any(),
+              client_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               checkpoint: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
               max_in_flight: Zoi.default(Zoi.integer(), 1000) |> Zoi.optional(),
               max_pending: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
@@ -31,6 +30,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
               attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
               retry_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              client_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               checkpoint_key: Zoi.string() |> Zoi.nullable() |> Zoi.optional()
@@ -56,7 +56,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   - start_from: Where to start reading signals from (:origin, :current, or timestamp)
   - max_in_flight: Maximum number of unacknowledged signals (default: 1000)
   - max_pending: Maximum number of pending signals before backpressure (default: 10_000)
-  - client_pid: PID of the client process (required)
+  - client_pid: PID of the client process (optional; nil means disconnected/offline)
   - dispatch_opts: Additional dispatch options for the subscription
   """
   def start_link(opts) do
@@ -79,7 +79,13 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
           Keyword.put(opts, :start_from, :origin)
       end
 
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(id))
+    case validate_init_opts(opts) do
+      :ok ->
+        GenServer.start_link(__MODULE__, opts, name: via_tuple(id))
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defdelegate via_tuple(id), to: Jido.Signal.Util
@@ -87,117 +93,74 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def init(opts) do
-    # Extract the bus subscription
-    bus_subscription = Keyword.fetch!(opts, :bus_subscription)
+    case validate_init_opts(opts) do
+      :ok ->
+        Process.flag(:trap_exit, true)
 
-    id = Keyword.fetch!(opts, :id)
-    journal_adapter = Keyword.get(opts, :journal_adapter)
-    journal_pid = Keyword.get(opts, :journal_pid)
-    bus_name = Keyword.get(opts, :bus_name, :unknown)
+        # Extract the bus subscription
+        bus_subscription = Keyword.fetch!(opts, :bus_subscription)
 
-    # Compute checkpoint key (unique per bus + subscription)
-    checkpoint_key = "#{bus_name}:#{id}"
+        id = Keyword.fetch!(opts, :id)
+        journal_adapter = Keyword.get(opts, :journal_adapter)
+        journal_pid = Keyword.get(opts, :journal_pid)
+        bus_name = Keyword.get(opts, :bus_name, :unknown)
 
-    # Load checkpoint from journal if adapter is configured
-    loaded_checkpoint =
-      if journal_adapter do
-        case journal_adapter.get_checkpoint(checkpoint_key, journal_pid) do
-          {:ok, cp} ->
-            cp
+        # Compute checkpoint key (unique per bus + subscription)
+        checkpoint_key = "#{bus_name}:#{id}"
 
-          {:error, :not_found} ->
-            0
+        loaded_checkpoint =
+          load_checkpoint(
+            journal_adapter,
+            checkpoint_key,
+            journal_pid,
+            Keyword.get(opts, :checkpoint, 0)
+          )
 
-          {:error, reason} ->
-            Logger.warning("Failed to load checkpoint for #{checkpoint_key}: #{inspect(reason)}")
+        state = %__MODULE__{
+          id: id,
+          bus_pid: Keyword.fetch!(opts, :bus_pid),
+          bus_subscription: bus_subscription,
+          client_pid: Keyword.get(opts, :client_pid),
+          checkpoint: loaded_checkpoint,
+          max_in_flight: Keyword.get(opts, :max_in_flight, 1000),
+          max_pending: Keyword.get(opts, :max_pending, 10_000),
+          max_attempts: Keyword.get(opts, :max_attempts, 5),
+          retry_interval: Keyword.get(opts, :retry_interval, 100),
+          in_flight_signals: %{},
+          pending_signals: %{},
+          attempts: %{},
+          journal_adapter: journal_adapter,
+          journal_pid: journal_pid,
+          checkpoint_key: checkpoint_key
+        }
 
-            0
-        end
-      else
-        Keyword.get(opts, :checkpoint, 0)
-      end
+        state = maybe_monitor_client(state, state.client_pid)
 
-    state = %__MODULE__{
-      id: id,
-      bus_pid: Keyword.fetch!(opts, :bus_pid),
-      bus_subscription: bus_subscription,
-      client_pid: Keyword.get(opts, :client_pid),
-      checkpoint: loaded_checkpoint,
-      max_in_flight: Keyword.get(opts, :max_in_flight, 1000),
-      max_pending: Keyword.get(opts, :max_pending, 10_000),
-      max_attempts: Keyword.get(opts, :max_attempts, 5),
-      retry_interval: Keyword.get(opts, :retry_interval, 100),
-      in_flight_signals: %{},
-      pending_signals: %{},
-      attempts: %{},
-      journal_adapter: journal_adapter,
-      journal_pid: journal_pid,
-      checkpoint_key: checkpoint_key
-    }
+        {:ok, state}
 
-    # Monitor the client process if specified
-    if state.client_pid && Process.alive?(state.client_pid) do
-      Process.monitor(state.client_pid)
+      {:error, reason} ->
+        {:stop, reason}
     end
-
-    {:ok, state}
   end
 
   @impl GenServer
   def handle_call({:ack, signal_log_id}, _from, state) when is_binary(signal_log_id) do
-    # Remove the acknowledged signal from in-flight
-    new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
-
-    # Extract timestamp from UUID7 for checkpoint comparison
-    timestamp = ID.extract_timestamp(signal_log_id)
-
-    # Update checkpoint if this is a higher number
-    new_checkpoint = max(state.checkpoint, timestamp)
-
-    # Persist checkpoint if journal adapter is configured
-    persist_checkpoint(state, new_checkpoint)
-
-    # Update state
-    new_state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
-
-    # Process any pending signals
-    new_state = process_pending_signals(new_state)
-
-    {:reply, :ok, new_state}
+    {:reply, :ok, do_ack(state, signal_log_id)}
   end
 
   @impl GenServer
   def handle_call({:ack, signal_log_ids}, _from, state) when is_list(signal_log_ids) do
-    # Remove all acknowledged signals from in-flight
-    new_in_flight =
-      Enum.reduce(signal_log_ids, state.in_flight_signals, fn id, acc ->
-        Map.delete(acc, id)
-      end)
-
-    # Extract timestamps from all UUIDs and find the highest
-    highest_timestamp =
-      signal_log_ids
-      |> Enum.map(&ID.extract_timestamp/1)
-      |> Enum.max()
-
-    # Update checkpoint if this is a higher number
-    new_checkpoint = max(state.checkpoint, highest_timestamp)
-
-    # Persist checkpoint if journal adapter is configured
-    persist_checkpoint(state, new_checkpoint)
-
-    # Update state
-    new_state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
-
-    # Process any pending signals
-    new_state = process_pending_signals(new_state)
-
-    {:reply, :ok, new_state}
+    {:reply, :ok, do_ack(state, signal_log_ids)}
   end
 
   @impl GenServer
   def handle_call({:ack, _invalid_arg}, _from, state) do
     {:reply, {:error, :invalid_ack_argument}, state}
+  end
+
+  @impl GenServer
+  def handle_call(:checkpoint, _from, state) do
+    {:reply, state.checkpoint, state}
   end
 
   @impl GenServer
@@ -236,50 +199,30 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_cast({:ack, signal_log_id}, state) when is_binary(signal_log_id) do
-    # Remove the acknowledged signal from in-flight
-    new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
-
-    # Extract timestamp from UUID7 for checkpoint comparison
-    timestamp = ID.extract_timestamp(signal_log_id)
-
-    # Update checkpoint if this is a higher number
-    new_checkpoint = max(state.checkpoint, timestamp)
-
-    # Persist checkpoint if journal adapter is configured
-    persist_checkpoint(state, new_checkpoint)
-
-    # Update state
-    new_state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
-
-    # Process any pending signals
-    new_state = process_pending_signals(new_state)
-
-    {:noreply, new_state}
+    {:noreply, do_ack(state, signal_log_id)}
   end
 
   @impl GenServer
   def handle_cast({:reconnect, new_client_pid}, state) do
-    # Only proceed if the new client is alive
-    if Process.alive?(new_client_pid) do
-      # Monitor the new client process
-      Process.monitor(new_client_pid)
+    handle_cast({:reconnect, new_client_pid, []}, state)
+  end
 
-      # Update the bus subscription to point to the new client PID
-      updated_subscription = %{
-        state.bus_subscription
-        | dispatch: {:pid, target: new_client_pid, delivery_mode: :async}
-      }
+  @impl GenServer
+  def handle_cast({:reconnect, new_client_pid, missed_signals}, state)
+      when is_list(missed_signals) do
+    # Update the bus subscription to point to the new client PID
+    updated_subscription = %{
+      state.bus_subscription
+      | dispatch: {:pid, target: new_client_pid, delivery_mode: :async}
+    }
 
-      # Update state with new client PID and subscription
-      new_state = %{state | client_pid: new_client_pid, bus_subscription: updated_subscription}
+    # Update state with new client PID and subscription
+    new_state = %{state | client_pid: new_client_pid, bus_subscription: updated_subscription}
+    new_state = maybe_monitor_client(new_state, new_client_pid)
 
-      # Replay any signals that were missed while disconnected
-      new_state = replay_missed_signals(new_state)
+    Enum.each(missed_signals, &dispatch_replay_signal(&1, new_state))
 
-      {:noreply, new_state}
-    else
-      {:noreply, state}
-    end
+    {:noreply, new_state}
   end
 
   @impl GenServer
@@ -336,44 +279,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     {:noreply, state}
   end
 
-  # Helper function to replay missed signals
-  defp replay_missed_signals(state) do
-    Logger.debug("Replaying missed signals for subscription #{state.id}")
-
-    # Get the bus state to access the log
-    bus_state = :sys.get_state(state.bus_pid)
-
-    missed_signals =
-      Enum.filter(bus_state.log, fn {_id, signal} ->
-        signal_after_checkpoint?(signal, state.checkpoint)
-      end)
-
-    Enum.each(missed_signals, fn {_id, signal} ->
-      replay_single_signal(signal, state)
-    end)
-
-    state
-  end
-
-  defp signal_after_checkpoint?(signal, checkpoint) do
-    case DateTime.from_iso8601(signal.time) do
-      {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp) > checkpoint
-      _ -> false
-    end
-  end
-
-  defp replay_single_signal(signal, state) do
-    case DateTime.from_iso8601(signal.time) do
-      {:ok, timestamp, _offset} ->
-        if DateTime.to_unix(timestamp) > state.checkpoint do
-          dispatch_replay_signal(signal, state)
-        end
-
-      _ ->
-        :ok
-    end
-  end
-
   defp dispatch_replay_signal(signal, state) do
     case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
       :ok ->
@@ -388,16 +293,44 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def terminate(_reason, state) do
-    # Use state.id as the subscription_id since that's what we're using to identify the subscription
-    if state.bus_pid do
-      # Best effort to unsubscribe
-      Bus.unsubscribe(state.bus_pid, state.id)
-    end
+    if state.retry_timer_ref, do: Process.cancel_timer(state.retry_timer_ref)
+    if state.client_monitor_ref, do: Process.demonitor(state.client_monitor_ref, [:flush])
 
     :ok
   end
 
   # Private Helpers
+
+  defp validate_init_opts(opts) do
+    required = [:id, :bus_pid, :bus_subscription]
+
+    case Enum.find(required, fn key -> not Keyword.has_key?(opts, key) end) do
+      nil ->
+        :ok
+
+      missing_key ->
+        {:error, {:missing_option, missing_key}}
+    end
+  end
+
+  defp load_checkpoint(nil, _checkpoint_key, _journal_pid, default_checkpoint) do
+    default_checkpoint
+  end
+
+  defp load_checkpoint(journal_adapter, checkpoint_key, journal_pid, _default_checkpoint) do
+    case journal_adapter.get_checkpoint(checkpoint_key, journal_pid) do
+      {:ok, checkpoint} ->
+        checkpoint
+
+      {:error, :not_found} ->
+        0
+
+      {:error, reason} ->
+        Logger.warning("Failed to load checkpoint for #{checkpoint_key}: #{inspect(reason)}")
+
+        0
+    end
+  end
 
   # Persists checkpoint to journal if adapter is configured
   @spec persist_checkpoint(t(), non_neg_integer()) :: :ok
@@ -577,16 +510,52 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       )
     end
 
-    # Remove from tracking - signal is now in DLQ (or dropped if no DLQ)
-    new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
-    new_pending = Map.delete(state.pending_signals, signal_log_id)
-    new_attempts = Map.delete(state.attempts, signal_log_id)
+    clear_signal_tracking(state, signal_log_id)
+  end
 
+  defp maybe_monitor_client(state, nil), do: state
+
+  defp maybe_monitor_client(state, client_pid) do
+    if state.client_monitor_ref do
+      Process.demonitor(state.client_monitor_ref, [:flush])
+    end
+
+    ref = Process.monitor(client_pid)
+    %{state | client_monitor_ref: ref}
+  end
+
+  defp do_ack(state, signal_log_id) when is_binary(signal_log_id) do
+    new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
+    timestamp = ID.extract_timestamp(signal_log_id)
+    new_checkpoint = max(state.checkpoint, timestamp)
+    persist_checkpoint(state, new_checkpoint)
+    state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
+    process_pending_signals(state)
+  end
+
+  defp do_ack(state, signal_log_ids) when is_list(signal_log_ids) do
+    new_in_flight =
+      Enum.reduce(signal_log_ids, state.in_flight_signals, fn id, acc ->
+        Map.delete(acc, id)
+      end)
+
+    highest_timestamp =
+      signal_log_ids
+      |> Enum.map(&ID.extract_timestamp/1)
+      |> Enum.max()
+
+    new_checkpoint = max(state.checkpoint, highest_timestamp)
+    persist_checkpoint(state, new_checkpoint)
+    state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
+    process_pending_signals(state)
+  end
+
+  defp clear_signal_tracking(state, signal_log_id) do
     %{
       state
-      | in_flight_signals: new_in_flight,
-        pending_signals: new_pending,
-        attempts: new_attempts
+      | in_flight_signals: Map.delete(state.in_flight_signals, signal_log_id),
+        pending_signals: Map.delete(state.pending_signals, signal_log_id),
+        attempts: Map.delete(state.attempts, signal_log_id)
     }
   end
 end

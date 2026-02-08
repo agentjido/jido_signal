@@ -95,6 +95,23 @@ defmodule Jido.Signal.Names do
   end
 
   @doc """
+  Returns the Bus runtime supervisor name for the given instance scope.
+
+  ## Examples
+
+      iex> Jido.Signal.Names.bus_runtime_supervisor([])
+      Jido.Signal.Bus.RuntimeSupervisor
+
+      iex> Jido.Signal.Names.bus_runtime_supervisor(jido: MyApp.Jido)
+      MyApp.Jido.Signal.Bus.RuntimeSupervisor
+
+  """
+  @spec bus_runtime_supervisor(opts()) :: atom()
+  def bus_runtime_supervisor(opts) do
+    scoped(opts, Jido.Signal.Bus.RuntimeSupervisor)
+  end
+
+  @doc """
   Resolves a module name based on instance scope.
 
   When `jido:` option is nil or not present, returns the default module.

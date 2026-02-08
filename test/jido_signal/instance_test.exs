@@ -9,6 +9,7 @@ defmodule Jido.Signal.InstanceTest do
       assert Names.registry([]) == Jido.Signal.Registry
       assert Names.task_supervisor([]) == Jido.Signal.TaskSupervisor
       assert Names.supervisor([]) == Jido.Signal.Supervisor
+      assert Names.bus_runtime_supervisor([]) == Jido.Signal.Bus.RuntimeSupervisor
     end
 
     test "returns default when jido is nil" do
@@ -21,6 +22,9 @@ defmodule Jido.Signal.InstanceTest do
       assert Names.task_supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.TaskSupervisor
       assert Names.supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.Supervisor
       assert Names.ext_registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Ext.Registry
+
+      assert Names.bus_runtime_supervisor(jido: MyApp.Jido) ==
+               MyApp.Jido.Signal.Bus.RuntimeSupervisor
     end
 
     test "handles deeply nested instance names" do
@@ -50,6 +54,7 @@ defmodule Jido.Signal.InstanceTest do
       assert Process.whereis(Names.registry(instance_opts)) |> is_pid()
       assert Process.whereis(Names.task_supervisor(instance_opts)) |> is_pid()
       assert Process.whereis(Names.ext_registry(instance_opts)) |> is_pid()
+      assert Process.whereis(Names.bus_runtime_supervisor(instance_opts)) |> is_pid()
 
       # Cleanup
       Instance.stop(instance)
@@ -104,6 +109,20 @@ defmodule Jido.Signal.InstanceTest do
 
     test "stop/1 is idempotent" do
       instance = :"TestInstance#{System.unique_integer()}"
+      assert :ok = Instance.stop(instance)
+    end
+
+    test "stop/1 tolerates supervisor disappearing between lookup and stop" do
+      instance = :"TestInstance#{System.unique_integer()}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      supervisor_name = Names.supervisor(jido: instance)
+      supervisor_pid = Process.whereis(supervisor_name)
+      mon_ref = Process.monitor(supervisor_pid)
+      Process.unlink(supervisor_pid)
+      Process.exit(supervisor_pid, :kill)
+      assert_receive {:DOWN, ^mon_ref, :process, ^supervisor_pid, _reason}
+
       assert :ok = Instance.stop(instance)
     end
   end

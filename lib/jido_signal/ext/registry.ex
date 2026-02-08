@@ -67,6 +67,8 @@ defmodule Jido.Signal.Ext.Registry do
   """
   use GenServer
 
+  alias Jido.Signal.Names
+
   require Logger
 
   @registry_name __MODULE__
@@ -106,7 +108,8 @@ defmodule Jido.Signal.Ext.Registry do
 
   """
   def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, @registry_name))
+    name = Keyword.get(opts, :name, @registry_name)
+    GenServer.start_link(__MODULE__, %{name: name}, Keyword.put(opts, :name, name))
   end
 
   @doc """
@@ -131,20 +134,23 @@ defmodule Jido.Signal.Ext.Registry do
       # Manual registration (not typically needed)
       Jido.Signal.Ext.Registry.register(MyExt)
   """
-  @spec register(module()) :: :ok
-  def register(module) when is_atom(module) do
+  @spec register(module(), keyword()) :: :ok
+  def register(module, opts \\ []) when is_atom(module) do
     namespace = module.namespace()
+    registry_name = registry_name(opts)
 
     # Handle the case where the registry process is not started (e.g., during compilation)
     try do
-      GenServer.call(@registry_name, {:register, namespace, module})
+      GenServer.call(registry_name, {:register, namespace, module})
     catch
       :exit, {:noproc, _} ->
         Logger.debug("Extension registry not started, skipping registration of #{module}")
+        queue_pending(registry_name, module)
         :ok
 
       :exit, {:timeout, _} ->
         Logger.debug("Extension registry timeout, skipping registration of #{module}")
+        queue_pending(registry_name, module)
         :ok
     end
   end
@@ -167,9 +173,9 @@ defmodule Jido.Signal.Ext.Registry do
           {:error, "Unknown extension: auth"}
       end
   """
-  @spec get(String.t()) :: {:ok, module()} | {:error, :not_found}
-  def get(namespace) when is_binary(namespace) do
-    case GenServer.call(@registry_name, {:get, namespace}) do
+  @spec get(String.t(), keyword()) :: {:ok, module()} | {:error, :not_found}
+  def get(namespace, opts \\ []) when is_binary(namespace) do
+    case GenServer.call(registry_name(opts), {:get, namespace}) do
       {:ok, module} -> {:ok, module}
       :error -> {:error, :not_found}
     end
@@ -192,9 +198,9 @@ defmodule Jido.Signal.Ext.Registry do
       module = Jido.Signal.Ext.Registry.get!("auth")
       {:ok, data} = module.validate_data(%{user_id: "123"})
   """
-  @spec get!(String.t()) :: module() | no_return()
-  def get!(namespace) when is_binary(namespace) do
-    case get(namespace) do
+  @spec get!(String.t(), keyword()) :: module() | no_return()
+  def get!(namespace, opts \\ []) when is_binary(namespace) do
+    case get(namespace, opts) do
       {:ok, module} -> module
       {:error, :not_found} -> raise ArgumentError, "Extension not found: #{namespace}"
     end
@@ -214,9 +220,9 @@ defmodule Jido.Signal.Ext.Registry do
         IO.puts("Extension \#{namespace}: \#{module}")
       end)
   """
-  @spec all() :: [{String.t(), module()}]
-  def all do
-    GenServer.call(@registry_name, :all)
+  @spec all(keyword()) :: [{String.t(), module()}]
+  def all(opts \\ []) do
+    GenServer.call(registry_name(opts), :all)
   end
 
   @doc """
@@ -227,9 +233,9 @@ defmodule Jido.Signal.Ext.Registry do
       count = Jido.Signal.Ext.Registry.count()
       IO.puts("\#{count} extensions registered")
   """
-  @spec count() :: non_neg_integer()
-  def count do
-    GenServer.call(@registry_name, :count)
+  @spec count(keyword()) :: non_neg_integer()
+  def count(opts \\ []) do
+    GenServer.call(registry_name(opts), :count)
   end
 
   @doc """
@@ -249,9 +255,9 @@ defmodule Jido.Signal.Ext.Registry do
         # Handle missing extension
       end
   """
-  @spec registered?(String.t()) :: boolean()
-  def registered?(namespace) when is_binary(namespace) do
-    case get(namespace) do
+  @spec registered?(String.t(), keyword()) :: boolean()
+  def registered?(namespace, opts \\ []) when is_binary(namespace) do
+    case get(namespace, opts) do
       {:ok, _} -> true
       {:error, :not_found} -> false
     end
@@ -260,8 +266,8 @@ defmodule Jido.Signal.Ext.Registry do
   # Server Implementation
 
   @impl GenServer
-  def init(:ok) do
-    {:ok, %{}}
+  def init(%{name: name}) do
+    {:ok, drain_pending(name)}
   end
 
   @impl GenServer
@@ -310,4 +316,41 @@ defmodule Jido.Signal.Ext.Registry do
     Logger.warning("Unhandled registry call: #{inspect(request)} from #{inspect(from)}")
     {:reply, {:error, :unknown_request}, state}
   end
+
+  defp registry_name(opts) do
+    if Keyword.has_key?(opts, :jido) do
+      Names.ext_registry(opts)
+    else
+      @registry_name
+    end
+  end
+
+  defp queue_pending(registry_name, module) do
+    key = pending_key(registry_name)
+    pending = :persistent_term.get(key, [])
+
+    unless module in pending do
+      :persistent_term.put(key, [module | pending])
+    end
+  end
+
+  defp drain_pending(registry_name) do
+    key = pending_key(registry_name)
+
+    state =
+      key
+      |> :persistent_term.get([])
+      |> Enum.reduce(%{}, fn module, acc ->
+        if function_exported?(module, :namespace, 0) do
+          Map.put_new(acc, module.namespace(), module)
+        else
+          acc
+        end
+      end)
+
+    :persistent_term.erase(key)
+    state
+  end
+
+  defp pending_key(registry_name), do: {__MODULE__, :pending, registry_name}
 end

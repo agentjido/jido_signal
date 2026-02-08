@@ -31,7 +31,10 @@ defmodule Jido.Signal.Application do
       Jido.Signal.Ext.Registry,
 
       # Exec Async Actions Task Supervisor
-      {Task.Supervisor, name: Jido.Signal.TaskSupervisor}
+      {Task.Supervisor, name: Jido.Signal.TaskSupervisor},
+
+      # Runtime-owned per-bus supervisors (persistent subscriptions, partitions)
+      {Jido.Signal.Bus.RuntimeSupervisor, name: Jido.Signal.Bus.RuntimeSupervisor}
     ]
 
     opts = [strategy: :one_for_one, name: Jido.Signal.Supervisor]
