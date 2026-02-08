@@ -33,6 +33,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
               in_flight_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               pending_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               acked_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              dlq_pending: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               max_attempts: Zoi.default(Zoi.integer(), 5) |> Zoi.optional(),
               attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
@@ -168,6 +169,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
           pending_batches: [],
           work_pending?: false,
           acked_signals: %{},
+          dlq_pending: %{},
           attempts: %{},
           journal_adapter: journal_adapter,
           journal_pid: journal_pid,
@@ -335,8 +337,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     # Clear the timer ref since we're handling it now
     state = %{state | retry_timer_ref: nil}
 
-    # Process pending signals that need retry
-    new_state = process_pending_for_retry(state)
+    new_state =
+      state
+      |> process_dlq_pending()
+      |> process_pending_for_retry()
 
     {:noreply, new_state}
   end
@@ -506,45 +510,19 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   # Handles moving a signal to the Dead Letter Queue after max attempts
   @spec handle_dlq(t(), String.t(), term(), term(), non_neg_integer()) :: t()
   defp handle_dlq(state, signal_log_id, signal, reason, attempt_count) do
-    metadata = %{
-      attempt_count: attempt_count,
-      last_error: inspect(reason),
-      subscription_id: state.id,
-      signal_log_id: signal_log_id
-    }
+    case persist_to_dlq(state, signal_log_id, signal, reason, attempt_count) do
+      {:ok, _dlq_id} ->
+        clear_signal_tracking(state, signal_log_id)
 
-    if state.journal_adapter do
-      case state.journal_adapter.put_dlq_entry(
-             state.id,
-             signal,
-             reason,
-             metadata,
-             state.journal_pid
-           ) do
-        {:ok, dlq_id} ->
-          Telemetry.execute(
-            [:jido, :signal, :subscription, :dlq],
-            %{},
-            %{
-              subscription_id: state.id,
-              signal_id: signal.id,
-              dlq_id: dlq_id,
-              attempts: attempt_count
-            }
-          )
+      {:error, dlq_error} ->
+        Logger.error(
+          "Failed to write to DLQ for signal #{signal.id}, retaining for retry: #{inspect(dlq_error)}"
+        )
 
-          Logger.debug("Signal #{signal.id} moved to DLQ after #{attempt_count} attempts")
-
-        {:error, dlq_error} ->
-          Logger.error("Failed to write to DLQ for signal #{signal.id}: #{inspect(dlq_error)}")
-      end
-    else
-      Logger.warning(
-        "Signal #{signal.id} exhausted #{attempt_count} attempts but no DLQ configured"
-      )
+        state
+        |> move_signal_to_dlq_pending(signal_log_id, signal, reason, attempt_count, dlq_error)
+        |> schedule_retry()
     end
-
-    clear_signal_tracking(state, signal_log_id)
   end
 
   defp maybe_monitor_client(state, nil), do: state
@@ -559,17 +537,14 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   defp do_ack(state, signal_log_id) when is_binary(signal_log_id) do
-    new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
-    new_acked = Map.put(state.acked_signals, signal_log_id, true)
+    state = ack_signal(state, signal_log_id)
     timestamp = ID.extract_timestamp(signal_log_id)
     new_checkpoint = max(state.checkpoint, timestamp)
     persist_checkpoint(state, new_checkpoint)
 
     state = %{
       state
-      | in_flight_signals: new_in_flight,
-        acked_signals: new_acked,
-        checkpoint: new_checkpoint
+      | checkpoint: new_checkpoint
     }
 
     process_pending_signals(state)
@@ -580,15 +555,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   defp do_ack(state, signal_log_ids) when is_list(signal_log_ids) do
-    new_in_flight =
-      Enum.reduce(signal_log_ids, state.in_flight_signals, fn id, acc ->
-        Map.delete(acc, id)
-      end)
-
-    new_acked =
-      Enum.reduce(signal_log_ids, state.acked_signals, fn id, acc ->
-        Map.put(acc, id, true)
-      end)
+    state = Enum.reduce(signal_log_ids, state, &ack_signal(&2, &1))
 
     highest_timestamp =
       signal_log_ids
@@ -600,9 +567,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
     state = %{
       state
-      | in_flight_signals: new_in_flight,
-        acked_signals: new_acked,
-        checkpoint: new_checkpoint
+      | checkpoint: new_checkpoint
     }
 
     process_pending_signals(state)
@@ -752,7 +717,141 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       | in_flight_signals: Map.delete(state.in_flight_signals, signal_log_id),
         pending_signals: Map.delete(state.pending_signals, signal_log_id),
         acked_signals: Map.delete(state.acked_signals, signal_log_id),
+        dlq_pending: Map.delete(state.dlq_pending, signal_log_id),
         attempts: Map.delete(state.attempts, signal_log_id)
     }
+  end
+
+  defp ack_signal(state, signal_log_id) when is_binary(signal_log_id) do
+    ack_marker? = dispatch_in_progress?(state, signal_log_id)
+
+    updated_acked_signals =
+      if ack_marker? do
+        Map.put(state.acked_signals, signal_log_id, true)
+      else
+        Map.delete(state.acked_signals, signal_log_id)
+      end
+
+    %{
+      state
+      | in_flight_signals: Map.delete(state.in_flight_signals, signal_log_id),
+        pending_signals: Map.delete(state.pending_signals, signal_log_id),
+        attempts: Map.delete(state.attempts, signal_log_id),
+        dlq_pending: Map.delete(state.dlq_pending, signal_log_id),
+        acked_signals: updated_acked_signals
+    }
+  end
+
+  defp dispatch_in_progress?(state, signal_log_id) when is_binary(signal_log_id) do
+    Enum.any?(state.dispatch_tasks, fn {_ref, {_task, dispatch_signal_log_id, _signal}} ->
+      dispatch_signal_log_id == signal_log_id
+    end)
+  end
+
+  defp move_signal_to_dlq_pending(
+         state,
+         signal_log_id,
+         signal,
+         reason,
+         attempt_count,
+         dlq_error
+       ) do
+    base_state = clear_signal_tracking(state, signal_log_id)
+    existing_entry = Map.get(base_state.dlq_pending, signal_log_id, %{})
+
+    dlq_entry = %{
+      signal: signal,
+      reason: reason,
+      attempt_count: attempt_count,
+      dlq_failures: Map.get(existing_entry, :dlq_failures, 0) + 1,
+      last_error: dlq_error
+    }
+
+    %{base_state | dlq_pending: Map.put(base_state.dlq_pending, signal_log_id, dlq_entry)}
+  end
+
+  defp process_dlq_pending(%{dlq_pending: dlq_pending} = state) when map_size(dlq_pending) == 0,
+    do: state
+
+  defp process_dlq_pending(state) do
+    state =
+      Enum.reduce(state.dlq_pending, state, fn {signal_log_id, dlq_entry}, acc_state ->
+        retry_dlq_write(acc_state, signal_log_id, dlq_entry)
+      end)
+
+    if map_size(state.dlq_pending) > 0 do
+      schedule_retry(state)
+    else
+      state
+    end
+  end
+
+  defp retry_dlq_write(state, signal_log_id, dlq_entry) do
+    case persist_to_dlq(
+           state,
+           signal_log_id,
+           dlq_entry.signal,
+           dlq_entry.reason,
+           dlq_entry.attempt_count
+         ) do
+      {:ok, _dlq_id} ->
+        clear_signal_tracking(state, signal_log_id)
+
+      {:error, dlq_error} ->
+        updated_entry = %{
+          dlq_entry
+          | dlq_failures: Map.get(dlq_entry, :dlq_failures, 0) + 1,
+            last_error: dlq_error
+        }
+
+        %{state | dlq_pending: Map.put(state.dlq_pending, signal_log_id, updated_entry)}
+    end
+  end
+
+  defp persist_to_dlq(_state, signal_log_id, _signal, _reason, _attempt_count)
+       when not is_binary(signal_log_id) do
+    {:error, :invalid_signal_log_id}
+  end
+
+  defp persist_to_dlq(%{journal_adapter: nil}, _signal_log_id, _signal, _reason, _attempt_count) do
+    {:error, :no_journal_adapter}
+  end
+
+  defp persist_to_dlq(state, signal_log_id, signal, reason, attempt_count) do
+    metadata = %{
+      attempt_count: attempt_count,
+      last_error: inspect(reason),
+      subscription_id: state.id,
+      signal_log_id: signal_log_id
+    }
+
+    case state.journal_adapter.put_dlq_entry(
+           state.id,
+           signal,
+           reason,
+           metadata,
+           state.journal_pid
+         ) do
+      {:ok, dlq_id} ->
+        Telemetry.execute(
+          [:jido, :signal, :subscription, :dlq],
+          %{},
+          %{
+            subscription_id: state.id,
+            signal_id: signal.id,
+            dlq_id: dlq_id,
+            attempts: attempt_count
+          }
+        )
+
+        Logger.debug("Signal #{signal.id} moved to DLQ after #{attempt_count} attempts")
+        {:ok, dlq_id}
+
+      {:error, dlq_error} ->
+        {:error, dlq_error}
+    end
+  catch
+    :exit, exit_reason ->
+      {:error, {:adapter_exit, exit_reason}}
   end
 end

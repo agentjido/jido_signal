@@ -44,6 +44,146 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
     def deliver(_signal, _opts), do: {:error, :forced_dispatch_failure}
   end
 
+  defmodule BlockingAckDispatchAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def validate_opts(opts), do: {:ok, opts}
+
+    @impl true
+    def deliver(signal, opts) do
+      test_pid = Keyword.fetch!(opts, :test_pid)
+      signal_id = signal.id
+      send(test_pid, {:ack_leak_dispatch_started, self(), signal_id})
+
+      receive do
+        {:release_ack_leak_dispatch, ^signal_id} -> :ok
+      end
+    end
+  end
+
+  defmodule FlakyDLQWriteAdapter do
+    def init do
+      test_pid = Application.fetch_env!(:jido_signal, :flaky_dlq_test_pid)
+
+      Agent.start_link(fn ->
+        %{
+          test_pid: test_pid,
+          checkpoints: %{},
+          dlq_entries: %{},
+          dlq_attempts_by_log_id: %{}
+        }
+      end)
+    end
+
+    def put_signal(_signal, _pid), do: :ok
+    def get_signal(_signal_id, _pid), do: {:error, :not_found}
+    def put_cause(_cause_id, _effect_id, _pid), do: :ok
+    def get_effects(_signal_id, _pid), do: {:ok, MapSet.new()}
+    def get_cause(_signal_id, _pid), do: {:error, :not_found}
+    def put_conversation(_conversation_id, _signal_id, _pid), do: :ok
+    def get_conversation(_conversation_id, _pid), do: {:ok, MapSet.new()}
+
+    def put_checkpoint(checkpoint_key, checkpoint, pid) do
+      Agent.update(pid, fn state ->
+        %{state | checkpoints: Map.put(state.checkpoints, checkpoint_key, checkpoint)}
+      end)
+
+      :ok
+    end
+
+    def get_checkpoint(checkpoint_key, pid) do
+      case Agent.get(pid, fn state -> Map.get(state.checkpoints, checkpoint_key) end) do
+        nil -> {:error, :not_found}
+        checkpoint -> {:ok, checkpoint}
+      end
+    end
+
+    def delete_checkpoint(checkpoint_key, pid) do
+      Agent.update(pid, fn state ->
+        %{state | checkpoints: Map.delete(state.checkpoints, checkpoint_key)}
+      end)
+
+      :ok
+    end
+
+    def put_dlq_entry(subscription_id, signal, reason, metadata, pid) do
+      signal_log_id = Map.fetch!(metadata, :signal_log_id)
+
+      {attempt, test_pid} =
+        Agent.get_and_update(pid, fn state ->
+          attempt = Map.get(state.dlq_attempts_by_log_id, signal_log_id, 0) + 1
+
+          {
+            {attempt, state.test_pid},
+            %{
+              state
+              | dlq_attempts_by_log_id:
+                  Map.put(state.dlq_attempts_by_log_id, signal_log_id, attempt)
+            }
+          }
+        end)
+
+      if attempt == 1 do
+        send(
+          test_pid,
+          {:dlq_write_attempt, signal_log_id, attempt, {:error, :transient_dlq_failure}}
+        )
+
+        {:error, :transient_dlq_failure}
+      else
+        entry = %{
+          id: "dlq-#{System.unique_integer([:positive])}",
+          subscription_id: subscription_id,
+          signal: signal,
+          reason: reason,
+          metadata: metadata,
+          inserted_at: DateTime.utc_now()
+        }
+
+        Agent.update(pid, fn state ->
+          entries = Map.update(state.dlq_entries, subscription_id, [entry], &[entry | &1])
+          %{state | dlq_entries: entries}
+        end)
+
+        send(test_pid, {:dlq_write_attempt, signal_log_id, attempt, {:ok, entry.id}})
+        {:ok, entry.id}
+      end
+    end
+
+    def get_dlq_entries(subscription_id, pid) do
+      entries =
+        Agent.get(pid, fn state ->
+          state.dlq_entries
+          |> Map.get(subscription_id, [])
+          |> Enum.reverse()
+        end)
+
+      {:ok, entries}
+    end
+
+    def delete_dlq_entry(entry_id, pid) do
+      Agent.update(pid, fn state ->
+        updated_entries =
+          Map.new(state.dlq_entries, fn {subscription_id, entries} ->
+            {subscription_id, Enum.reject(entries, &(&1.id == entry_id))}
+          end)
+
+        %{state | dlq_entries: updated_entries}
+      end)
+
+      :ok
+    end
+
+    def clear_dlq(subscription_id, pid) do
+      Agent.update(pid, fn state ->
+        %{state | dlq_entries: Map.delete(state.dlq_entries, subscription_id)}
+      end)
+
+      :ok
+    end
+  end
+
   describe "checkpoint persistence with journal adapter" do
     setup do
       {:ok, journal_pid} = ETSAdapter.start_link("test_journal_")
@@ -742,6 +882,125 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       # Attempts should be empty
       assert persistent_state.attempts == %{}
+    end
+
+    test "acked_signals markers are cleared after in-flight dispatch completes", %{bus: bus} do
+      {:ok, bus_pid} = Bus.whereis(bus)
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**",
+          persistent?: true,
+          dispatch: {BlockingAckDispatchAdapter, [test_pid: self()]},
+          max_in_flight: 50
+        )
+
+      signals =
+        for i <- 1..20 do
+          Signal.new!(%{
+            type: "test.ack.leak",
+            source: "/test",
+            data: %{value: i}
+          })
+        end
+
+      {:ok, recorded_signals} = Bus.publish(bus, signals)
+
+      signal_id_to_log_id =
+        Map.new(recorded_signals, fn recorded ->
+          {recorded.signal.id, recorded.id}
+        end)
+
+      started_dispatches =
+        Enum.map(1..20, fn _ ->
+          assert_receive {:ack_leak_dispatch_started, dispatch_pid, signal_id}, 1_000
+          {dispatch_pid, signal_id}
+        end)
+
+      Enum.each(started_dispatches, fn {_dispatch_pid, signal_id} ->
+        log_id = Map.fetch!(signal_id_to_log_id, signal_id)
+        assert :ok = Bus.ack(bus, subscription_id, log_id)
+      end)
+
+      persistent_state = persistent_state(bus_pid, subscription_id)
+      assert map_size(persistent_state.acked_signals) == 20
+
+      Enum.each(started_dispatches, fn {dispatch_pid, signal_id} ->
+        send(dispatch_pid, {:release_ack_leak_dispatch, signal_id})
+      end)
+
+      assert_persistent_state(bus_pid, subscription_id, fn state ->
+        map_size(state.acked_signals) == 0 and
+          map_size(state.in_flight_signals) == 0 and
+          map_size(state.pending_signals) == 0
+      end)
+    end
+
+    test "failed DLQ write is retried and signal is not dropped" do
+      Application.put_env(:jido_signal, :flaky_dlq_test_pid, self())
+
+      on_exit(fn ->
+        Application.delete_env(:jido_signal, :flaky_dlq_test_pid)
+      end)
+
+      bus_name = :"test_bus_flaky_dlq_#{:erlang.unique_integer([:positive])}"
+
+      start_supervised!({Bus, name: bus_name, journal_adapter: FlakyDLQWriteAdapter})
+
+      {:ok, bus_pid} = Bus.whereis(bus_name)
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus_name, "test.**",
+          persistent?: true,
+          max_attempts: 1,
+          retry_interval: 10,
+          dispatch: {AlwaysFailDispatchAdapter, []}
+        )
+
+      signal = Signal.new!(type: "test.flaky.dlq", source: "/test", data: %{value: 1})
+
+      {:ok, [_recorded_signal]} = Bus.publish(bus_name, [signal])
+
+      assert_receive {:dlq_write_attempt, signal_log_id, 1, {:error, :transient_dlq_failure}},
+                     2_000
+
+      assert_receive {:dlq_write_attempt, ^signal_log_id, 2, {:ok, _dlq_id}}, 2_000
+
+      assert {:ok, dlq_entries} = Bus.dlq_entries(bus_name, subscription_id)
+      assert length(dlq_entries) == 1
+      [entry] = dlq_entries
+      assert entry.metadata.signal_log_id == signal_log_id
+      assert entry.metadata.attempt_count == 1
+
+      assert_persistent_state(bus_pid, subscription_id, fn state ->
+        map_size(state.dlq_pending) == 0 and
+          map_size(state.pending_signals) == 0 and
+          map_size(state.attempts) == 0
+      end)
+    end
+  end
+
+  defp persistent_state(bus_pid, subscription_id) do
+    bus_state = :sys.get_state(bus_pid)
+    subscription = Map.fetch!(bus_state.subscriptions, subscription_id)
+    :sys.get_state(subscription.persistence_pid)
+  end
+
+  defp assert_persistent_state(bus_pid, subscription_id, predicate, attempts \\ 100)
+
+  defp assert_persistent_state(_bus_pid, _subscription_id, _predicate, 0) do
+    flunk("persistent subscription state did not converge")
+  end
+
+  defp assert_persistent_state(bus_pid, subscription_id, predicate, attempts) do
+    state = persistent_state(bus_pid, subscription_id)
+
+    if predicate.(state) do
+      :ok
+    else
+      receive do
+      after
+        10 -> assert_persistent_state(bus_pid, subscription_id, predicate, attempts - 1)
+      end
     end
   end
 

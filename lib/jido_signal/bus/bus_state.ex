@@ -32,6 +32,9 @@ defmodule Jido.Signal.Bus.State do
               journal_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               journal_owned?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               async_calls: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              publish_queue: Zoi.default(Zoi.any(), :queue.new()) |> Zoi.optional(),
+              publish_task_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
+              publish_task_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
               partition_supervisor: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               partition_supervisor_monitor_ref:
@@ -82,6 +85,9 @@ defmodule Jido.Signal.Bus.State do
       journal_pid: Keyword.get(opts, :journal_pid),
       journal_owned?: Keyword.get(opts, :journal_owned?, false),
       async_calls: Keyword.get(opts, :async_calls, %{}),
+      publish_queue: Keyword.get(opts, :publish_queue, :queue.new()),
+      publish_task_ref: Keyword.get(opts, :publish_task_ref),
+      publish_task_pid: Keyword.get(opts, :publish_task_pid),
       partition_count: Keyword.get(opts, :partition_count, 1),
       partition_supervisor: Keyword.get(opts, :partition_supervisor),
       partition_supervisor_monitor_ref: Keyword.get(opts, :partition_supervisor_monitor_ref),
@@ -118,33 +124,8 @@ defmodule Jido.Signal.Bus.State do
         # Create list of {uuid, signal} tuples
         uuid_signal_pairs = Enum.zip(uuids, signals)
 
-        new_log =
-          uuid_signal_pairs
-          |> Enum.reduce(state.log, fn {uuid, signal}, acc ->
-            # Use the UUID as the key for the signal
-            Map.put(acc, uuid, signal)
-          end)
-
-        # Auto-truncate if exceeds max size
-        {final_log, truncated_count} =
-          if map_size(new_log) > state.max_log_size do
-            truncated = truncate_to_size(new_log, state.max_log_size)
-            {truncated, map_size(new_log) - state.max_log_size}
-          else
-            {new_log, 0}
-          end
-
-        # Emit telemetry if truncation occurred
-        if truncated_count > 0 do
-          Telemetry.execute(
-            [:jido, :signal, :bus, :log_truncated],
-            %{removed_count: truncated_count},
-            %{bus_name: state.name, new_size: state.max_log_size}
-          )
-        end
-
         # Return the uuid -> signal pairs so callers can build their own mappings
-        {:ok, %{state | log: final_log}, uuid_signal_pairs}
+        {:ok, merge_uuid_signal_pairs(state, uuid_signal_pairs), uuid_signal_pairs}
       rescue
         e in KeyError ->
           {:error,
@@ -157,12 +138,47 @@ defmodule Jido.Signal.Bus.State do
     end
   end
 
+  @doc """
+  Merges preassigned `{log_id, signal}` pairs into the bus log while enforcing `max_log_size`.
+  """
+  @spec merge_uuid_signal_pairs(t(), [{String.t(), Signal.t()}]) :: t()
+  def merge_uuid_signal_pairs(%__MODULE__{} = state, uuid_signal_pairs)
+      when is_list(uuid_signal_pairs) do
+    new_log =
+      Enum.reduce(uuid_signal_pairs, state.log, fn {uuid, signal}, acc ->
+        Map.put(acc, uuid, signal)
+      end)
+
+    {final_log, truncated_count} = maybe_truncate_log(new_log, state.max_log_size)
+    emit_truncation_telemetry(state, truncated_count)
+    %{state | log: final_log}
+  end
+
   # Truncates log to max_size, keeping the most recent entries (UUID7 is time-ordered)
   defp truncate_to_size(log, max_size) do
     log
     |> Enum.sort_by(fn {key, _signal} -> key end)
     |> Enum.take(-max_size)
     |> Map.new()
+  end
+
+  defp maybe_truncate_log(log, max_size) do
+    if map_size(log) > max_size do
+      truncated = truncate_to_size(log, max_size)
+      {truncated, map_size(log) - max_size}
+    else
+      {log, 0}
+    end
+  end
+
+  defp emit_truncation_telemetry(_state, 0), do: :ok
+
+  defp emit_truncation_telemetry(state, truncated_count) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :log_truncated],
+      %{removed_count: truncated_count},
+      %{bus_name: state.name, new_size: state.max_log_size}
+    )
   end
 
   @doc """

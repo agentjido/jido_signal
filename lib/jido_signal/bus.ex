@@ -336,6 +336,9 @@ defmodule Jido.Signal.Bus do
       journal_pid: journal_pid,
       journal_owned?: journal_owned?,
       async_calls: %{},
+      publish_queue: :queue.new(),
+      publish_task_ref: nil,
+      publish_task_pid: nil,
       partition_count: partition_count,
       partition_supervisor: partition_supervisor,
       partition_supervisor_monitor_ref: nil,
@@ -740,14 +743,7 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_call({:publish, signals}, from, state) do
-    task =
-      Task.Supervisor.async_nolink(
-        Names.task_supervisor(Context.jido_opts(state)),
-        fn -> run_publish_pipeline(state, signals) end
-      )
-
-    async_calls = Map.put(state.async_calls, task.ref, {:publish, from})
-    {:noreply, %{state | async_calls: async_calls}}
+    {:noreply, enqueue_or_start_publish(state, from, signals)}
   end
 
   def handle_call({:replay, path, start_timestamp, opts}, from, state) do
@@ -910,12 +906,15 @@ defmodule Jido.Signal.Bus do
              ) do
         final_state = finalize_publish(new_state, processed_signals, context)
         recorded_signals = build_recorded_signals(uuid_signal_pairs)
-        {:ok, recorded_signals, final_state}
+        {:ok, recorded_signals, final_state.middleware, uuid_signal_pairs}
       end
 
     case result do
-      {:ok, recorded_signals, final_state} -> {:ok, recorded_signals, final_state}
-      {:error, error} -> {:error, error}
+      {:ok, recorded_signals, final_middleware, uuid_signal_pairs} ->
+        {:ok, recorded_signals, final_middleware, uuid_signal_pairs}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -1389,9 +1388,7 @@ defmodule Jido.Signal.Bus do
 
       Map.has_key?(state.async_calls, ref) ->
         {entry, async_calls} = Map.pop(state.async_calls, ref)
-        from = normalize_async_from(entry)
-        GenServer.reply(from, {:error, {:async_task_exit, reason}})
-        {:noreply, %{state | async_calls: async_calls}}
+        {:noreply, handle_async_task_down(entry, async_calls, reason, state)}
 
       ref == state.child_supervisor_monitor_ref ->
         Logger.error("Bus child supervisor exited (#{inspect(pid)}): #{inspect(reason)}")
@@ -1585,9 +1582,11 @@ defmodule Jido.Signal.Bus do
 
   defp handle_async_result({:snapshot_create, from}, async_calls, result, state) do
     case result do
-      {:ok, snapshot_ref, new_state} ->
+      {:ok, snapshot_ref, _new_state} ->
         GenServer.reply(from, {:ok, snapshot_ref})
-        {:noreply, %{new_state | async_calls: async_calls}}
+
+        updated_snapshots = Map.put(state.snapshots, snapshot_ref.id, snapshot_ref)
+        {:noreply, %{state | async_calls: async_calls, snapshots: updated_snapshots}}
 
       {:error, error} ->
         GenServer.reply(
@@ -1601,13 +1600,28 @@ defmodule Jido.Signal.Bus do
 
   defp handle_async_result({:publish, from}, async_calls, result, state) do
     case result do
-      {:ok, recorded_signals, new_state} ->
+      {:ok, recorded_signals, final_middleware, uuid_signal_pairs} ->
         GenServer.reply(from, {:ok, recorded_signals})
-        {:noreply, %{new_state | async_calls: async_calls}}
+
+        next_state =
+          state
+          |> Map.put(:async_calls, async_calls)
+          |> clear_publish_task()
+          |> apply_publish_effects(uuid_signal_pairs, final_middleware)
+          |> maybe_start_next_publish()
+
+        {:noreply, next_state}
 
       {:error, error} ->
         GenServer.reply(from, {:error, error})
-        {:noreply, %{state | async_calls: async_calls}}
+
+        next_state =
+          state
+          |> Map.put(:async_calls, async_calls)
+          |> clear_publish_task()
+          |> maybe_start_next_publish()
+
+        {:noreply, next_state}
     end
   end
 
@@ -1624,6 +1638,70 @@ defmodule Jido.Signal.Bus do
   defp handle_async_result(from, async_calls, result, state) do
     GenServer.reply(from, result)
     {:noreply, %{state | async_calls: async_calls}}
+  end
+
+  defp handle_async_task_down({:publish, from}, async_calls, reason, state) do
+    GenServer.reply(from, {:error, {:async_task_exit, reason}})
+
+    state
+    |> Map.put(:async_calls, async_calls)
+    |> clear_publish_task()
+    |> maybe_start_next_publish()
+  end
+
+  defp handle_async_task_down(entry, async_calls, reason, state) do
+    from = normalize_async_from(entry)
+    GenServer.reply(from, {:error, {:async_task_exit, reason}})
+    %{state | async_calls: async_calls}
+  end
+
+  defp enqueue_or_start_publish(%{publish_task_ref: ref} = state, from, signals)
+       when is_reference(ref) do
+    updated_queue = :queue.in({from, signals}, state.publish_queue)
+    %{state | publish_queue: updated_queue}
+  end
+
+  defp enqueue_or_start_publish(state, from, signals) do
+    start_publish_task(state, from, signals)
+  end
+
+  defp start_publish_task(state, from, signals) do
+    task =
+      Task.Supervisor.async_nolink(
+        Names.task_supervisor(Context.jido_opts(state)),
+        fn -> run_publish_pipeline(state, signals) end
+      )
+
+    async_calls = Map.put(state.async_calls, task.ref, {:publish, from})
+
+    %{
+      state
+      | async_calls: async_calls,
+        publish_task_ref: task.ref,
+        publish_task_pid: task.pid
+    }
+  end
+
+  defp clear_publish_task(state) do
+    %{state | publish_task_ref: nil, publish_task_pid: nil}
+  end
+
+  defp maybe_start_next_publish(state) do
+    case :queue.out(state.publish_queue) do
+      {{:value, {from, signals}}, remaining_queue} ->
+        state
+        |> Map.put(:publish_queue, remaining_queue)
+        |> start_publish_task(from, signals)
+
+      {:empty, queue} ->
+        %{state | publish_queue: queue}
+    end
+  end
+
+  defp apply_publish_effects(state, uuid_signal_pairs, final_middleware) do
+    state
+    |> BusState.merge_uuid_signal_pairs(uuid_signal_pairs)
+    |> Map.put(:middleware, final_middleware)
   end
 
   defp normalize_start_error(

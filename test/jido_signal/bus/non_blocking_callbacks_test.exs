@@ -68,6 +68,33 @@ defmodule Jido.Signal.Bus.NonBlockingCallbacksTest do
     end
   end
 
+  defmodule BlockingStatefulPublishMiddleware do
+    @behaviour Middleware
+
+    @impl true
+    def init(opts) do
+      test_pid = Keyword.fetch!(opts, :test_pid)
+      {:ok, %{test_pid: test_pid, publish_count: 0}}
+    end
+
+    @impl true
+    def before_publish([signal | _] = signals, _context, state) do
+      next_count = state.publish_count + 1
+      tag = Map.get(signal.data, :tag)
+      send(state.test_pid, {:stateful_before_publish, next_count, tag, self()})
+      updated_state = %{state | publish_count: next_count}
+
+      if Map.get(signal.data, :block?, false) do
+        receive do
+          {:release_stateful_publish, ^tag} ->
+            {:cont, signals, updated_state}
+        end
+      else
+        {:cont, signals, updated_state}
+      end
+    end
+  end
+
   defmodule BlockingCheckpointAdapter do
     def init do
       test_pid = Application.fetch_env!(:jido_signal, :blocking_checkpoint_test_pid)
@@ -156,6 +183,45 @@ defmodule Jido.Signal.Bus.NonBlockingCallbacksTest do
     end
 
     assert_receive {:publish_result, {:ok, [_recorded_signal]}}, 1_000
+  end
+
+  test "concurrent publish operations preserve middleware state progression" do
+    bus_name = :"non_blocking_stateful_publish_#{System.unique_integer([:positive])}"
+
+    start_supervised!(
+      {Bus,
+       name: bus_name,
+       middleware_timeout_ms: 5_000,
+       middleware: [{BlockingStatefulPublishMiddleware, test_pid: self()}]}
+    )
+
+    first_signal =
+      Signal.new!(
+        type: "test.stateful.publish",
+        source: "/test",
+        data: %{value: 1, tag: :first, block?: true}
+      )
+
+    second_signal =
+      Signal.new!(type: "test.stateful.publish", source: "/test", data: %{value: 2, tag: :second})
+
+    parent = self()
+
+    spawn(fn ->
+      send(parent, {:publish_result, :first, Bus.publish(bus_name, [first_signal])})
+    end)
+
+    assert_receive {:stateful_before_publish, 1, :first, middleware_pid}, 1_000
+
+    spawn(fn ->
+      send(parent, {:publish_result, :second, Bus.publish(bus_name, [second_signal])})
+    end)
+
+    send(middleware_pid, {:release_stateful_publish, :first})
+
+    assert_receive {:stateful_before_publish, 2, :second, _middleware_pid}, 1_000
+    assert_receive {:publish_result, :first, {:ok, [_recorded_signal]}}, 1_000
+    assert_receive {:publish_result, :second, {:ok, [_recorded_signal]}}, 1_000
   end
 
   test "partition callback stays responsive while dispatch middleware is blocked" do
