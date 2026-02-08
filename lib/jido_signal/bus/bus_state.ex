@@ -21,6 +21,7 @@ defmodule Jido.Signal.Bus.State do
               jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               router: Zoi.any(),
               log: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              log_order: Zoi.default(Zoi.any(), :queue.new()) |> Zoi.optional(),
               snapshots: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               bus_supervisor: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
@@ -33,6 +34,7 @@ defmodule Jido.Signal.Bus.State do
               journal_owned?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               async_calls: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               publish_queue: Zoi.default(Zoi.any(), :queue.new()) |> Zoi.optional(),
+              max_publish_queue_len: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
               publish_task_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
               publish_task_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
@@ -68,6 +70,8 @@ defmodule Jido.Signal.Bus.State do
   @spec new(atom(), keyword()) :: t()
   def new(name, opts \\ []) do
     router = Keyword.get_lazy(opts, :router, fn -> Router.new!() end)
+    log = Keyword.get(opts, :log, %{})
+    log_order = Keyword.get(opts, :log_order, build_log_order(log))
 
     %__MODULE__{
       name: name,
@@ -76,7 +80,8 @@ defmodule Jido.Signal.Bus.State do
       bus_supervisor: Keyword.get(opts, :bus_supervisor),
       child_supervisor: Keyword.get(opts, :child_supervisor),
       child_supervisor_monitor_ref: Keyword.get(opts, :child_supervisor_monitor_ref),
-      log: Keyword.get(opts, :log, %{}),
+      log: log,
+      log_order: log_order,
       snapshots: Keyword.get(opts, :snapshots, %{}),
       subscriptions: Keyword.get(opts, :subscriptions, %{}),
       middleware: Keyword.get(opts, :middleware, []),
@@ -86,6 +91,7 @@ defmodule Jido.Signal.Bus.State do
       journal_owned?: Keyword.get(opts, :journal_owned?, false),
       async_calls: Keyword.get(opts, :async_calls, %{}),
       publish_queue: Keyword.get(opts, :publish_queue, :queue.new()),
+      max_publish_queue_len: Keyword.get(opts, :max_publish_queue_len, 10_000),
       publish_task_ref: Keyword.get(opts, :publish_task_ref),
       publish_task_pid: Keyword.get(opts, :publish_task_pid),
       partition_count: Keyword.get(opts, :partition_count, 1),
@@ -144,30 +150,52 @@ defmodule Jido.Signal.Bus.State do
   @spec merge_uuid_signal_pairs(t(), [{String.t(), Signal.t()}]) :: t()
   def merge_uuid_signal_pairs(%__MODULE__{} = state, uuid_signal_pairs)
       when is_list(uuid_signal_pairs) do
-    new_log =
-      Enum.reduce(uuid_signal_pairs, state.log, fn {uuid, signal}, acc ->
-        Map.put(acc, uuid, signal)
+    base_order = normalized_log_order(state.log, state.log_order)
+
+    {new_log, new_order} =
+      Enum.reduce(uuid_signal_pairs, {state.log, base_order}, fn {uuid, signal}, {log, order} ->
+        {Map.put(log, uuid, signal), :queue.in(uuid, order)}
       end)
 
-    {final_log, truncated_count} = maybe_truncate_log(new_log, state.max_log_size)
+    {final_log, final_order, truncated_count} =
+      maybe_truncate_log(new_log, new_order, state.max_log_size)
+
     emit_truncation_telemetry(state, truncated_count)
-    %{state | log: final_log}
+    %{state | log: final_log, log_order: final_order}
   end
 
-  # Truncates log to max_size, keeping the most recent entries (UUID7 is time-ordered)
-  defp truncate_to_size(log, max_size) do
-    log
-    |> Enum.sort_by(fn {key, _signal} -> key end)
-    |> Enum.take(-max_size)
-    |> Map.new()
-  end
+  # Truncates log to max_size by evicting from insertion order.
+  defp maybe_truncate_log(log, order, max_size) do
+    excess = map_size(log) - max_size
 
-  defp maybe_truncate_log(log, max_size) do
-    if map_size(log) > max_size do
-      truncated = truncate_to_size(log, max_size)
-      {truncated, map_size(log) - max_size}
+    if excess > 0 do
+      drop_oldest_entries(log, order, excess, 0)
     else
-      {log, 0}
+      {log, order, 0}
+    end
+  end
+
+  defp drop_oldest_entries(log, order, target_drop_count, dropped_count)
+       when dropped_count >= target_drop_count do
+    {log, order, dropped_count}
+  end
+
+  defp drop_oldest_entries(log, order, target_drop_count, dropped_count) do
+    case :queue.out(order) do
+      {{:value, oldest_id}, next_order} ->
+        if Map.has_key?(log, oldest_id) do
+          drop_oldest_entries(
+            Map.delete(log, oldest_id),
+            next_order,
+            target_drop_count,
+            dropped_count + 1
+          )
+        else
+          drop_oldest_entries(log, next_order, target_drop_count, dropped_count)
+        end
+
+      {:empty, next_order} ->
+        {log, next_order, dropped_count}
     end
   end
 
@@ -218,8 +246,18 @@ defmodule Jido.Signal.Bus.State do
       # No truncation needed
       {:ok, state}
     else
-      {:ok, %{state | log: truncate_to_size(state.log, max_size)}}
+      log_order = normalized_log_order(state.log, state.log_order)
+      {log, log_order, _dropped} = maybe_truncate_log(state.log, log_order, max_size)
+      {:ok, %{state | log: log, log_order: log_order}}
     end
+  end
+
+  @doc """
+  Ensures `log_order` is aligned with the current `log` contents.
+  """
+  @spec sync_log_order(t()) :: t()
+  def sync_log_order(%__MODULE__{} = state) do
+    %{state | log_order: normalized_log_order(state.log, state.log_order)}
   end
 
   @doc """
@@ -227,7 +265,7 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec clear_log(t()) :: {:ok, t()}
   def clear_log(%__MODULE__{} = state) do
-    {:ok, %{state | log: %{}}}
+    {:ok, %{state | log: %{}, log_order: :queue.new()}}
   end
 
   @doc """
@@ -385,5 +423,32 @@ defmodule Jido.Signal.Bus.State do
       # Let the Router's path matching handle wildcards
       match: nil
     }
+  end
+
+  defp build_log_order(log) when is_map(log) do
+    log
+    |> Map.keys()
+    |> Enum.sort()
+    |> :queue.from_list()
+  end
+
+  defp normalized_log_order(log, order) when is_map(log) do
+    target_size = map_size(log)
+
+    cond do
+      target_size == 0 ->
+        :queue.new()
+
+      not is_tuple(order) ->
+        build_log_order(log)
+
+      :queue.len(order) < target_size ->
+        build_log_order(log)
+
+      true ->
+        order
+    end
+  rescue
+    _ -> build_log_order(log)
   end
 end

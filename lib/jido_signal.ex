@@ -139,6 +139,7 @@ defmodule Jido.Signal do
 
   import Jido.Signal.Ext.Registry, only: [get: 1]
 
+  alias Jido.Signal.Config
   alias Jido.Signal.Error
   alias Jido.Signal.Ext
   alias Jido.Signal.ID
@@ -366,20 +367,11 @@ defmodule Jido.Signal do
   end
 
   def new(attrs) when is_map(attrs) do
-    caller =
-      self()
-      |> Process.info(:current_stacktrace)
-      |> elem(1)
-      |> Enum.find(fn {mod, _fun, _arity, _info} ->
-        mod_str = to_string(mod)
-        mod_str != "Elixir.Jido.Signal" and mod_str != "Elixir.Process"
-      end)
-      |> elem(0)
-      |> to_string()
+    default_source = Config.get_env(:default_signal_source, "Jido.Signal")
 
     defaults = %{
       "id" => ID.generate!(),
-      "source" => caller,
+      "source" => default_source,
       "specversion" => "1.0.2",
       "time" => DateTime.utc_now() |> DateTime.to_iso8601()
     }

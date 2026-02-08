@@ -88,7 +88,23 @@ defmodule Jido.Signal.Journal.Adapters.ETSDLQQueryTest do
 
     {:ok, []} = ETS.get_dlq_entries(subscription_id, pid)
 
-    assert [{^subscription_id, ^entry_id}] =
-             :ets.lookup(adapter.dlq_subscription_index_table, subscription_id)
+    assert_eventually(fn ->
+      :ets.lookup(adapter.dlq_subscription_index_table, subscription_id) == []
+    end)
+  end
+
+  defp assert_eventually(fun, attempts \\ 20)
+
+  defp assert_eventually(fun, attempts) when attempts <= 0 do
+    assert fun.()
+  end
+
+  defp assert_eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(fun, attempts - 1)
+    end
   end
 end

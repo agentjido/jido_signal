@@ -2,6 +2,7 @@ defmodule JidoTest.SignalTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
+  alias Jido.Signal.Config
 
   # Simple test extension for testing extension API
   defmodule TestExtension do
@@ -17,11 +18,12 @@ defmodule JidoTest.SignalTest do
   describe "new/1" do
     test "creates a signal with default id and source" do
       {:ok, signal} = Signal.new(%{type: "example.event"})
+      expected_source = Config.get_env(:default_signal_source, "Jido.Signal")
 
       assert is_binary(signal.id)
       # UUID length
       assert String.length(signal.id) == 36
-      assert signal.source == "Elixir.JidoTest.SignalTest"
+      assert signal.source == expected_source
       assert signal.type == "example.event"
     end
 

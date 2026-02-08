@@ -19,13 +19,13 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
       refute Map.has_key?(Map.from_struct(partition_state), :bus_pid)
     end
 
-    test "partition process traps exits for supervised lifecycle cleanup" do
+    test "partition process does not trap exits by default" do
       bus_name = :"test-bus-trap-exit-#{:erlang.unique_integer([:positive])}"
       start_supervised!({Bus, name: bus_name, partition_count: 2})
 
       partition_pid = GenServer.whereis(Partition.via_tuple(bus_name, 0))
       assert is_pid(partition_pid)
-      assert {:trap_exit, true} == Process.info(partition_pid, :trap_exit)
+      assert {:trap_exit, false} == Process.info(partition_pid, :trap_exit)
     end
   end
 

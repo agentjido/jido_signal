@@ -152,6 +152,31 @@ defmodule Jido.Signal.Names do
   end
 
   @doc """
+  Returns the SnapshotStore name for the given instance scope.
+
+  ## Examples
+
+      iex> Jido.Signal.Names.snapshot_store([])
+      Jido.Signal.Bus.SnapshotStore
+
+      iex> Jido.Signal.Names.snapshot_store(jido: MyApp.Jido)
+      MyApp.Jido.Signal.Bus.SnapshotStore
+
+  """
+  @spec snapshot_store(opts()) :: atom()
+  def snapshot_store(opts) do
+    scoped(opts, Jido.Signal.Bus.SnapshotStore)
+  end
+
+  @doc """
+  Returns the Router cache managed monitor name for the given instance scope.
+  """
+  @spec router_cache_monitor(opts()) :: atom()
+  def router_cache_monitor(opts) do
+    scoped(opts, Jido.Signal.Router.Cache.ManagedMonitor)
+  end
+
+  @doc """
   Resolves a module name based on instance scope.
 
   When `jido:` option is nil or not present, returns the default module.
@@ -205,13 +230,9 @@ defmodule Jido.Signal.Names do
 
     case Process.whereis(supervisor_name) do
       pid when is_pid(pid) ->
-        if Process.alive?(pid) do
-          # Self-heal transient registration drift when runtime is demonstrably alive.
-          :ok = register_instance(instance)
-          true
-        else
-          false
-        end
+        # Self-heal transient registration drift when runtime is demonstrably alive.
+        :ok = register_instance(instance)
+        is_pid(pid)
 
       _ ->
         false

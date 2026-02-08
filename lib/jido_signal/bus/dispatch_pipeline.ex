@@ -2,6 +2,7 @@ defmodule Jido.Signal.Bus.DispatchPipeline do
   @moduledoc false
 
   alias Jido.Signal.Bus.MiddlewarePipeline
+  alias Jido.Signal.Config
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Telemetry
 
@@ -187,14 +188,18 @@ defmodule Jido.Signal.Bus.DispatchPipeline do
   end
 
   defp base_metadata(bus_name, signal, subscription_id, subscription) do
-    %{
+    base = %{
       bus_name: bus_name,
       signal_id: signal.id,
       signal_type: signal.type,
       subscription_id: subscription_id,
-      subscription_path: subscription.path,
-      signal: signal,
-      subscription: subscription
+      subscription_path: subscription.path
     }
+
+    if Config.get_env(:telemetry_include_payload, false) do
+      Map.merge(base, %{signal: signal, subscription: subscription})
+    else
+      base
+    end
   end
 end

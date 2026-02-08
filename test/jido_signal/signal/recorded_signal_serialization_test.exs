@@ -19,7 +19,7 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
         signal: signal
       }
 
-      json = RecordedSignal.serialize(recorded)
+      {:ok, json} = RecordedSignal.serialize(recorded)
       assert is_binary(json)
 
       decoded = Jason.decode!(json)
@@ -50,7 +50,7 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
         }
       ]
 
-      json = RecordedSignal.serialize(records)
+      {:ok, json} = RecordedSignal.serialize(records)
       assert is_binary(json)
 
       decoded = Jason.decode!(json)
@@ -161,7 +161,7 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
         signal: signal
       }
 
-      json = RecordedSignal.serialize(original)
+      {:ok, json} = RecordedSignal.serialize(original)
       {:ok, deserialized} = RecordedSignal.deserialize(json)
 
       assert deserialized.id == original.id
@@ -198,7 +198,7 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
         }
       ]
 
-      json = RecordedSignal.serialize(originals)
+      {:ok, json} = RecordedSignal.serialize(originals)
       {:ok, deserialized} = RecordedSignal.deserialize(json)
 
       assert length(deserialized) == length(originals)

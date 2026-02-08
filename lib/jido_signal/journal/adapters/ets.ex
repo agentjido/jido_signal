@@ -526,6 +526,16 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   end
 
   @impl GenServer
+  def handle_info({:cleanup_dlq_index_entry, subscription_id, entry_id}, adapter) do
+    _ = delete_dlq_index_entry(adapter, subscription_id, entry_id)
+    {:noreply, adapter}
+  end
+
+  def handle_info(_message, adapter) do
+    {:noreply, adapter}
+  end
+
+  @impl GenServer
   def terminate(_reason, adapter) do
     clear_cached_table_refs(self())
     delete_tables(adapter)
@@ -568,8 +578,26 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
     :ok
   catch
     :error, :badarg ->
-      # Direct-read callers can hit protected tables from non-owner processes.
+      maybe_enqueue_index_cleanup(adapter, subscription_id, entry_id)
       :ok
+  end
+
+  defp maybe_enqueue_index_cleanup(
+         %{dlq_subscription_index_table: nil},
+         _subscription_id,
+         _entry_id
+       ),
+       do: :ok
+
+  defp maybe_enqueue_index_cleanup(adapter, subscription_id, entry_id) do
+    case :ets.info(adapter.dlq_subscription_index_table, :owner) do
+      owner when is_pid(owner) ->
+        send(owner, {:cleanup_dlq_index_entry, subscription_id, entry_id})
+        :ok
+
+      _ ->
+        :ok
+    end
   end
 
   defp maybe_limit_entries(entries, :infinity), do: entries

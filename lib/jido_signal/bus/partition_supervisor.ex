@@ -9,7 +9,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
 
   alias Jido.Signal.Bus.Partition
   alias Jido.Signal.Names
-  alias Jido.Signal.Retry
+  alias Jido.Signal.OTP
 
   @doc """
   Starts the partition supervisor.
@@ -28,11 +28,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
     bus_name = Keyword.fetch!(opts, :bus_name)
     name = via_tuple(bus_name, opts)
 
-    Retry.until(3, fn -> do_start_link(opts, name) end,
-      delay_ms: 10,
-      factor: 1.0,
-      on_exhausted: {:error, :name_conflict}
-    )
+    OTP.start_link_with_retry(fn -> do_start_link(opts, name) end)
   end
 
   defp do_start_link(opts, name) do
@@ -41,7 +37,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
         {:ok, pid}
 
       {:error, {:already_started, pid}} when is_pid(pid) ->
-        if Process.alive?(pid), do: {:ok, pid}, else: :retry
+        {:ok, pid}
 
       other ->
         other

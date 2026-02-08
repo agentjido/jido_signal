@@ -51,6 +51,7 @@ defmodule Jido.Signal.Dispatch.Http do
   @behaviour Jido.Signal.Dispatch.Adapter
 
   alias Jido.Signal.Dispatch.CircuitBreaker
+  alias Jido.Signal.Error
 
   require Logger
 
@@ -174,7 +175,8 @@ defmodule Jido.Signal.Dispatch.Http do
 
   # Private Helpers
 
-  defp validate_url(nil), do: {:error, "url is required"}
+  defp validate_url(nil),
+    do: invalid_opts_error("url is required", %{field: :url, reason: :required})
 
   defp validate_url(url) when is_binary(url) do
     case URI.parse(url) do
@@ -183,30 +185,56 @@ defmodule Jido.Signal.Dispatch.Http do
         {:ok, url}
 
       _ ->
-        {:error, "invalid url: #{url} - must be an HTTP or HTTPS URL"}
+        invalid_opts_error("invalid url", %{field: :url, value: url, reason: :invalid_url})
     end
   end
 
-  defp validate_url(invalid), do: {:error, "url must be a string, got: #{inspect(invalid)}"}
+  defp validate_url(invalid),
+    do:
+      invalid_opts_error("url must be a string", %{
+        field: :url,
+        value: invalid,
+        reason: :invalid_type
+      })
 
   defp validate_method(method) when method in @valid_methods, do: {:ok, method}
-  defp validate_method(invalid), do: {:error, "invalid method: #{inspect(invalid)}"}
+
+  defp validate_method(invalid),
+    do:
+      invalid_opts_error("invalid method", %{
+        field: :method,
+        value: invalid,
+        reason: :invalid_method
+      })
 
   defp validate_headers(headers) when is_list(headers) do
     if Enum.all?(headers, &valid_header?/1) do
       {:ok, headers}
     else
-      {:error, "invalid headers format"}
+      invalid_opts_error("invalid headers format", %{field: :headers, reason: :invalid_headers})
     end
   end
 
-  defp validate_headers(invalid), do: {:error, "headers must be a list, got: #{inspect(invalid)}"}
+  defp validate_headers(invalid),
+    do:
+      invalid_opts_error("headers must be a list", %{
+        field: :headers,
+        value: invalid,
+        reason: :invalid_type
+      })
 
   defp valid_header?({key, value}) when is_binary(key) and is_binary(value), do: true
   defp valid_header?(_), do: false
 
   defp validate_timeout(timeout) when is_integer(timeout) and timeout > 0, do: {:ok, timeout}
-  defp validate_timeout(_), do: {:error, "timeout must be a positive integer"}
+
+  defp validate_timeout(invalid),
+    do:
+      invalid_opts_error("timeout must be a positive integer", %{
+        field: :timeout,
+        value: invalid,
+        reason: :invalid_timeout
+      })
 
   defp validate_retry(%{} = retry) do
     with {:ok, max_attempts} <- validate_positive_integer(retry.max_attempts, :max_attempts),
@@ -221,13 +249,24 @@ defmodule Jido.Signal.Dispatch.Http do
     end
   end
 
-  defp validate_retry(invalid), do: {:error, "invalid retry configuration: #{inspect(invalid)}"}
+  defp validate_retry(invalid),
+    do:
+      invalid_opts_error("invalid retry configuration", %{
+        field: :retry,
+        value: invalid,
+        reason: :invalid_retry
+      })
 
   defp validate_positive_integer(value, _field) when is_integer(value) and value > 0,
     do: {:ok, value}
 
   defp validate_positive_integer(invalid, field),
-    do: {:error, "#{field} must be a positive integer, got: #{inspect(invalid)}"}
+    do:
+      invalid_opts_error("#{field} must be a positive integer", %{
+        field: field,
+        value: invalid,
+        reason: :invalid_positive_integer
+      })
 
   defp do_request_with_retry(method, url, headers, body, timeout, retry_config, attempt \\ 1) do
     case do_request(method, url, headers, body, timeout) do
@@ -277,5 +316,9 @@ defmodule Jido.Signal.Dispatch.Http do
   defp calculate_delay(attempt, %{base_delay: base_delay, max_delay: max_delay}) do
     delay = trunc(base_delay * :math.pow(2, attempt - 1))
     min(delay, max_delay)
+  end
+
+  defp invalid_opts_error(message, details) do
+    {:error, Error.validation_error(message, details)}
   end
 end

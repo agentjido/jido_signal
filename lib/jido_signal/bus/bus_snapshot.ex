@@ -38,13 +38,12 @@ defmodule Jido.Signal.Bus.Snapshot do
   {:ok, new_state} = Snapshot.cleanup(state, fn ref -> ref.path == "user.created" end)
   ```
   """
+  alias Jido.Signal.Bus.SnapshotStore
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.ID
 
   require Logger
-
-  @snapshot_table :jido_signal_bus_snapshots
 
   defmodule SnapshotRef do
     @moduledoc """
@@ -171,7 +170,7 @@ defmodule Jido.Signal.Bus.Snapshot do
         }
 
         # Store the full data in ETS
-        :ok = put_snapshot_data(id, snapshot_data)
+        :ok = put_snapshot_data(state, id, snapshot_data)
 
         # Store only the reference in the state
         new_state = %{state | snapshots: Map.put(state.snapshots, id, snapshot_ref)}
@@ -223,7 +222,7 @@ defmodule Jido.Signal.Bus.Snapshot do
           {:ok, SnapshotData.t()} | {:error, :not_found | :snapshot_read_failed}
   def read(state, snapshot_id) do
     with {:ok, _ref} <- Map.fetch(state.snapshots, snapshot_id),
-         {:ok, data} <- get_snapshot_data(snapshot_id) do
+         {:ok, data} <- get_snapshot_data(state, snapshot_id) do
       {:ok, data}
     else
       :error ->
@@ -254,8 +253,7 @@ defmodule Jido.Signal.Bus.Snapshot do
   def delete(state, snapshot_id) do
     case Map.has_key?(state.snapshots, snapshot_id) do
       true ->
-        # Remove from ETS
-        :ok = delete_snapshot_data(snapshot_id)
+        :ok = delete_snapshot_data(state, snapshot_id)
         # Remove reference from state
         new_state = %{state | snapshots: Map.delete(state.snapshots, snapshot_id)}
         {:ok, new_state}
@@ -281,17 +279,23 @@ defmodule Jido.Signal.Bus.Snapshot do
   """
   @spec cleanup(BusState.t()) :: {:ok, BusState.t()} | {:error, :snapshot_cleanup_failed}
   def cleanup(state) do
-    # Delete all snapshots from ETS
     Enum.each(state.snapshots, fn {id, _ref} ->
-      :ok = delete_snapshot_data(id)
+      :ok = delete_snapshot_data(state, id)
     end)
 
-    # Return state with empty snapshots map
     {:ok, %{state | snapshots: %{}}}
   rescue
     error ->
       Logger.error("Error cleaning up snapshots: #{Exception.message(error)}")
       {:error, :snapshot_cleanup_failed}
+  end
+
+  @doc """
+  Removes all snapshot payloads for a specific bus scope from the store.
+  """
+  @spec cleanup_bus(BusState.t()) :: :ok
+  def cleanup_bus(%BusState{name: bus_name, jido: jido}) do
+    SnapshotStore.delete_bus(bus_name, jido)
   end
 
   @doc """
@@ -310,20 +314,16 @@ defmodule Jido.Signal.Bus.Snapshot do
   @spec cleanup(BusState.t(), (SnapshotRef.t() -> boolean())) ::
           {:ok, BusState.t()} | {:error, :snapshot_cleanup_failed}
   def cleanup(state, filter_fn) when is_function(filter_fn, 1) do
-    # Find snapshots to remove based on the filter
     {to_remove, to_keep} =
       state.snapshots
       |> Enum.split_with(fn {_id, ref} -> filter_fn.(ref) end)
 
-    # Delete filtered snapshots from ETS
     Enum.each(to_remove, fn {id, _ref} ->
-      :ok = delete_snapshot_data(id)
+      :ok = delete_snapshot_data(state, id)
     end)
 
-    # Create new snapshots map with only the kept snapshots
     new_snapshots = Map.new(to_keep)
 
-    # Return state with updated snapshots map
     {:ok, %{state | snapshots: new_snapshots}}
   rescue
     error ->
@@ -333,54 +333,19 @@ defmodule Jido.Signal.Bus.Snapshot do
 
   # Private Helpers
 
-  @spec get_snapshot_data(String.t()) :: {:ok, SnapshotData.t()} | :error
-  defp get_snapshot_data(snapshot_id) do
-    case :ets.lookup(ensure_snapshot_table(), snapshot_key(snapshot_id)) do
-      [{_key, data}] -> {:ok, data}
-      [] -> :error
-    end
-  catch
-    :error, :badarg -> :error
+  @spec get_snapshot_data(BusState.t(), String.t()) :: {:ok, SnapshotData.t()} | :error
+  defp get_snapshot_data(%BusState{name: bus_name, jido: jido}, snapshot_id) do
+    SnapshotStore.get(bus_name, jido, snapshot_id)
   end
 
-  defp put_snapshot_data(snapshot_id, snapshot_data) do
-    true = :ets.insert(ensure_snapshot_table(), {snapshot_key(snapshot_id), snapshot_data})
-    :ok
-  end
-
-  defp delete_snapshot_data(snapshot_id) do
-    :ets.delete(ensure_snapshot_table(), snapshot_key(snapshot_id))
-    :ok
-  end
-
-  defp snapshot_key(snapshot_id), do: snapshot_id
-
-  defp ensure_snapshot_table do
-    case :ets.whereis(@snapshot_table) do
-      :undefined ->
-        try do
-          :ets.new(@snapshot_table, [
-            :named_table,
-            :set,
-            :public,
-            {:heir, snapshot_table_heir(), :snapshot_table},
-            {:read_concurrency, true},
-            {:write_concurrency, true}
-          ])
-        rescue
-          ArgumentError ->
-            @snapshot_table
-        end
-
-      table ->
-        table
+  defp put_snapshot_data(%BusState{name: bus_name, jido: jido}, snapshot_id, snapshot_data) do
+    case SnapshotStore.put(bus_name, jido, snapshot_id, snapshot_data) do
+      :ok -> :ok
+      {:error, reason} -> raise "snapshot_store_put_failed: #{inspect(reason)}"
     end
   end
 
-  defp snapshot_table_heir do
-    case Process.whereis(Jido.Signal.Supervisor) do
-      pid when is_pid(pid) -> pid
-      _ -> self()
-    end
+  defp delete_snapshot_data(%BusState{name: bus_name, jido: jido}, snapshot_id) do
+    :ok = SnapshotStore.delete(bus_name, jido, snapshot_id)
   end
 end

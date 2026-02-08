@@ -95,7 +95,7 @@ defmodule Jido.Signal.Journal do
     |> fetch_signals_async(journal)
     |> Stream.map(fn {:ok, signal} -> signal end)
     |> Stream.reject(&is_nil/1)
-    |> Enum.sort_by(& &1.time, &sort_time_compare/2)
+    |> Enum.sort_by(&{&1.time, &1.id})
   end
 
   defp fetch_signals_async(signal_ids, journal) do
@@ -215,7 +215,7 @@ defmodule Jido.Signal.Journal do
     # A real implementation would push filtering down to the persistence layer
     get_all_signals(journal)
     |> Enum.filter(&matches_criteria?(&1, opts))
-    |> Enum.sort_by(& &1.time, &sort_time_compare/2)
+    |> Enum.sort_by(&{&1.time, &1.id})
   end
 
   # Private helpers
@@ -384,14 +384,5 @@ defmodule Jido.Signal.Journal do
 
   defp time_compare(%DateTime{} = time1, %DateTime{} = time2) do
     DateTime.compare(time1, time2)
-  end
-
-  # Sorting comparison function
-  defp sort_time_compare(time1, time2) do
-    case time_compare(time1, time2) do
-      :lt -> true
-      :eq -> true
-      :gt -> false
-    end
   end
 end

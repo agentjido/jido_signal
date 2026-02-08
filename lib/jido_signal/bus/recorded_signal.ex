@@ -8,6 +8,7 @@ defmodule Jido.Signal.Bus.RecordedSignal do
   - `log_id` is the canonical journal/log entry identity.
   - `id` is kept as a backwards-compatible alias of `log_id`.
   """
+  alias Jido.Signal.Error
   alias Jido.Signal.Serialization.JsonSerializer
 
   @derive {Jason.Encoder, only: [:id, :log_id, :type, :created_at, :signal]}
@@ -60,19 +61,22 @@ defmodule Jido.Signal.Bus.RecordedSignal do
       iex> is_binary(json)
       true
   """
-  @spec serialize(t() | list(t())) :: binary()
+  @spec serialize(t() | list(t())) :: {:ok, binary()} | {:error, Error.t()}
   def serialize(%__MODULE__{} = recorded_signal) do
-    case JsonSerializer.serialize(recorded_signal) do
-      {:ok, binary} -> binary
-      {:error, reason} -> raise "Serialization failed: #{inspect(reason)}"
-    end
+    normalize_serialization_result(JsonSerializer.serialize(recorded_signal))
   end
 
   def serialize(recorded_signals) when is_list(recorded_signals) do
-    case JsonSerializer.serialize(recorded_signals) do
-      {:ok, binary} -> binary
-      {:error, reason} -> raise "Serialization failed: #{inspect(reason)}"
-    end
+    normalize_serialization_result(JsonSerializer.serialize(recorded_signals))
+  end
+
+  @doc """
+  Serializes a RecordedSignal or list, raising on failure.
+  """
+  @spec serialize!(t() | list(t())) :: binary()
+  def serialize!(recorded_signal_or_list) do
+    {:ok, binary} = serialize(recorded_signal_or_list)
+    binary
   end
 
   @doc """
@@ -153,5 +157,14 @@ defmodule Jido.Signal.Bus.RecordedSignal do
       created_at: created_at,
       signal: signal
     }
+  end
+
+  defp normalize_serialization_result({:ok, binary}), do: {:ok, binary}
+
+  defp normalize_serialization_result({:error, reason}) do
+    {:error,
+     Error.execution_error("RecordedSignal serialization failed", %{
+       reason: reason
+     })}
   end
 end

@@ -293,7 +293,7 @@ defmodule Jido.Signal.Dispatch do
         configs,
         fn config -> dispatch_single(signal, config) end,
         max_concurrency: dispatch_max_concurrency(),
-        ordered: true,
+        ordered: false,
         timeout: timeout,
         on_timeout: :kill_task
       )
@@ -450,7 +450,7 @@ defmodule Jido.Signal.Dispatch do
           end
         end,
         max_concurrency: max_concurrency,
-        ordered: true,
+        ordered: false,
         timeout: timeout,
         on_timeout: :kill_task
       )

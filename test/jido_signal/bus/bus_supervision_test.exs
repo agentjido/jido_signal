@@ -25,7 +25,7 @@ defmodule Jido.Signal.Bus.SupervisionTest do
       assert bus_state.child_supervisor in bus_child_pids
       assert bus_state.partition_supervisor in bus_child_pids
 
-      GenServer.stop(bus_pid, :normal)
+      assert :ok = Bus.stop(bus_pid)
     end
 
     test "restarts bus worker when bus process crashes" do
@@ -111,12 +111,10 @@ defmodule Jido.Signal.Bus.SupervisionTest do
       child_ref = Process.monitor(child_supervisor)
       partition_ref = Process.monitor(partition_supervisor)
 
-      GenServer.stop(bus_pid, :normal)
+      assert :ok = Bus.stop(bus_pid)
 
-      assert_receive {:DOWN, ^child_ref, :process, ^child_supervisor, _reason}, 1_000
-
-      assert_receive {:DOWN, ^partition_ref, :process, ^partition_supervisor, _reason},
-                     1_000
+      await_process_down(child_supervisor, child_ref)
+      await_process_down(partition_supervisor, partition_ref)
     end
 
     test "starts managed supervisors under instance-scoped supervisor" do
@@ -167,6 +165,17 @@ defmodule Jido.Signal.Bus.SupervisionTest do
           20 ->
             await_bus_restart(bus_name, stale_pid, attempts - 1)
         end
+    end
+  end
+
+  defp await_process_down(pid, monitor_ref, timeout_ms \\ 1_000) do
+    receive do
+      {:DOWN, ^monitor_ref, :process, ^pid, _reason} ->
+        :ok
+    after
+      timeout_ms ->
+        refute Process.alive?(pid)
+        :ok
     end
   end
 end

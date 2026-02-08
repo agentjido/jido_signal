@@ -64,6 +64,7 @@ defmodule Jido.Signal.Bus do
   require Logger
 
   @persistent_enqueue_timeout_ms 50
+  @default_max_publish_queue_len 10_000
 
   @type start_option ::
           {:name, atom()}
@@ -109,14 +110,13 @@ defmodule Jido.Signal.Bus do
     * `:journal_pid` - Pre-initialized journal adapter pid (optional, skips adapter init if provided)
     * `:max_log_size` - Maximum number of signals to keep in the log (default: 100_000)
     * `:log_ttl_ms` - Optional TTL in milliseconds for log entries; enables periodic garbage collection (default: nil)
+    * `:max_publish_queue_len` - Maximum number of queued publish calls while a publish is in-flight (default: 10_000)
 
   If `:journal_adapter` is not specified, falls back to application config
   (`:jido_signal, :journal_adapter`).
   """
   @impl GenServer
   def init({name, opts}) do
-    Process.flag(:trap_exit, true)
-
     with {journal_adapter, journal_pid, journal_owned?} <- init_journal_adapter(name, opts),
          middleware_specs = Keyword.get(opts, :middleware, []),
          {:ok, middleware_configs} <- MiddlewarePipeline.init_middleware(middleware_specs),
@@ -321,6 +321,9 @@ defmodule Jido.Signal.Bus do
     max_log_size = Keyword.get(opts, :max_log_size, 100_000)
     log_ttl_ms = Keyword.get(opts, :log_ttl_ms)
 
+    max_publish_queue_len =
+      Keyword.get(opts, :max_publish_queue_len, @default_max_publish_queue_len)
+
     gc_timer_ref = schedule_gc_if_needed(log_ttl_ms)
 
     state = %BusState{
@@ -337,6 +340,7 @@ defmodule Jido.Signal.Bus do
       journal_owned?: journal_owned?,
       async_calls: %{},
       publish_queue: :queue.new(),
+      max_publish_queue_len: max_publish_queue_len,
       publish_task_ref: nil,
       publish_task_pid: nil,
       partition_count: partition_count,
@@ -349,6 +353,8 @@ defmodule Jido.Signal.Bus do
       gc_task_pid: nil
     }
 
+    _ = Snapshot.cleanup_bus(state)
+    Process.put(:jido_signal_bus, true)
     {:ok, state}
   end
 
@@ -411,6 +417,35 @@ defmodule Jido.Signal.Bus do
 
       {:error, reason} ->
         {:error, normalize_start_error(reason)}
+    end
+  end
+
+  @doc """
+  Stops a bus and its managed runtime subtree.
+
+  This stops the per-bus supervisor (not just the Bus worker), ensuring all
+  persistent subscriptions and partition workers terminate together.
+  """
+  @spec stop(server(), keyword()) :: :ok | {:error, term()}
+  def stop(bus, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
+    with {:ok, bus_pid} <- whereis(bus, opts),
+         {:ok, bus_name, bus_opts} <- bus_name_from_pid(bus_pid),
+         {:ok, bus_supervisor} <- BusSupervisor.whereis(bus_name, bus_opts) do
+      try do
+        Supervisor.stop(bus_supervisor, :normal, timeout)
+      catch
+        :exit, {:noproc, _} -> :ok
+        :exit, reason -> {:error, reason}
+      end
+    else
+      {:error, reason} ->
+        {:error,
+         Error.execution_error("Bus is unavailable", %{
+           reason: normalize_not_found_reason(reason),
+           action: :stop
+         })}
     end
   end
 
@@ -687,28 +722,42 @@ defmodule Jido.Signal.Bus do
 
   defp bus_call_action(action) when is_atom(action), do: action
 
+  defp bus_name_from_pid(pid) when is_pid(pid) do
+    case :sys.get_state(pid) do
+      %{name: name, jido: jido} when is_atom(name) or is_binary(name) ->
+        {:ok, name, Context.jido_opts(%{jido: jido})}
+
+      _ ->
+        {:error, :invalid_bus_target}
+    end
+  catch
+    :exit, _ -> {:error, :not_found}
+  end
+
   defp ensure_bus_target_pid(pid) when is_pid(pid) do
     case Process.info(pid, :dictionary) do
       nil ->
         {:error, :not_found}
 
       {:dictionary, dictionary} ->
-        case Keyword.get(dictionary, :"$initial_call") do
-          {__MODULE__, :init, 1} -> {:ok, pid}
-          _ -> {:error, :invalid_bus_target}
+        if Keyword.get(dictionary, :jido_signal_bus) == true do
+          {:ok, pid}
+        else
+          {:error, :invalid_bus_target}
         end
     end
   end
 
-  defp start_async_reply(state, from, fun) do
-    task =
-      Task.Supervisor.async_nolink(
-        Names.task_supervisor(Context.jido_opts(state)),
-        fun
-      )
+  defp start_async_reply(state, from, fun), do: start_async_reply(state, from, fun, from)
 
-    async_calls = Map.put(state.async_calls, task.ref, from)
-    {:noreply, %{state | async_calls: async_calls}}
+  defp start_async_reply(state, _from, fun, entry) do
+    case start_tracked_async_task(state, entry, fun) do
+      {:ok, new_state, _task} ->
+        {:noreply, new_state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl GenServer
@@ -756,14 +805,12 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_call({:snapshot_create, path}, from, state) do
-    task =
-      Task.Supervisor.async_nolink(
-        Names.task_supervisor(Context.jido_opts(state)),
-        fn -> Snapshot.create(state, path) end
-      )
-
-    async_calls = Map.put(state.async_calls, task.ref, {:snapshot_create, from})
-    {:noreply, %{state | async_calls: async_calls}}
+    start_async_reply(
+      state,
+      from,
+      fn -> Snapshot.create(state, path) end,
+      {:snapshot_create, from}
+    )
   end
 
   def handle_call(:snapshot_list, _from, state) do
@@ -838,14 +885,12 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_call({:dlq_entries, subscription_id}, from, state) do
-    task =
-      Task.Supervisor.async_nolink(
-        Names.task_supervisor(Context.jido_opts(state)),
-        fn -> adapter_get_dlq_entries(state, subscription_id, []) end
-      )
-
-    async_calls = Map.put(state.async_calls, task.ref, {:dlq_entries, from})
-    {:noreply, %{state | async_calls: async_calls}}
+    start_async_reply(
+      state,
+      from,
+      fn -> adapter_get_dlq_entries(state, subscription_id, []) end,
+      {:dlq_entries, from}
+    )
   end
 
   def handle_call({:redrive_dlq, _subscription_id, _opts}, _from, %{journal_adapter: nil} = state) do
@@ -853,14 +898,12 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_call({:redrive_dlq, subscription_id, opts}, from, state) do
-    task =
-      Task.Supervisor.async_nolink(
-        Names.task_supervisor(Context.jido_opts(state)),
-        fn -> do_redrive_dlq(state, subscription_id, opts) end
-      )
-
-    async_calls = Map.put(state.async_calls, task.ref, from)
-    {:noreply, %{state | async_calls: async_calls}}
+    start_async_reply(
+      state,
+      from,
+      fn -> do_redrive_dlq(state, subscription_id, opts) end,
+      from
+    )
   end
 
   def handle_call({:clear_dlq, _subscription_id}, _from, %{journal_adapter: nil} = state) do
@@ -868,14 +911,12 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_call({:clear_dlq, subscription_id}, from, state) do
-    task =
-      Task.Supervisor.async_nolink(
-        Names.task_supervisor(Context.jido_opts(state)),
-        fn -> adapter_clear_dlq(state, subscription_id, []) end
-      )
-
-    async_calls = Map.put(state.async_calls, task.ref, {:clear_dlq, from})
-    {:noreply, %{state | async_calls: async_calls}}
+    start_async_reply(
+      state,
+      from,
+      fn -> adapter_clear_dlq(state, subscription_id, []) end,
+      {:clear_dlq, from}
+    )
   end
 
   # Private helpers for handle_call callbacks
@@ -1167,7 +1208,7 @@ defmodule Jido.Signal.Bus do
          signals,
          signal_log_id_map
        ) do
-    case build_persistent_signal_batch(signals, subscription, signal_log_id_map) do
+    case build_persistent_signal_batch(state, signals, subscription, signal_log_id_map) do
       [] ->
         acc
 
@@ -1182,18 +1223,19 @@ defmodule Jido.Signal.Bus do
     end
   end
 
-  defp build_persistent_signal_batch(signals, subscription, signal_log_id_map) do
+  defp build_persistent_signal_batch(state, signals, subscription, signal_log_id_map) do
     signals
     |> Enum.reduce([], fn signal, acc ->
-      maybe_add_persistent_signal(acc, signal, subscription.path, signal_log_id_map)
+      maybe_add_persistent_signal(acc, signal, subscription, signal_log_id_map, state)
     end)
     |> Enum.reverse()
   end
 
-  defp maybe_add_persistent_signal(acc, signal, path, signal_log_id_map) do
-    with true <- Router.matches?(signal.type, path),
+  defp maybe_add_persistent_signal(acc, signal, subscription, signal_log_id_map, state) do
+    with true <- Router.matches?(signal.type, subscription.path),
          {:ok, signal_log_id} <- Map.fetch(signal_log_id_map, signal.id) do
-      [{signal_log_id, signal} | acc]
+      persistent_signal = decorate_persistent_signal(signal, signal_log_id, subscription, state)
+      [{signal_log_id, persistent_signal} | acc]
     else
       _ -> acc
     end
@@ -1318,7 +1360,12 @@ defmodule Jido.Signal.Bus do
       signal_log_id = Map.get(signal_log_id_map, signal.id)
 
       if is_binary(signal_log_id) do
-        enqueue_persistent_batch(subscription, persistence_target, [{signal_log_id, signal}])
+        persistent_signal =
+          decorate_persistent_signal(signal, signal_log_id, subscription, state)
+
+        enqueue_persistent_batch(subscription, persistence_target, [
+          {signal_log_id, persistent_signal}
+        ])
       else
         {:error, :missing_signal_log_id}
       end
@@ -1332,28 +1379,29 @@ defmodule Jido.Signal.Bus do
     do: {:error, :subscription_not_available}
 
   defp enqueue_persistent_batch(_subscription, persistence_target, signal_batch) do
-    publish_ref = make_ref()
+    case GenServer.call(
+           persistence_target,
+           {:signal_batch, signal_batch},
+           @persistent_enqueue_timeout_ms
+         ) do
+      :ok ->
+        :ok
 
-    try do
-      GenServer.cast(
-        persistence_target,
-        {:signal_batch, signal_batch, self(), publish_ref}
-      )
+      {:error, _} = error ->
+        error
 
-      receive do
-        {:persistent_enqueue_result, ^publish_ref, result} ->
-          result
-      after
-        @persistent_enqueue_timeout_ms ->
-          {:error, :subscription_not_available}
-      end
-    catch
-      :exit, {:noproc, _} ->
-        {:error, :subscription_not_available}
-
-      :exit, _reason ->
-        {:error, :subscription_not_available}
+      other ->
+        {:error, {:unexpected_enqueue_response, other}}
     end
+  catch
+    :exit, {:noproc, _} ->
+      {:error, :subscription_not_available}
+
+    :exit, {:timeout, _} ->
+      {:error, :subscription_not_available}
+
+    :exit, _reason ->
+      {:error, :subscription_not_available}
   end
 
   @impl GenServer
@@ -1365,7 +1413,14 @@ defmodule Jido.Signal.Bus do
     Process.demonitor(ref, [:flush])
     emit_gc_telemetry_if_pruned(state, removed_count, map_size(new_log))
 
-    {:noreply, %{state | log: new_log, gc_task_ref: nil, gc_task_pid: nil}}
+    next_state =
+      state
+      |> Map.put(:log, new_log)
+      |> BusState.sync_log_order()
+      |> Map.put(:gc_task_ref, nil)
+      |> Map.put(:gc_task_pid, nil)
+
+    {:noreply, next_state}
   end
 
   @impl GenServer
@@ -1373,6 +1428,10 @@ defmodule Jido.Signal.Bus do
     case Map.pop(state.async_calls, ref) do
       {nil, _async_calls} ->
         {:noreply, state}
+
+      {{entry, _task}, async_calls} ->
+        Process.demonitor(ref, [:flush])
+        handle_async_result(entry, async_calls, result, state)
 
       {entry, async_calls} ->
         Process.demonitor(ref, [:flush])
@@ -1388,7 +1447,8 @@ defmodule Jido.Signal.Bus do
 
       Map.has_key?(state.async_calls, ref) ->
         {entry, async_calls} = Map.pop(state.async_calls, ref)
-        {:noreply, handle_async_task_down(entry, async_calls, reason, state)}
+        {async_entry, _task} = normalize_async_entry(entry)
+        {:noreply, handle_async_task_down(async_entry, async_calls, reason, state)}
 
       ref == state.child_supervisor_monitor_ref ->
         Logger.error("Bus child supervisor exited (#{inspect(pid)}): #{inspect(reason)}")
@@ -1501,24 +1561,37 @@ defmodule Jido.Signal.Bus do
   @impl GenServer
   def terminate(reason, state) do
     if state.gc_timer_ref, do: Process.cancel_timer(state.gc_timer_ref)
+    stop_async_tasks(state.async_calls)
     stop_gc_task(state)
-    maybe_stop_bus_supervisor(reason, state)
     stop_owned_journal(state)
-    _ = Snapshot.cleanup(state)
+    _ = Snapshot.cleanup_bus(state)
+    Process.delete(:jido_signal_bus)
+    Logger.debug("Bus #{state.name} terminated: #{inspect(reason)}")
     :ok
   end
 
   defp stop_gc_task(%{gc_task_pid: pid, gc_task_ref: ref}) when is_pid(pid) do
     Process.demonitor(ref, [:flush])
-
-    if Process.alive?(pid) do
-      Process.exit(pid, :kill)
-    end
+    Process.exit(pid, :kill)
   catch
     :error, _ -> :ok
   end
 
   defp stop_gc_task(_state), do: :ok
+
+  defp stop_async_tasks(async_calls) when is_map(async_calls) do
+    Enum.each(async_calls, fn {ref, entry} ->
+      Process.demonitor(ref, [:flush])
+
+      case normalize_async_entry(entry) do
+        {_async_entry, %Task{} = task} ->
+          Task.shutdown(task, :brutal_kill)
+
+        _ ->
+          :ok
+      end
+    end)
+  end
 
   defp ack_persistent_subscription(subscription, signal_id, state) do
     case persistence_target(subscription, state) do
@@ -1530,8 +1603,20 @@ defmodule Jido.Signal.Bus do
 
       target ->
         try do
-          GenServer.call(target, {:ack, signal_id})
-          :ok
+          case GenServer.call(target, {:ack, signal_id}) do
+            :ok ->
+              :ok
+
+            {:error, _} = error ->
+              error
+
+            other ->
+              {:error,
+               Error.execution_error("Unexpected acknowledgement response", %{
+                 reason: :unexpected_ack_response,
+                 response: other
+               })}
+          end
         catch
           :exit, {:noproc, _} ->
             {:error,
@@ -1578,7 +1663,31 @@ defmodule Jido.Signal.Bus do
   end
 
   defp normalize_async_from({:snapshot_create, from}), do: from
+  defp normalize_async_from({:ack, from}), do: from
+  defp normalize_async_from({:dlq_entries, from}), do: from
+  defp normalize_async_from({:clear_dlq, from}), do: from
   defp normalize_async_from(from), do: from
+
+  defp normalize_async_entry({entry, %Task{} = task}), do: {entry, task}
+  defp normalize_async_entry(entry), do: {entry, nil}
+
+  defp start_tracked_async_task(state, entry, fun) when is_function(fun, 0) do
+    task =
+      Task.Supervisor.async_nolink(
+        Names.task_supervisor(Context.jido_opts(state)),
+        fun
+      )
+
+    async_calls = Map.put(state.async_calls, task.ref, {entry, task})
+    {:ok, %{state | async_calls: async_calls}, task}
+  catch
+    :exit, reason ->
+      {:error,
+       Error.execution_error("Failed to start async task", %{
+         reason: reason,
+         action: bus_call_action(entry)
+       })}
+  end
 
   defp handle_async_result({:snapshot_create, from}, async_calls, result, state) do
     case result do
@@ -1657,8 +1766,13 @@ defmodule Jido.Signal.Bus do
 
   defp enqueue_or_start_publish(%{publish_task_ref: ref} = state, from, signals)
        when is_reference(ref) do
-    updated_queue = :queue.in({from, signals}, state.publish_queue)
-    %{state | publish_queue: updated_queue}
+    if :queue.len(state.publish_queue) >= state.max_publish_queue_len do
+      GenServer.reply(from, {:error, publish_queue_full_error(state)})
+      state
+    else
+      updated_queue = :queue.in({from, signals}, state.publish_queue)
+      %{state | publish_queue: updated_queue}
+    end
   end
 
   defp enqueue_or_start_publish(state, from, signals) do
@@ -1666,20 +1780,16 @@ defmodule Jido.Signal.Bus do
   end
 
   defp start_publish_task(state, from, signals) do
-    task =
-      Task.Supervisor.async_nolink(
-        Names.task_supervisor(Context.jido_opts(state)),
-        fn -> run_publish_pipeline(state, signals) end
-      )
+    case start_tracked_async_task(state, {:publish, from}, fn ->
+           run_publish_pipeline(state, signals)
+         end) do
+      {:ok, new_state, %Task{} = task} ->
+        %{new_state | publish_task_ref: task.ref, publish_task_pid: task.pid}
 
-    async_calls = Map.put(state.async_calls, task.ref, {:publish, from})
-
-    %{
-      state
-      | async_calls: async_calls,
-        publish_task_ref: task.ref,
-        publish_task_pid: task.pid
-    }
+      {:error, reason} ->
+        GenServer.reply(from, {:error, reason})
+        maybe_start_next_publish(state)
+    end
   end
 
   defp clear_publish_task(state) do
@@ -1696,6 +1806,13 @@ defmodule Jido.Signal.Bus do
       {:empty, queue} ->
         %{state | publish_queue: queue}
     end
+  end
+
+  defp publish_queue_full_error(state) do
+    Error.execution_error("Bus overloaded", %{
+      reason: :busy,
+      max_publish_queue_len: state.max_publish_queue_len
+    })
   end
 
   defp apply_publish_effects(state, uuid_signal_pairs, final_middleware) do
@@ -1720,21 +1837,6 @@ defmodule Jido.Signal.Bus do
   end
 
   defp stop_owned_journal(_state), do: :ok
-
-  defp maybe_stop_bus_supervisor(:normal, %{bus_supervisor: bus_supervisor})
-       when is_pid(bus_supervisor) do
-    spawn(fn ->
-      try do
-        Supervisor.stop(bus_supervisor, :normal)
-      catch
-        :exit, _ -> :ok
-      end
-    end)
-
-    :ok
-  end
-
-  defp maybe_stop_bus_supervisor(_reason, _state), do: :ok
 
   defp normalize_snapshot_boundary_error(error, action, snapshot_id \\ nil)
 
@@ -1798,5 +1900,18 @@ defmodule Jido.Signal.Bus do
     ref = PersistentRef.from_subscription(subscription, state.name, Context.jido_opts(state))
     target = PersistentRef.target(ref)
     target || persistence_target(subscription)
+  end
+
+  defp decorate_persistent_signal(signal, signal_log_id, subscription, state) do
+    bus_metadata = %{
+      log_id: signal_log_id,
+      bus_name: state.name,
+      subscription_id: subscription.id
+    }
+
+    existing_extensions = Map.get(signal, :extensions, %{})
+    existing_bus_meta = Map.get(existing_extensions, "bus", %{})
+    merged_bus_meta = Map.merge(existing_bus_meta, bus_metadata)
+    %{signal | extensions: Map.put(existing_extensions, "bus", merged_bus_meta)}
   end
 end

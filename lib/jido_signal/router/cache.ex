@@ -58,11 +58,11 @@ defmodule Jido.Signal.Router.Cache do
 
   alias Jido.Signal
   alias Jido.Signal.Error
+  alias Jido.Signal.Router.Cache.ManagedMonitor
   alias Jido.Signal.Router.Engine
   alias Jido.Signal.Telemetry
 
   @type cache_id :: atom() | {atom(), term()}
-  @managed_lifecycle_table :jido_signal_router_cache_managed_lifecycle
 
   @doc """
   Stores a router's trie in persistent_term cache.
@@ -100,7 +100,7 @@ defmodule Jido.Signal.Router.Cache do
   def put_managed(cache_id, %{trie: _trie} = router, owner_pid)
       when (is_atom(cache_id) or is_tuple(cache_id)) and is_pid(owner_pid) do
     :ok = put(cache_id, router)
-    register_managed_entry(cache_id, owner_pid)
+    ManagedMonitor.register(cache_id, owner_pid)
     :ok
   end
 
@@ -157,7 +157,14 @@ defmodule Jido.Signal.Router.Cache do
   @spec delete(cache_id()) :: :ok
   def delete(cache_id) when is_atom(cache_id) or is_tuple(cache_id) do
     delete_cache_entry(cache_id)
-    maybe_stop_managed_monitor(cache_id)
+    ManagedMonitor.unregister(cache_id)
+    :ok
+  end
+
+  @doc false
+  @spec delete_managed(cache_id()) :: :ok
+  def delete_managed(cache_id) when is_atom(cache_id) or is_tuple(cache_id) do
+    delete_cache_entry(cache_id)
     :ok
   end
 
@@ -319,77 +326,5 @@ defmodule Jido.Signal.Router.Cache do
       reason: :not_found,
       route: cache_id
     })
-  end
-
-  defp register_managed_entry(cache_id, owner_pid) do
-    maybe_stop_managed_monitor(cache_id)
-    table = ensure_managed_lifecycle_table()
-    monitor_pid = spawn(fn -> monitor_owner(cache_id, owner_pid) end)
-    true = :ets.insert(table, {cache_id, monitor_pid})
-    :ok
-  end
-
-  defp monitor_owner(cache_id, owner_pid) do
-    ref = Process.monitor(owner_pid)
-
-    receive do
-      {:DOWN, ^ref, :process, ^owner_pid, _reason} ->
-        maybe_delete_managed_entry(cache_id, self())
-    end
-  end
-
-  defp maybe_delete_managed_entry(cache_id, monitor_pid) do
-    table = ensure_managed_lifecycle_table()
-
-    case :ets.lookup(table, cache_id) do
-      [{^cache_id, ^monitor_pid}] ->
-        :ets.delete(table, cache_id)
-        delete_cache_entry(cache_id)
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp maybe_stop_managed_monitor(cache_id) do
-    table = ensure_managed_lifecycle_table()
-
-    case :ets.lookup(table, cache_id) do
-      [{^cache_id, monitor_pid}] ->
-        :ets.delete(table, cache_id)
-        stop_managed_monitor(monitor_pid)
-
-      [] ->
-        :ok
-    end
-  end
-
-  defp stop_managed_monitor(monitor_pid) when is_pid(monitor_pid) do
-    if monitor_pid != self() and Process.alive?(monitor_pid) do
-      Process.exit(monitor_pid, :kill)
-    end
-
-    :ok
-  end
-
-  defp ensure_managed_lifecycle_table do
-    case :ets.whereis(@managed_lifecycle_table) do
-      :undefined ->
-        try do
-          :ets.new(@managed_lifecycle_table, [
-            :named_table,
-            :set,
-            :public,
-            {:read_concurrency, true},
-            {:write_concurrency, true}
-          ])
-        rescue
-          ArgumentError ->
-            @managed_lifecycle_table
-        end
-
-      table ->
-        table
-    end
   end
 end

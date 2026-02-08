@@ -56,6 +56,7 @@ defmodule Jido.Signal.BusSpy do
 
   use GenServer
 
+  alias Jido.Signal.Bus
   alias Jido.Signal.Telemetry
 
   @type spy_ref :: pid()
@@ -207,6 +208,11 @@ defmodule Jido.Signal.BusSpy do
   # GenServer Implementation
 
   def init(_opts) do
+    previous_payload_setting =
+      Application.get_env(:jido_signal, :telemetry_include_payload, :__unset__)
+
+    Application.put_env(:jido_signal, :telemetry_include_payload, true)
+
     # Attach telemetry handlers for all bus events
     for event <- @events do
       handler_id = {__MODULE__, self(), event}
@@ -219,7 +225,7 @@ defmodule Jido.Signal.BusSpy do
       )
     end
 
-    {:ok, %{events: [], waiters: []}}
+    {:ok, %{events: [], waiters: [], previous_payload_setting: previous_payload_setting}}
   end
 
   def handle_call(:get_dispatched_signals, _from, state) do
@@ -268,17 +274,30 @@ defmodule Jido.Signal.BusSpy do
   end
 
   def handle_info({:telemetry_event, event_name, measurements, metadata}, state) do
+    bus_name = Map.get(metadata, :bus_name)
+    subscription_id = Map.get(metadata, :subscription_id)
+    signal_id = Map.get(metadata, :signal_id)
+    bus_state = maybe_get_bus_state(bus_name)
+
+    signal =
+      Map.get(metadata, :signal) ||
+        find_signal_in_bus_state(bus_state, signal_id)
+
+    subscription =
+      Map.get(metadata, :subscription) ||
+        find_subscription_in_bus_state(bus_state, subscription_id)
+
     # Convert telemetry event to our signal event format
     signal_event = %{
       event: List.last(event_name),
       timestamp: Map.get(measurements, :timestamp, System.monotonic_time(:microsecond)),
-      bus_name: Map.get(metadata, :bus_name),
-      signal_id: Map.get(metadata, :signal_id),
+      bus_name: bus_name,
+      signal_id: signal_id,
       signal_type: Map.get(metadata, :signal_type),
-      subscription_id: Map.get(metadata, :subscription_id),
+      subscription_id: subscription_id,
       subscription_path: Map.get(metadata, :subscription_path),
-      signal: Map.get(metadata, :signal),
-      subscription: Map.get(metadata, :subscription),
+      signal: signal,
+      subscription: subscription,
       dispatch_result: Map.get(metadata, :dispatch_result),
       error: Map.get(metadata, :error),
       reason: Map.get(metadata, :reason)
@@ -336,6 +355,8 @@ defmodule Jido.Signal.BusSpy do
     for event <- @events do
       Telemetry.detach({__MODULE__, self(), event})
     end
+
+    restore_payload_setting(Map.get(state, :previous_payload_setting, :__unset__))
 
     :ok
   end
@@ -403,6 +424,48 @@ defmodule Jido.Signal.BusSpy do
   end
 
   defp cancel_waiter_timer(_waiter), do: false
+
+  defp restore_payload_setting(:__unset__) do
+    Application.delete_env(:jido_signal, :telemetry_include_payload)
+  end
+
+  defp restore_payload_setting(value) do
+    Application.put_env(:jido_signal, :telemetry_include_payload, value)
+  end
+
+  defp maybe_get_bus_state(nil), do: nil
+
+  defp maybe_get_bus_state(bus_name) do
+    case Bus.whereis(bus_name) do
+      {:ok, bus_pid} -> :sys.get_state(bus_pid)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  defp find_signal_in_bus_state(nil, _signal_id), do: nil
+  defp find_signal_in_bus_state(_bus_state, nil), do: nil
+
+  defp find_signal_in_bus_state(%{log: log}, signal_id) when is_map(log) do
+    Enum.find_value(log, fn {_log_id, signal} ->
+      if Map.get(signal, :id) == signal_id, do: signal, else: nil
+    end)
+  end
+
+  defp find_signal_in_bus_state(_, _), do: nil
+
+  defp find_subscription_in_bus_state(nil, _subscription_id), do: nil
+  defp find_subscription_in_bus_state(_bus_state, nil), do: nil
+
+  defp find_subscription_in_bus_state(%{subscriptions: subscriptions}, subscription_id)
+       when is_map(subscriptions) do
+    Map.get(subscriptions, subscription_id)
+  end
+
+  defp find_subscription_in_bus_state(_, _), do: nil
 
   defp maybe_put_supervisor_name(opts, nil), do: opts
   defp maybe_put_supervisor_name(opts, name), do: Keyword.put(opts, :name, name)

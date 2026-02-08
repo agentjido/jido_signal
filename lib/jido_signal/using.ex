@@ -210,20 +210,7 @@ defmodule Jido.Signal.Using do
   defmacro define_caller_module_functions do
     quote location: :keep do
       defp get_caller_module do
-        {mod, _fun, _arity, _info} = find_caller_from_stacktrace()
-        to_string(mod)
-      end
-
-      defp find_caller_from_stacktrace do
-        self()
-        |> Process.info(:current_stacktrace)
-        |> elem(1)
-        |> Enum.find(&non_signal_module?/1)
-      end
-
-      defp non_signal_module?({mod, _fun, _arity, _info}) do
-        mod_str = to_string(mod)
-        mod_str != "Elixir.Jido.Signal" and mod_str != "Elixir.Process"
+        to_string(__MODULE__)
       end
     end
   end

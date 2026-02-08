@@ -34,7 +34,13 @@ defmodule Jido.Signal.Application do
       {Task.Supervisor, name: Jido.Signal.TaskSupervisor},
 
       # Runtime-owned per-bus supervisors (persistent subscriptions, partitions)
-      {Jido.Signal.Bus.RuntimeSupervisor, name: Jido.Signal.Bus.RuntimeSupervisor}
+      {Jido.Signal.Bus.RuntimeSupervisor, name: Jido.Signal.Bus.RuntimeSupervisor},
+
+      # Stable snapshot storage owner
+      {Jido.Signal.Bus.SnapshotStore, name: Jido.Signal.Bus.SnapshotStore},
+
+      # Managed router-cache owner monitors
+      {Jido.Signal.Router.Cache.ManagedMonitor, name: Jido.Signal.Router.Cache.ManagedMonitor}
     ]
 
     opts = [strategy: :rest_for_one, name: Jido.Signal.Supervisor]

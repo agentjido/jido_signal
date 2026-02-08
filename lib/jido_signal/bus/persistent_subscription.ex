@@ -23,6 +23,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
             %{
               id: Zoi.string(),
               jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              bus_name: Zoi.any() |> Zoi.optional(),
               bus_pid: Zoi.pid(),
               bus_subscription: Zoi.any(),
               client_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
@@ -32,8 +33,13 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
               dispatch_tasks: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               in_flight_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               pending_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              pending_order: Zoi.default(Zoi.any(), :queue.new()) |> Zoi.optional(),
+              retry_pending_order: Zoi.default(Zoi.any(), :queue.new()) |> Zoi.optional(),
               acked_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               dlq_pending: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              dlq_pending_order: Zoi.default(Zoi.any(), :queue.new()) |> Zoi.optional(),
+              max_dlq_pending: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
+              dlq_retry_max_ms: Zoi.default(Zoi.integer(), 30_000) |> Zoi.optional(),
               max_attempts: Zoi.default(Zoi.integer(), 5) |> Zoi.optional(),
               attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
@@ -138,8 +144,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   def init(opts) do
     case validate_init_opts(opts) do
       :ok ->
-        Process.flag(:trap_exit, true)
-
         # Extract the bus subscription
         bus_subscription = Keyword.fetch!(opts, :bus_subscription)
 
@@ -155,21 +159,27 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         state = %__MODULE__{
           id: id,
           jido: Keyword.get(opts, :jido),
+          bus_name: bus_name,
           bus_pid: Keyword.fetch!(opts, :bus_pid),
           bus_subscription: bus_subscription,
           client_pid: Keyword.get(opts, :client_pid),
           checkpoint: initial_checkpoint,
           max_in_flight: Keyword.get(opts, :max_in_flight, 1000),
           max_pending: Keyword.get(opts, :max_pending, 10_000),
+          max_dlq_pending: Keyword.get(opts, :max_dlq_pending, 10_000),
+          dlq_retry_max_ms: Keyword.get(opts, :dlq_retry_max_ms, 30_000),
           max_attempts: Keyword.get(opts, :max_attempts, 5),
           retry_interval: Keyword.get(opts, :retry_interval, 100),
           dispatch_tasks: %{},
           in_flight_signals: %{},
           pending_signals: %{},
+          pending_order: :queue.new(),
+          retry_pending_order: :queue.new(),
           pending_batches: [],
           work_pending?: false,
           acked_signals: %{},
           dlq_pending: %{},
+          dlq_pending_order: :queue.new(),
           attempts: %{},
           journal_adapter: journal_adapter,
           journal_pid: journal_pid,
@@ -186,20 +196,14 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   @impl GenServer
-  def handle_call({:ack, signal_log_id}, _from, state) when is_binary(signal_log_id) do
-    {:reply, :ok, do_ack(state, signal_log_id)}
-  end
+  def handle_call({:ack, ack_identifier}, _from, state) do
+    case do_ack(state, ack_identifier) do
+      {:ok, new_state} ->
+        {:reply, :ok, new_state}
 
-  @impl GenServer
-  def handle_call({:ack, signal_log_ids}, _from, state) when is_list(signal_log_ids) do
-    {:reply, :ok, do_ack(state, signal_log_ids)}
-  end
-
-  @impl GenServer
-  def handle_call({:ack, _invalid_arg}, _from, state) do
-    {:reply,
-     {:error, Error.validation_error("invalid ack argument", %{reason: :invalid_ack_argument})},
-     state}
+      {:error, error} ->
+        {:reply, {:error, error}, state}
+    end
   end
 
   @impl GenServer
@@ -219,13 +223,28 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   @impl GenServer
+  def handle_call({:signal_batch, signal_batch}, _from, state) when is_list(signal_batch) do
+    {next_state, dropped_count} = accept_signal_batch(state, signal_batch)
+    next_state = process_pending_signals(next_state)
+    batch_result = if dropped_count > 0, do: {:error, :queue_full}, else: :ok
+    {:reply, batch_result, next_state}
+  end
+
+  @impl GenServer
   def handle_call(_req, _from, state) do
     {:reply, :ok, state}
   end
 
   @impl GenServer
-  def handle_cast({:ack, signal_log_id}, state) when is_binary(signal_log_id) do
-    {:noreply, do_ack(state, signal_log_id)}
+  def handle_cast({:ack, ack_identifier}, state) do
+    case do_ack(state, ack_identifier) do
+      {:ok, new_state} ->
+        {:noreply, new_state}
+
+      {:error, error} ->
+        Logger.warning("Ignoring invalid ack for subscription #{state.id}: #{inspect(error)}")
+        {:noreply, state}
+    end
   end
 
   @impl GenServer
@@ -413,44 +432,69 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   # Only processes signals that haven't failed yet (no attempt count)
   @spec process_pending_signals(t()) :: t()
   defp process_pending_signals(state) do
-    available_capacity = state.max_in_flight - in_flight_load(state)
-
-    if available_capacity <= 0 do
-      state
-    else
-      state.pending_signals
-      |> Enum.filter(fn {id, _signal} -> not Map.has_key?(state.attempts, id) end)
-      |> Enum.sort_by(fn {id, _signal} -> id end)
-      |> Enum.take(available_capacity)
-      |> Enum.reduce(state, fn {signal_id, signal}, acc ->
-        acc
-        |> Map.update!(:pending_signals, &Map.delete(&1, signal_id))
-        |> start_dispatch_signal(signal_log_id: signal_id, signal: signal)
-      end)
-    end
+    available_capacity = max(state.max_in_flight - in_flight_load(state), 0)
+    dispatch_from_pending_queue(state, available_capacity)
   end
 
   # Process pending signals that are awaiting retry (have attempt counts)
   @spec process_pending_for_retry(t()) :: t()
   defp process_pending_for_retry(state) do
-    # Find all pending signals that have attempt counts (i.e., failed signals)
-    retry_signals =
-      Enum.filter(state.pending_signals, fn {id, _signal} ->
-        Map.has_key?(state.attempts, id)
-      end)
+    available_capacity = max(state.max_in_flight - in_flight_load(state), 0)
+    dispatch_from_retry_queue(state, available_capacity)
+  end
 
-    Enum.reduce_while(retry_signals, state, fn {signal_id, signal}, acc_state ->
-      if in_flight_load(acc_state) < acc_state.max_in_flight do
-        updated_state =
-          acc_state
-          |> Map.update!(:pending_signals, &Map.delete(&1, signal_id))
-          |> start_dispatch_signal(signal_log_id: signal_id, signal: signal)
+  defp dispatch_from_pending_queue(state, capacity) when capacity <= 0, do: state
 
-        {:cont, updated_state}
-      else
-        {:halt, acc_state}
-      end
-    end)
+  defp dispatch_from_pending_queue(state, capacity) do
+    case :queue.out(state.pending_order) do
+      {{:value, signal_id}, next_order} ->
+        case Map.pop(state.pending_signals, signal_id) do
+          {nil, next_pending} ->
+            dispatch_from_pending_queue(
+              %{state | pending_order: next_order, pending_signals: next_pending},
+              capacity
+            )
+
+          {signal, next_pending} ->
+            next_state =
+              state
+              |> Map.put(:pending_order, next_order)
+              |> Map.put(:pending_signals, next_pending)
+              |> start_dispatch_signal(signal_log_id: signal_id, signal: signal)
+
+            dispatch_from_pending_queue(next_state, capacity - 1)
+        end
+
+      {:empty, _} ->
+        state
+    end
+  end
+
+  defp dispatch_from_retry_queue(state, capacity) when capacity <= 0, do: state
+
+  defp dispatch_from_retry_queue(state, capacity) do
+    case :queue.out(state.retry_pending_order) do
+      {{:value, signal_id}, next_order} ->
+        case Map.pop(state.pending_signals, signal_id) do
+          {nil, next_pending} ->
+            dispatch_from_retry_queue(
+              %{state | retry_pending_order: next_order, pending_signals: next_pending},
+              capacity
+            )
+
+          {signal, next_pending} ->
+            next_state =
+              state
+              |> Map.put(:retry_pending_order, next_order)
+              |> Map.put(:pending_signals, next_pending)
+              |> start_dispatch_signal(signal_log_id: signal_id, signal: signal)
+
+            dispatch_from_retry_queue(next_state, capacity - 1)
+        end
+
+      {:empty, _} ->
+        state
+    end
   end
 
   defp handle_dispatch_result(state, :ok, signal_log_id, signal) do
@@ -490,8 +534,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     )
 
     new_attempts = Map.put(state.attempts, signal_log_id, current_attempts)
-    new_pending = Map.put(state.pending_signals, signal_log_id, signal)
-    state = %{state | pending_signals: new_pending, attempts: new_attempts}
+    state = %{state | attempts: new_attempts}
+    state = enqueue_retry_signal(state, signal_log_id, signal)
     schedule_retry(state)
   end
 
@@ -536,41 +580,177 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     %{state | client_monitor_ref: ref}
   end
 
-  defp do_ack(state, signal_log_id) when is_binary(signal_log_id) do
-    state = ack_signal(state, signal_log_id)
-    timestamp = ID.extract_timestamp(signal_log_id)
-    new_checkpoint = max(state.checkpoint, timestamp)
-    persist_checkpoint(state, new_checkpoint)
+  defp do_ack(state, []), do: {:ok, process_pending_signals(state)}
 
-    state = %{
-      state
-      | checkpoint: new_checkpoint
-    }
+  defp do_ack(state, ack_identifiers) when is_list(ack_identifiers) do
+    case validate_ack_ids(state, ack_identifiers) do
+      {:ok, []} ->
+        {:ok, process_pending_signals(state)}
 
-    process_pending_signals(state)
+      {:ok, resolved_entries} ->
+        state =
+          Enum.reduce(resolved_entries, state, fn {signal_log_id, _checkpoint_value}, acc ->
+            ack_signal(acc, signal_log_id)
+          end)
+
+        highest_checkpoint =
+          resolved_entries
+          |> Enum.map(fn {_signal_log_id, checkpoint_value} -> checkpoint_value end)
+          |> Enum.max()
+
+        new_checkpoint = max(state.checkpoint, highest_checkpoint)
+        persist_checkpoint(state, new_checkpoint)
+
+        state =
+          state
+          |> Map.put(:checkpoint, new_checkpoint)
+          |> process_pending_signals()
+
+        {:ok, state}
+
+      {:error, _} = error ->
+        error
+    end
   end
 
-  defp do_ack(state, []) do
-    process_pending_signals(state)
+  defp do_ack(state, ack_identifier) do
+    case resolve_ack_identifier(state, ack_identifier) do
+      {:ok, {signal_log_id, checkpoint_value}} ->
+        state = ack_signal(state, signal_log_id)
+        new_checkpoint = max(state.checkpoint, checkpoint_value)
+        persist_checkpoint(state, new_checkpoint)
+
+        state =
+          state
+          |> Map.put(:checkpoint, new_checkpoint)
+          |> process_pending_signals()
+
+        {:ok, state}
+
+      {:ok, :noop} ->
+        {:ok, process_pending_signals(state)}
+
+      {:error, _} = error ->
+        error
+    end
   end
 
-  defp do_ack(state, signal_log_ids) when is_list(signal_log_ids) do
-    state = Enum.reduce(signal_log_ids, state, &ack_signal(&2, &1))
+  defp validate_ack_ids(state, ack_identifiers) when is_list(ack_identifiers) do
+    Enum.reduce_while(ack_identifiers, {:ok, []}, fn ack_identifier, {:ok, resolved_entries} ->
+      case resolve_ack_identifier(state, ack_identifier) do
+        {:ok, :noop} -> {:cont, {:ok, resolved_entries}}
+        {:ok, {_, _} = resolved_entry} -> {:cont, {:ok, [resolved_entry | resolved_entries]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
 
-    highest_timestamp =
-      signal_log_ids
-      |> Enum.map(&ID.extract_timestamp/1)
-      |> Enum.max()
+  defp resolve_ack_identifier(state, ack_identifier) do
+    case resolve_ack_log_id(state, ack_identifier) do
+      {:ok, :noop} ->
+        {:ok, :noop}
 
-    new_checkpoint = max(state.checkpoint, highest_timestamp)
-    persist_checkpoint(state, new_checkpoint)
+      {:ok, signal_log_id} ->
+        case checkpoint_value(signal_log_id) do
+          {:ok, value} ->
+            {:ok, {signal_log_id, value}}
 
-    state = %{
-      state
-      | checkpoint: new_checkpoint
-    }
+          {:error, _} = error ->
+            error
+        end
 
-    process_pending_signals(state)
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp resolve_ack_log_id(state, ack_identifier) do
+    if tracked_log_id?(state, ack_identifier) do
+      {:ok, ack_identifier}
+    else
+      case find_log_id_by_signal_id(state, ack_identifier) do
+        {:ok, signal_log_id} ->
+          {:ok, signal_log_id}
+
+        :error ->
+          resolve_unknown_ack(ack_identifier)
+      end
+    end
+  end
+
+  defp tracked_log_id?(state, signal_log_id) do
+    Map.has_key?(state.in_flight_signals, signal_log_id) or
+      Map.has_key?(state.pending_signals, signal_log_id) or
+      Map.has_key?(state.acked_signals, signal_log_id) or
+      Map.has_key?(state.attempts, signal_log_id) or
+      Map.has_key?(state.dlq_pending, signal_log_id) or
+      dispatch_in_progress?(state, signal_log_id)
+  end
+
+  defp find_log_id_by_signal_id(state, signal_id) do
+    with :error <- find_signal_log_id_in_signals(state.in_flight_signals, signal_id),
+         :error <- find_signal_log_id_in_signals(state.pending_signals, signal_id),
+         :error <- find_signal_log_id_in_dispatch_tasks(state.dispatch_tasks, signal_id) do
+      find_signal_log_id_in_dlq_pending(state.dlq_pending, signal_id)
+    end
+  end
+
+  defp find_signal_log_id_in_signals(signals_map, signal_id) when is_map(signals_map) do
+    Enum.find_value(signals_map, :error, fn {signal_log_id, signal} ->
+      if signal_id_matches?(signal, signal_id), do: {:ok, signal_log_id}, else: nil
+    end)
+  end
+
+  defp find_signal_log_id_in_dispatch_tasks(dispatch_tasks, signal_id)
+       when is_map(dispatch_tasks) do
+    Enum.find_value(dispatch_tasks, :error, fn {_ref, {_task, signal_log_id, signal}} ->
+      if signal_id_matches?(signal, signal_id), do: {:ok, signal_log_id}, else: nil
+    end)
+  end
+
+  defp find_signal_log_id_in_dlq_pending(dlq_pending, signal_id) when is_map(dlq_pending) do
+    Enum.find_value(dlq_pending, :error, fn {signal_log_id, entry} ->
+      if signal_id_matches?(Map.get(entry, :signal), signal_id),
+        do: {:ok, signal_log_id},
+        else: nil
+    end)
+  end
+
+  defp signal_id_matches?(%Jido.Signal{id: id}, signal_id), do: id == signal_id
+  defp signal_id_matches?(_, _), do: false
+
+  defp resolve_unknown_ack(ack_identifier) when is_binary(ack_identifier), do: {:ok, :noop}
+
+  defp resolve_unknown_ack(ack_identifier)
+       when is_integer(ack_identifier) and ack_identifier >= 0,
+       do: {:ok, :noop}
+
+  defp resolve_unknown_ack(ack_identifier),
+    do: invalid_ack_error(ack_identifier, :invalid_signal_log_id)
+
+  defp checkpoint_value(value) when is_integer(value) and value >= 0, do: {:ok, value}
+
+  defp checkpoint_value(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 ->
+        {:ok, parsed}
+
+      _ ->
+        {:ok, ID.extract_timestamp(value)}
+    end
+  rescue
+    _ -> invalid_ack_error(value, :invalid_signal_log_id)
+  end
+
+  defp checkpoint_value(value), do: invalid_ack_error(value, :invalid_signal_log_id)
+
+  defp invalid_ack_error(value, reason) do
+    {:error,
+     Error.validation_error("invalid ack argument", %{
+       field: :signal_log_id,
+       value: value,
+       reason: reason
+     })}
   end
 
   defp accept_signal(state, signal_log_id, signal) do
@@ -579,8 +759,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         {:ok, start_dispatch_signal(state, signal_log_id: signal_log_id, signal: signal)}
 
       map_size(state.pending_signals) < state.max_pending ->
-        new_pending = Map.put(state.pending_signals, signal_log_id, signal)
-        {:ok, %{state | pending_signals: new_pending}}
+        {:ok, enqueue_pending_signal(state, signal_log_id, signal)}
 
       true ->
         emit_backpressure(state)
@@ -588,7 +767,25 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     end
   end
 
+  defp enqueue_pending_signal(state, signal_log_id, signal) do
+    %{
+      state
+      | pending_signals: Map.put(state.pending_signals, signal_log_id, signal),
+        pending_order: :queue.in(signal_log_id, state.pending_order)
+    }
+  end
+
+  defp enqueue_retry_signal(state, signal_log_id, signal) do
+    %{
+      state
+      | pending_signals: Map.put(state.pending_signals, signal_log_id, signal),
+        retry_pending_order: :queue.in(signal_log_id, state.retry_pending_order)
+    }
+  end
+
   defp start_dispatch_signal(state, signal_log_id: signal_log_id, signal: signal) do
+    signal = attach_bus_metadata(signal, state, signal_log_id)
+
     if state.bus_subscription.dispatch do
       case Dispatch.dispatch_async(
              signal,
@@ -606,6 +803,19 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
       %{state | in_flight_signals: new_in_flight}
     end
+  end
+
+  defp attach_bus_metadata(%Jido.Signal{} = signal, state, signal_log_id) do
+    bus_metadata = %{
+      log_id: signal_log_id,
+      bus_name: state.bus_name,
+      subscription_id: state.id
+    }
+
+    existing_extensions = Map.get(signal, :extensions, %{})
+    existing_bus_metadata = Map.get(existing_extensions, "bus", %{})
+    merged_bus_metadata = Map.merge(existing_bus_metadata, bus_metadata)
+    %{signal | extensions: Map.put(existing_extensions, "bus", merged_bus_metadata)}
   end
 
   defp in_flight_load(state) do
@@ -650,16 +860,23 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   defp accept_signal_batch(state, signal_batch) do
-    Enum.reduce(signal_batch, {state, 0}, fn {signal_log_id, signal},
-                                             {acc_state, dropped_count} ->
-      case accept_signal(acc_state, signal_log_id, signal) do
-        {:ok, new_state} ->
-          {new_state, dropped_count}
-
-        {:error, :queue_full, new_state} ->
-          {new_state, dropped_count + 1}
-      end
+    Enum.reduce(signal_batch, {state, 0}, fn entry, {acc_state, dropped_count} ->
+      accept_signal_entry(acc_state, dropped_count, entry)
     end)
+  end
+
+  defp accept_signal_entry(acc_state, dropped_count, {signal_log_id, signal}) do
+    case accept_signal(acc_state, signal_log_id, signal) do
+      {:ok, new_state} ->
+        {new_state, dropped_count}
+
+      {:error, :queue_full, new_state} ->
+        {new_state, dropped_count + 1}
+    end
+  end
+
+  defp accept_signal_entry(acc_state, dropped_count, _entry) do
+    {acc_state, dropped_count + 1}
   end
 
   defp normalize_replay_batch(missed_signals) do
@@ -720,9 +937,58 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         dlq_pending: Map.delete(state.dlq_pending, signal_log_id),
         attempts: Map.delete(state.attempts, signal_log_id)
     }
+    |> maybe_compact_dlq_pending_order()
   end
 
-  defp ack_signal(state, signal_log_id) when is_binary(signal_log_id) do
+  defp ensure_dlq_pending_capacity(state, incoming_signal_log_id) do
+    cond do
+      Map.has_key?(state.dlq_pending, incoming_signal_log_id) ->
+        state
+
+      map_size(state.dlq_pending) < state.max_dlq_pending ->
+        state
+
+      true ->
+        drop_oldest_dlq_pending(state)
+    end
+  end
+
+  defp drop_oldest_dlq_pending(state) do
+    case :queue.out(state.dlq_pending_order) do
+      {{:value, signal_log_id}, next_order} ->
+        if Map.has_key?(state.dlq_pending, signal_log_id) do
+          Logger.warning(
+            "Dropping oldest pending DLQ retry for subscription #{state.id}: #{inspect(signal_log_id)}"
+          )
+
+          %{
+            state
+            | dlq_pending: Map.delete(state.dlq_pending, signal_log_id),
+              dlq_pending_order: next_order
+          }
+        else
+          drop_oldest_dlq_pending(%{state | dlq_pending_order: next_order})
+        end
+
+      {:empty, next_order} ->
+        %{state | dlq_pending_order: next_order}
+    end
+  end
+
+  defp maybe_compact_dlq_pending_order(state) do
+    if :queue.len(state.dlq_pending_order) > state.max_dlq_pending * 2 do
+      rebuilt_order =
+        state.dlq_pending
+        |> Map.keys()
+        |> :queue.from_list()
+
+      %{state | dlq_pending_order: rebuilt_order}
+    else
+      state
+    end
+  end
+
+  defp ack_signal(state, signal_log_id) do
     ack_marker? = dispatch_in_progress?(state, signal_log_id)
 
     updated_acked_signals =
@@ -742,7 +1008,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     }
   end
 
-  defp dispatch_in_progress?(state, signal_log_id) when is_binary(signal_log_id) do
+  defp dispatch_in_progress?(state, signal_log_id) do
     Enum.any?(state.dispatch_tasks, fn {_ref, {_task, dispatch_signal_log_id, _signal}} ->
       dispatch_signal_log_id == signal_log_id
     end)
@@ -757,26 +1023,46 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
          dlq_error
        ) do
     base_state = clear_signal_tracking(state, signal_log_id)
+    base_state = ensure_dlq_pending_capacity(base_state, signal_log_id)
     existing_entry = Map.get(base_state.dlq_pending, signal_log_id, %{})
+    next_failures = Map.get(existing_entry, :dlq_failures, 0) + 1
 
     dlq_entry = %{
       signal: signal,
       reason: reason,
       attempt_count: attempt_count,
-      dlq_failures: Map.get(existing_entry, :dlq_failures, 0) + 1,
-      last_error: dlq_error
+      dlq_failures: next_failures,
+      last_error: dlq_error,
+      next_retry_at: next_dlq_retry_at(base_state, next_failures)
     }
 
-    %{base_state | dlq_pending: Map.put(base_state.dlq_pending, signal_log_id, dlq_entry)}
+    next_dlq_order =
+      if Map.has_key?(base_state.dlq_pending, signal_log_id) do
+        base_state.dlq_pending_order
+      else
+        :queue.in(signal_log_id, base_state.dlq_pending_order)
+      end
+
+    %{
+      base_state
+      | dlq_pending: Map.put(base_state.dlq_pending, signal_log_id, dlq_entry),
+        dlq_pending_order: next_dlq_order
+    }
   end
 
   defp process_dlq_pending(%{dlq_pending: dlq_pending} = state) when map_size(dlq_pending) == 0,
     do: state
 
   defp process_dlq_pending(state) do
+    now_ms = System.monotonic_time(:millisecond)
+
     state =
       Enum.reduce(state.dlq_pending, state, fn {signal_log_id, dlq_entry}, acc_state ->
-        retry_dlq_write(acc_state, signal_log_id, dlq_entry)
+        if retry_due?(dlq_entry, now_ms) do
+          retry_dlq_write(acc_state, signal_log_id, dlq_entry)
+        else
+          acc_state
+        end
       end)
 
     if map_size(state.dlq_pending) > 0 do
@@ -798,14 +1084,34 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         clear_signal_tracking(state, signal_log_id)
 
       {:error, dlq_error} ->
+        next_failures = Map.get(dlq_entry, :dlq_failures, 0) + 1
+
         updated_entry = %{
           dlq_entry
-          | dlq_failures: Map.get(dlq_entry, :dlq_failures, 0) + 1,
-            last_error: dlq_error
+          | dlq_failures: next_failures,
+            last_error: dlq_error,
+            next_retry_at: next_dlq_retry_at(state, next_failures)
         }
 
         %{state | dlq_pending: Map.put(state.dlq_pending, signal_log_id, updated_entry)}
     end
+  end
+
+  defp retry_due?(dlq_entry, now_ms) do
+    Map.get(dlq_entry, :next_retry_at, 0) <= now_ms
+  end
+
+  defp next_dlq_retry_at(state, failure_count) do
+    System.monotonic_time(:millisecond) + dlq_retry_delay_ms(state, failure_count)
+  end
+
+  defp dlq_retry_delay_ms(state, failure_count) do
+    base = max(state.retry_interval, 1)
+    max_delay = max(state.dlq_retry_max_ms, base)
+    exponential = trunc(base * :math.pow(2, max(failure_count - 1, 0)))
+    capped = min(exponential, max_delay)
+    jitter = :rand.uniform(max(div(capped, 2), 1))
+    min(capped + jitter, max_delay)
   end
 
   defp persist_to_dlq(_state, signal_log_id, _signal, _reason, _attempt_count)
