@@ -88,7 +88,9 @@ defmodule Jido.Signal.Instance do
   @spec start_link([option()]) :: {:ok, pid()} | {:error, term()}
   def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
-    instance_opts = [jido: name]
+    instance_opts = [jido: name, allow_unregistered?: true]
+
+    :ok = Names.register_instance(name)
 
     children = [
       {Registry, keys: :unique, name: Names.registry(instance_opts)},
@@ -98,7 +100,18 @@ defmodule Jido.Signal.Instance do
     ]
 
     supervisor_name = Names.supervisor(instance_opts)
-    Supervisor.start_link(children, strategy: :rest_for_one, name: supervisor_name)
+
+    case Supervisor.start_link(children, strategy: :rest_for_one, name: supervisor_name) do
+      {:ok, _pid} = ok ->
+        ok
+
+      {:error, {:already_started, _pid}} = error ->
+        error
+
+      {:error, reason} ->
+        :ok = Names.unregister_instance(name)
+        {:error, reason}
+    end
   end
 
   @doc """
@@ -115,12 +128,20 @@ defmodule Jido.Signal.Instance do
   """
   @spec running?(atom()) :: boolean()
   def running?(instance) when is_atom(instance) do
-    instance_opts = [jido: instance]
+    instance_opts = [jido: instance, allow_unregistered?: true]
     supervisor_name = Names.supervisor(instance_opts)
 
     case Process.whereis(supervisor_name) do
-      nil -> false
-      pid when is_pid(pid) -> Process.alive?(pid)
+      pid when is_pid(pid) ->
+        if Process.alive?(pid) do
+          :ok = Names.register_instance(instance)
+          true
+        else
+          false
+        end
+
+      _ ->
+        false
     end
   end
 
@@ -134,19 +155,24 @@ defmodule Jido.Signal.Instance do
   """
   @spec stop(atom(), timeout()) :: :ok
   def stop(instance, timeout \\ 5000) when is_atom(instance) do
-    instance_opts = [jido: instance]
+    instance_opts = [jido: instance, allow_unregistered?: true]
     supervisor_name = Names.supervisor(instance_opts)
 
-    case Process.whereis(supervisor_name) do
-      nil ->
-        :ok
+    result =
+      case Process.whereis(supervisor_name) do
+        nil ->
+          :ok
 
-      pid ->
-        try do
-          Supervisor.stop(pid, :normal, timeout)
-        catch
-          :exit, {:noproc, _} -> :ok
-        end
-    end
+        pid when is_pid(pid) ->
+          try do
+            Supervisor.stop(pid, :normal, timeout)
+          catch
+            :exit, {:noproc, _} -> :ok
+            :exit, _ -> :ok
+          end
+      end
+
+    :ok = Names.unregister_instance(instance)
+    result
   end
 end

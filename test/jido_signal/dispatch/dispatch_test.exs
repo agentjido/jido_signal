@@ -90,14 +90,14 @@ defmodule Jido.Signal.DispatchTest do
       assert_receive {:received, ^signal}
     end
 
-    test "returns error when target process is not alive", %{signal: signal} do
+    test "uses best-effort async semantics when target process is not alive", %{signal: signal} do
       pid = spawn(fn -> :ok end)
       # Ensure process is dead
       ref = Process.monitor(pid)
       assert_receive {:DOWN, ^ref, :process, ^pid, _}
 
       config = {:pid, [target: pid, delivery_mode: :async]}
-      assert {:error, %Jido.Signal.Error.DispatchError{}} = Dispatch.dispatch(signal, config)
+      assert :ok = Dispatch.dispatch(signal, config)
     end
   end
 
@@ -281,7 +281,12 @@ defmodule Jido.Signal.DispatchTest do
         {:logger, [level: :debug]}
       ]
 
-      assert {:error, [%Jido.Signal.Error.DispatchError{}]} = Dispatch.dispatch(signal, config)
+      assert {:error, %Jido.Signal.Error.DispatchError{} = error} =
+               Dispatch.dispatch(signal, config)
+
+      assert error.details[:reason] == :multi_dispatch_failed
+      assert error.details[:error_count] == 1
+      assert [%Jido.Signal.Error.DispatchError{}] = error.details[:errors]
 
       # Should still receive the async signal
       assert_receive {:signal, received_signal}
@@ -293,17 +298,19 @@ defmodule Jido.Signal.DispatchTest do
       signal: signal
     } do
       test_pid = self()
-      dead_pid = spawn(fn -> :ok end)
-      ref = Process.monitor(dead_pid)
-      assert_receive {:DOWN, ^ref, :process, ^dead_pid, _}
 
       config = [
         {:pid, [target: test_pid, delivery_mode: :async]},
-        {:pid, [target: dead_pid, delivery_mode: :async]},
+        {:named, [target: {:name, :missing_dispatch_target}, delivery_mode: :async]},
         {:logger, [level: :debug]}
       ]
 
-      assert {:error, [%Jido.Signal.Error.DispatchError{}]} = Dispatch.dispatch(signal, config)
+      assert {:error, %Jido.Signal.Error.DispatchError{} = error} =
+               Dispatch.dispatch(signal, config)
+
+      assert error.details[:reason] == :multi_dispatch_failed
+      assert error.details[:error_count] == 1
+      assert [%Jido.Signal.Error.DispatchError{}] = error.details[:errors]
 
       # Verify successful dispatches still occurred
       assert_receive {:signal, received_signal}
@@ -335,11 +342,7 @@ defmodule Jido.Signal.DispatchTest do
     end
 
     test "handles errors in async dispatch", %{signal: signal} do
-      pid = spawn(fn -> :ok end)
-      ref = Process.monitor(pid)
-      assert_receive {:DOWN, ^ref, :process, ^pid, _}
-
-      config = {:pid, [target: pid, delivery_mode: :async]}
+      config = {:named, [target: {:name, :missing_dispatch_target}, delivery_mode: :async]}
       assert {:ok, task} = Dispatch.dispatch_async(signal, config)
 
       assert {:error, %Jido.Signal.Error.DispatchError{}} = Task.await(task)

@@ -84,12 +84,63 @@ defmodule Jido.Signal.BusSpy do
   @doc """
   Starts a new bus spy process to collect telemetry events.
 
+  This compatibility API starts the spy directly. For deterministic lifecycle in tests,
+  prefer `start_supervised_spy/1`.
+
   Returns a spy reference that can be used to query captured events.
   """
   @spec start_spy() :: spy_ref()
   def start_spy do
-    {:ok, pid} = GenServer.start_link(__MODULE__, [])
+    {:ok, pid} = start_link([])
     pid
+  end
+
+  @doc """
+  Starts a bus spy under a dedicated supervisor.
+
+  This helper is preferred for tests because stopping the returned supervisor
+  deterministically stops the spy and detaches telemetry handlers.
+  """
+  @spec start_supervised_spy(keyword()) :: {:ok, spy_ref(), pid()} | {:error, term()}
+  def start_supervised_spy(opts \\ []) do
+    child_opts = Keyword.drop(opts, [:supervisor_name])
+    supervisor_name = Keyword.get(opts, :supervisor_name)
+
+    supervisor_opts =
+      [strategy: :one_for_one]
+      |> maybe_put_supervisor_name(supervisor_name)
+
+    with {:ok, supervisor_pid} <-
+           Supervisor.start_link([{__MODULE__, child_opts}], supervisor_opts),
+         {:ok, spy_pid} <- supervised_spy_pid(supervisor_pid) do
+      {:ok, spy_pid, supervisor_pid}
+    end
+  end
+
+  @doc """
+  Starts a BusSpy process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name)
+    genserver_opts = if is_nil(name), do: [], else: [name: name]
+    GenServer.start_link(__MODULE__, opts, genserver_opts)
+  end
+
+  @doc """
+  Returns a child specification for supervised startup.
+  """
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    name = Keyword.get(opts, :name)
+
+    %{
+      id: if(is_nil(name), do: {__MODULE__, make_ref()}, else: {__MODULE__, name}),
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :temporary,
+      shutdown: 5_000
+    }
   end
 
   @doc """
@@ -352,4 +403,17 @@ defmodule Jido.Signal.BusSpy do
   end
 
   defp cancel_waiter_timer(_waiter), do: false
+
+  defp maybe_put_supervisor_name(opts, nil), do: opts
+  defp maybe_put_supervisor_name(opts, name), do: Keyword.put(opts, :name, name)
+
+  defp supervised_spy_pid(supervisor_pid) do
+    case Supervisor.which_children(supervisor_pid) do
+      [{_id, spy_pid, :worker, [__MODULE__]}] when is_pid(spy_pid) ->
+        {:ok, spy_pid}
+
+      _ ->
+        {:error, :spy_child_not_found}
+    end
+  end
 end

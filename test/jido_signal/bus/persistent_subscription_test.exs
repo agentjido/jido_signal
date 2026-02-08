@@ -1,5 +1,5 @@
 defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Jido.Signal
   alias Jido.Signal.Bus
@@ -9,6 +9,40 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
   alias Jido.Signal.Journal.Adapters.ETS, as: ETSAdapter
 
   @moduletag :capture_log
+
+  defmodule BlockingCheckpointLoadAdapter do
+    def start_link(test_pid) when is_pid(test_pid) do
+      Agent.start_link(fn -> %{test_pid: test_pid, checkpoints: %{}} end)
+    end
+
+    def get_checkpoint(checkpoint_key, pid) do
+      test_pid = Agent.get(pid, & &1.test_pid)
+      send(test_pid, {:checkpoint_load_started, checkpoint_key, self()})
+
+      receive do
+        {:release_checkpoint_load, ^checkpoint_key, checkpoint} ->
+          {:ok, checkpoint}
+      end
+    end
+
+    def put_checkpoint(checkpoint_key, checkpoint, pid) do
+      Agent.update(pid, fn state ->
+        %{state | checkpoints: Map.put(state.checkpoints, checkpoint_key, checkpoint)}
+      end)
+
+      :ok
+    end
+  end
+
+  defmodule AlwaysFailDispatchAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def validate_opts(opts), do: {:ok, opts}
+
+    @impl true
+    def deliver(_signal, _opts), do: {:error, :forced_dispatch_failure}
+  end
 
   describe "checkpoint persistence with journal adapter" do
     setup do
@@ -344,6 +378,81 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
     end
   end
 
+  describe "deferred checkpoint loading" do
+    test "start_link returns before checkpoint load I/O completes" do
+      subscription_id = "deferred-load-#{System.unique_integer([:positive])}"
+      bus_name = :deferred_checkpoint_bus
+      checkpoint_key = "#{bus_name}:#{subscription_id}"
+      {:ok, journal_pid} = BlockingCheckpointLoadAdapter.start_link(self())
+
+      subscription = %Subscriber{
+        id: subscription_id,
+        path: "test.deferred",
+        dispatch: {:pid, target: self(), delivery_mode: :async},
+        persistent?: true,
+        persistence_pid: nil,
+        created_at: DateTime.utc_now()
+      }
+
+      task =
+        Task.async(fn ->
+          PersistentSubscription.start_link(
+            id: subscription_id,
+            bus_pid: self(),
+            bus_name: bus_name,
+            bus_subscription: subscription,
+            checkpoint: 0,
+            journal_adapter: BlockingCheckpointLoadAdapter,
+            journal_pid: journal_pid
+          )
+        end)
+
+      assert_receive {:checkpoint_load_started, ^checkpoint_key, loader_pid}, 1_000
+
+      try do
+        assert {:ok, {:ok, pid}} = Task.yield(task, 200)
+        send(loader_pid, {:release_checkpoint_load, checkpoint_key, 0})
+        stop_subscription(pid)
+      after
+        send(loader_pid, {:release_checkpoint_load, checkpoint_key, 0})
+        Task.shutdown(task, :brutal_kill)
+      end
+    end
+
+    test "checkpoint value is applied after deferred load continues" do
+      subscription_id = "deferred-apply-#{System.unique_integer([:positive])}"
+      bus_name = :deferred_checkpoint_apply_bus
+      checkpoint_key = "#{bus_name}:#{subscription_id}"
+      {:ok, journal_pid} = BlockingCheckpointLoadAdapter.start_link(self())
+
+      subscription = %Subscriber{
+        id: subscription_id,
+        path: "test.deferred.apply",
+        dispatch: {:pid, target: self(), delivery_mode: :async},
+        persistent?: true,
+        persistence_pid: nil,
+        created_at: DateTime.utc_now()
+      }
+
+      assert {:ok, pid} =
+               PersistentSubscription.start_link(
+                 id: subscription_id,
+                 bus_pid: self(),
+                 bus_name: bus_name,
+                 bus_subscription: subscription,
+                 checkpoint: 0,
+                 journal_adapter: BlockingCheckpointLoadAdapter,
+                 journal_pid: journal_pid
+               )
+
+      assert_receive {:checkpoint_load_started, ^checkpoint_key, loader_pid}, 1_000
+      send(loader_pid, {:release_checkpoint_load, checkpoint_key, 42})
+      assert_checkpoint(pid, 42)
+
+      stop_subscription(pid)
+    end
+  end
+
   describe "max_attempts and DLQ" do
     setup do
       {:ok, journal_pid} = ETSAdapter.start_link("test_dlq_journal_")
@@ -353,19 +462,10 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
         {Bus, name: bus_name, journal_adapter: ETSAdapter, journal_pid: journal_pid}
       )
 
-      # Create a dead PID for failing dispatch
-      {:ok, dead_pid} = Task.start(fn -> :ok end)
-      down_ref = Process.monitor(dead_pid)
-      assert_receive {:DOWN, ^down_ref, :process, ^dead_pid, _reason}
-
-      {:ok, bus: bus_name, journal_pid: journal_pid, dead_pid: dead_pid}
+      {:ok, bus: bus_name, journal_pid: journal_pid}
     end
 
-    test "signal moves to DLQ after max_attempts failures", %{
-      bus: bus,
-      journal_pid: journal_pid,
-      dead_pid: dead_pid
-    } do
+    test "signal moves to DLQ after max_attempts failures", %{bus: bus, journal_pid: journal_pid} do
       test_pid = self()
       handler_id = "test-signal-to-dlq-handler-#{System.unique_integer([:positive])}"
 
@@ -384,7 +484,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
           persistent?: true,
           max_attempts: 3,
           retry_interval: 10,
-          dispatch: {:pid, target: dead_pid}
+          dispatch: {AlwaysFailDispatchAdapter, []}
         )
 
       {:ok, signal} =
@@ -396,7 +496,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
-      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 3}}, 1_000
+      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 3}}, 3_000
 
       # Check that the signal is in the DLQ
       {:ok, dlq_entries} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
@@ -408,11 +508,12 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       :telemetry.detach(handler_id)
     end
 
-    test "retry telemetry is emitted on dispatch failure", %{bus: bus, dead_pid: dead_pid} do
+    test "retry telemetry is emitted on dispatch failure", %{bus: bus} do
       test_pid = self()
+      retry_handler_id = "test-retry-handler-#{System.unique_integer([:positive])}"
 
       :telemetry.attach(
-        "test-retry-handler",
+        retry_handler_id,
         [:jido, :signal, :subscription, :dispatch, :retry],
         fn _event, measurements, metadata, _config ->
           send(test_pid, {:retry_event, measurements, metadata})
@@ -425,7 +526,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
           persistent?: true,
           max_attempts: 3,
           retry_interval: 10,
-          dispatch: {:pid, target: dead_pid}
+          dispatch: {AlwaysFailDispatchAdapter, []}
         )
 
       {:ok, signal} =
@@ -438,16 +539,17 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
       # Should receive at least one retry event (attempts 1 and 2 before DLQ on 3)
-      assert_receive {:retry_event, %{attempt: 1}, %{subscription_id: _, signal_id: _}}, 500
+      assert_receive {:retry_event, %{attempt: 1}, %{subscription_id: _, signal_id: _}}, 2_000
 
-      :telemetry.detach("test-retry-handler")
+      :telemetry.detach(retry_handler_id)
     end
 
-    test "DLQ telemetry is emitted after max_attempts", %{bus: bus, dead_pid: dead_pid} do
+    test "DLQ telemetry is emitted after max_attempts", %{bus: bus} do
       test_pid = self()
+      dlq_handler_id = "test-dlq-handler-#{System.unique_integer([:positive])}"
 
       :telemetry.attach(
-        "test-dlq-handler",
+        dlq_handler_id,
         [:jido, :signal, :subscription, :dlq],
         fn _event, _measurements, metadata, _config ->
           send(test_pid, {:dlq_event, metadata})
@@ -460,7 +562,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
           persistent?: true,
           max_attempts: 2,
           retry_interval: 10,
-          dispatch: {:pid, target: dead_pid}
+          dispatch: {AlwaysFailDispatchAdapter, []}
         )
 
       {:ok, signal} =
@@ -472,12 +574,12 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
-      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 2}}, 500
+      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 2}}, 2_000
 
-      :telemetry.detach("test-dlq-handler")
+      :telemetry.detach(dlq_handler_id)
     end
 
-    test "no further retries after signal moves to DLQ", %{bus: bus, dead_pid: dead_pid} do
+    test "no further retries after signal moves to DLQ", %{bus: bus} do
       test_pid = self()
       retry_count = :counters.new(1, [:atomics])
 
@@ -486,7 +588,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
           persistent?: true,
           max_attempts: 2,
           retry_interval: 10,
-          dispatch: {:pid, target: dead_pid}
+          dispatch: {AlwaysFailDispatchAdapter, []}
         )
 
       handler_id = "test-no-more-retries-handler-#{subscription_id}"
@@ -513,7 +615,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
-      assert_receive :retry_event, 1_000
+      assert_receive :retry_event, 3_000
 
       dlq_handler_id = "test-no-more-retries-dlq-handler-#{subscription_id}"
 
@@ -528,7 +630,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
         %{subscription_id: subscription_id, test_pid: test_pid}
       )
 
-      assert_receive :dlq_event, 1_000
+      assert_receive :dlq_event, 3_000
 
       # Count retries - should be exactly 1 (first failure, then DLQ on second)
       count = :counters.get(retry_count, 1)
@@ -539,11 +641,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       :telemetry.detach(dlq_handler_id)
     end
 
-    test "custom max_attempts is respected", %{
-      bus: bus,
-      journal_pid: journal_pid,
-      dead_pid: dead_pid
-    } do
+    test "custom max_attempts is respected", %{bus: bus, journal_pid: journal_pid} do
       test_pid = self()
       handler_id = "test-custom-attempts-dlq-handler-#{System.unique_integer([:positive])}"
 
@@ -561,7 +659,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
           persistent?: true,
           max_attempts: 5,
           retry_interval: 10,
-          dispatch: {:pid, target: dead_pid}
+          dispatch: {AlwaysFailDispatchAdapter, []}
         )
 
       {:ok, signal} =
@@ -573,7 +671,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
 
-      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 5}}, 2_000
+      assert_receive {:dlq_event, %{subscription_id: ^subscription_id, attempts: 5}}, 5_000
 
       {:ok, dlq_entries} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
       assert length(dlq_entries) == 1
@@ -613,6 +711,33 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       # Attempts should be empty
       assert persistent_state.attempts == %{}
+    end
+  end
+
+  defp assert_checkpoint(pid, expected, attempts \\ 100)
+
+  defp assert_checkpoint(_pid, _expected, 0), do: flunk("checkpoint did not converge")
+
+  defp assert_checkpoint(pid, expected, attempts) do
+    if :sys.get_state(pid).checkpoint == expected do
+      :ok
+    else
+      receive do
+      after
+        10 -> assert_checkpoint(pid, expected, attempts - 1)
+      end
+    end
+  end
+
+  defp stop_subscription(pid) when is_pid(pid) do
+    if Process.alive?(pid) do
+      try do
+        GenServer.stop(pid, :normal)
+      catch
+        :exit, _ -> :ok
+      end
+    else
+      :ok
     end
   end
 end

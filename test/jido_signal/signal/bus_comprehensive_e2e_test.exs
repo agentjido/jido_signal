@@ -282,12 +282,23 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       assert map_size(read_snapshot2.signals) >= 2, "test.** should match multiple signals"
 
       # Test error cases for snapshot operations
-      assert {:error, :not_found} = Bus.snapshot_read(bus_pid, "non-existent-snapshot")
+      assert {:error, %Error.InvalidInputError{} = read_error} =
+               Bus.snapshot_read(bus_pid, "non-existent-snapshot")
+
+      assert read_error.details[:reason] == :snapshot_not_found
 
       # Test snapshot deletion
       assert :ok = Bus.snapshot_delete(bus_pid, snapshot1.id)
-      assert {:error, :not_found} = Bus.snapshot_read(bus_pid, snapshot1.id)
-      assert {:error, :not_found} = Bus.snapshot_delete(bus_pid, "non-existent-snapshot")
+
+      assert {:error, %Error.InvalidInputError{} = post_delete_read_error} =
+               Bus.snapshot_read(bus_pid, snapshot1.id)
+
+      assert post_delete_read_error.details[:reason] == :snapshot_not_found
+
+      assert {:error, %Error.InvalidInputError{} = delete_error} =
+               Bus.snapshot_delete(bus_pid, "non-existent-snapshot")
+
+      assert delete_error.details[:reason] == :snapshot_not_found
 
       # ===== TEST 7: DISCONNECTION AND RECONNECTION =====
       Logger.info("Testing disconnection and reconnection")

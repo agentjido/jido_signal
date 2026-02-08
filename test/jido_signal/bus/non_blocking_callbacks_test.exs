@@ -335,4 +335,75 @@ defmodule Jido.Signal.Bus.NonBlockingCallbacksTest do
 
     assert_receive {:ack_result, :ok}, 1_000
   end
+
+  test "gc_log skips overlapping work when a gc task is already in progress" do
+    bus_name = :"non_blocking_gc_overlap_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name, log_ttl_ms: 60_000})
+    {:ok, bus_pid} = Bus.whereis(bus_name)
+
+    expired_signal =
+      Signal.new!(type: "test.gc.overlap", source: "/test", data: %{value: 1})
+      |> Map.put(
+        :time,
+        DateTime.utc_now() |> DateTime.add(-120, :second) |> DateTime.to_iso8601()
+      )
+
+    fake_ref = make_ref()
+
+    :sys.replace_state(bus_pid, fn state ->
+      state
+      |> Map.put(:log, %{"log-1" => expired_signal})
+      |> Map.put(:gc_task_ref, fake_ref)
+      |> Map.put(:gc_task_pid, self())
+    end)
+
+    send(bus_pid, :gc_log)
+    assert {:ok, []} == Task.async(fn -> Bus.snapshot_list(bus_name) end) |> Task.yield(200)
+
+    state = :sys.get_state(bus_pid)
+    assert Map.get(state, :gc_task_ref) == fake_ref
+    assert map_size(state.log) == 1
+  end
+
+  test "gc_log defers prune work to an async task and clears task ref after apply" do
+    bus_name = :"non_blocking_gc_async_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name, log_ttl_ms: 60_000})
+    {:ok, bus_pid} = Bus.whereis(bus_name)
+
+    expired_signal =
+      Signal.new!(type: "test.gc.async", source: "/test", data: %{value: 1})
+      |> Map.put(
+        :time,
+        DateTime.utc_now() |> DateTime.add(-120, :second) |> DateTime.to_iso8601()
+      )
+
+    :sys.replace_state(bus_pid, fn state ->
+      state
+      |> Map.put(:log, %{"log-1" => expired_signal})
+      |> Map.put(:gc_task_ref, nil)
+      |> Map.put(:gc_task_pid, nil)
+    end)
+
+    send(bus_pid, :gc_log)
+    assert_eventually(fn -> is_reference(Map.get(:sys.get_state(bus_pid), :gc_task_ref)) end)
+
+    assert_eventually(fn ->
+      state = :sys.get_state(bus_pid)
+      map_size(state.log) == 0 and is_nil(Map.get(state, :gc_task_ref))
+    end)
+  end
+
+  defp assert_eventually(fun, attempts \\ 200)
+  defp assert_eventually(_fun, 0), do: flunk("condition not met")
+
+  defp assert_eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        10 -> assert_eventually(fun, attempts - 1)
+      end
+    end
+  end
 end

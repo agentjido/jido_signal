@@ -171,4 +171,50 @@ defmodule JidoTest.Signal.Bus.SubscriberTest do
       assert {:ok, []} = InMemory.get_dlq_entries(subscription_id, journal_pid)
     end
   end
+
+  describe "schema validation" do
+    test "accepts tuple dispatch config and list of dispatch configs" do
+      created_at = DateTime.utc_now()
+
+      base = %Subscriber{
+        id: "schema-sub-1",
+        path: "schema.*",
+        dispatch: {:pid, [target: self(), delivery_mode: :async]},
+        persistent?: false,
+        persistence_pid: nil,
+        disconnected?: false,
+        created_at: created_at
+      }
+
+      assert {:ok, parsed_tuple} =
+               Zoi.parse(Subscriber.schema(), base)
+
+      assert parsed_tuple.dispatch == {:pid, [target: self(), delivery_mode: :async]}
+
+      assert {:ok, parsed_list} =
+               Zoi.parse(Subscriber.schema(), %{
+                 base
+                 | id: "schema-sub-2",
+                   dispatch: [{:noop, []}, {:pid, [target: self(), delivery_mode: :async]}]
+               })
+
+      assert is_list(parsed_list.dispatch)
+    end
+
+    test "rejects non-dispatch values for dispatch field" do
+      assert {:error, _errors} =
+               Zoi.parse(
+                 Subscriber.schema(),
+                 %Subscriber{
+                   id: "schema-sub-3",
+                   path: "schema.*",
+                   dispatch: "invalid-dispatch-shape",
+                   persistent?: false,
+                   persistence_pid: nil,
+                   disconnected?: false,
+                   created_at: DateTime.utc_now()
+                 }
+               )
+    end
+  end
 end

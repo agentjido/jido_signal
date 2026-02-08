@@ -137,7 +137,7 @@ defmodule Jido.Signal.Ext.Registry do
   @spec register(module(), keyword()) :: :ok
   def register(module, opts \\ []) when is_atom(module) do
     namespace = module.namespace()
-    registry_name = registry_name(opts)
+    registry_name = registry_name_for_register(opts)
 
     # Handle the case where the registry process is not started (e.g., during compilation)
     try do
@@ -320,6 +320,16 @@ defmodule Jido.Signal.Ext.Registry do
   defp registry_name(opts) do
     if Keyword.has_key?(opts, :jido) do
       Names.ext_registry(opts)
+    else
+      @registry_name
+    end
+  end
+
+  defp registry_name_for_register(opts) do
+    if Keyword.has_key?(opts, :jido) do
+      opts
+      |> Keyword.put(:allow_unregistered?, true)
+      |> Names.ext_registry()
     else
       @registry_name
     end

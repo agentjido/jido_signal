@@ -9,9 +9,9 @@ defmodule Jido.Signal.Bus.State do
   """
 
   alias Jido.Signal
+  alias Jido.Signal.Error
   alias Jido.Signal.ID
   alias Jido.Signal.Router
-  alias Jido.Signal.Error
   alias Jido.Signal.Telemetry
 
   @schema Zoi.struct(
@@ -38,7 +38,9 @@ defmodule Jido.Signal.Bus.State do
                 Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
               max_log_size: Zoi.default(Zoi.integer(), 100_000) |> Zoi.optional(),
               log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional(),
-              gc_timer_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional()
+              gc_timer_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
+              gc_task_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
+              gc_task_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional()
             }
           )
 
@@ -85,7 +87,9 @@ defmodule Jido.Signal.Bus.State do
       partition_supervisor_monitor_ref: Keyword.get(opts, :partition_supervisor_monitor_ref),
       max_log_size: Keyword.get(opts, :max_log_size, 100_000),
       log_ttl_ms: Keyword.get(opts, :log_ttl_ms),
-      gc_timer_ref: Keyword.get(opts, :gc_timer_ref)
+      gc_timer_ref: Keyword.get(opts, :gc_timer_ref),
+      gc_task_ref: Keyword.get(opts, :gc_task_ref),
+      gc_task_pid: Keyword.get(opts, :gc_task_pid)
     }
   end
 

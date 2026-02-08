@@ -32,6 +32,39 @@ defmodule Jido.Signal.Names do
   """
 
   @type opts :: keyword()
+  @instance_registry_key {__MODULE__, :registered_instances}
+  @instance_registry_lock {__MODULE__, :instance_registry_lock}
+  @instance_registry_lock_retries 3
+
+  @doc """
+  Registers an instance as approved for scoped name resolution.
+  """
+  @spec register_instance(atom()) :: :ok
+  def register_instance(instance) when is_atom(instance) do
+    with_instance_registry_lock(fn instances ->
+      MapSet.put(instances, instance)
+    end)
+  end
+
+  @doc """
+  Removes an instance from scoped-name approval.
+  """
+  @spec unregister_instance(atom()) :: :ok
+  def unregister_instance(instance) when is_atom(instance) do
+    with_instance_registry_lock(fn instances ->
+      MapSet.delete(instances, instance)
+    end)
+  end
+
+  @doc """
+  Returns true when an instance has been approved via `register_instance/1`.
+  """
+  @spec registered_instance?(atom()) :: boolean()
+  def registered_instance?(instance) when is_atom(instance) do
+    registered_instances()
+    |> normalize_instances()
+    |> MapSet.member?(instance)
+  end
 
   @doc """
   Returns the Registry name for the given instance scope.
@@ -141,16 +174,14 @@ defmodule Jido.Signal.Names do
         default
 
       instance when is_atom(instance) ->
-        # Get the relative path after Jido (e.g., Signal.Registry from Jido.Signal.Registry)
-        default_parts = Module.split(default)
-
-        relative_parts =
-          case default_parts do
-            ["Jido" | rest] -> rest
-            parts -> parts
-          end
-
-        Module.concat([instance | relative_parts])
+        if instance_allowed?(opts, instance) do
+          default
+          |> scoped_parts()
+          |> then(&Module.concat([instance | &1]))
+        else
+          raise ArgumentError,
+                "Unregistered jido instance #{inspect(instance)}. Start it via Jido.Signal.Instance.start_link/1 before using jido-scoped APIs."
+        end
     end
   end
 
@@ -161,4 +192,74 @@ defmodule Jido.Signal.Names do
   def instance(opts) when is_list(opts) do
     Keyword.get(opts, :jido)
   end
+
+  defp instance_allowed?(opts, instance) do
+    Keyword.get(opts, :allow_unregistered?, false) or
+      registered_instance?(instance) or
+      running_instance_supervisor?(instance)
+  end
+
+  defp running_instance_supervisor?(instance) when is_atom(instance) do
+    supervisor_name =
+      scoped([jido: instance, allow_unregistered?: true], Jido.Signal.Supervisor)
+
+    case Process.whereis(supervisor_name) do
+      pid when is_pid(pid) ->
+        if Process.alive?(pid) do
+          # Self-heal transient registration drift when runtime is demonstrably alive.
+          :ok = register_instance(instance)
+          true
+        else
+          false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp scoped_parts(default) do
+    case Module.split(default) do
+      ["Jido" | rest] -> rest
+      parts -> parts
+    end
+  end
+
+  defp registered_instances do
+    :persistent_term.get(@instance_registry_key, MapSet.new())
+    |> normalize_instances()
+  end
+
+  defp with_instance_registry_lock(updater) when is_function(updater, 1) do
+    with_instance_registry_lock(updater, @instance_registry_lock_retries)
+  end
+
+  defp with_instance_registry_lock(updater, retries_left)
+       when is_function(updater, 1) and retries_left > 0 do
+    result =
+      :global.trans(@instance_registry_lock, fn ->
+        instances = registered_instances()
+        new_instances = updater.(instances) |> normalize_instances()
+        :persistent_term.put(@instance_registry_key, new_instances)
+        :ok
+      end)
+
+    case result do
+      :ok -> :ok
+      {:aborted, _reason} -> with_instance_registry_lock(updater, retries_left - 1)
+      _other -> :ok
+    end
+  end
+
+  defp with_instance_registry_lock(updater, 0) when is_function(updater, 1) do
+    # Best-effort fallback to avoid hard failure if lock acquisition is transiently unavailable.
+    instances = registered_instances()
+    new_instances = updater.(instances) |> normalize_instances()
+    :persistent_term.put(@instance_registry_key, new_instances)
+    :ok
+  end
+
+  defp normalize_instances(%MapSet{} = instances), do: instances
+  defp normalize_instances(instances) when is_list(instances), do: MapSet.new(instances)
+  defp normalize_instances(_other), do: MapSet.new()
 end

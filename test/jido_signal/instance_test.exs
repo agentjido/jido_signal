@@ -1,11 +1,11 @@
 defmodule Jido.Signal.InstanceTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Signal.Instance
+  alias Jido.Signal
   alias Jido.Signal.Bus
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Instance
   alias Jido.Signal.Names
-  alias Jido.Signal
 
   describe "Names.scoped/2" do
     test "returns default when no jido option" do
@@ -20,19 +20,51 @@ defmodule Jido.Signal.InstanceTest do
       assert Names.task_supervisor(jido: nil) == Jido.Signal.TaskSupervisor
     end
 
-    test "scopes names when jido instance provided" do
-      assert Names.registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Registry
-      assert Names.task_supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.TaskSupervisor
-      assert Names.supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.Supervisor
-      assert Names.ext_registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Ext.Registry
+    test "scopes names for registered instances only" do
+      instance = :"ScopedNames#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
 
-      assert Names.bus_runtime_supervisor(jido: MyApp.Jido) ==
-               MyApp.Jido.Signal.Bus.RuntimeSupervisor
+      assert Names.registry(jido: instance) ==
+               Module.concat([instance, "Signal", "Registry"])
+
+      assert Names.task_supervisor(jido: instance) ==
+               Module.concat([instance, "Signal", "TaskSupervisor"])
+
+      assert Names.supervisor(jido: instance) ==
+               Module.concat([instance, "Signal", "Supervisor"])
+
+      assert Names.ext_registry(jido: instance) ==
+               Module.concat([instance, "Signal", "Ext", "Registry"])
+
+      assert Names.bus_runtime_supervisor(jido: instance) ==
+               Module.concat([instance, "Signal", "Bus", "RuntimeSupervisor"])
+
+      Instance.stop(instance)
     end
 
-    test "handles deeply nested instance names" do
-      assert Names.registry(jido: MyApp.Multi.Level.Jido) ==
-               MyApp.Multi.Level.Jido.Signal.Registry
+    test "raises for unregistered jido instances" do
+      unknown_instance = :"UnknownScoped#{System.unique_integer([:positive])}"
+
+      assert_raise ArgumentError, fn ->
+        Names.registry(jido: unknown_instance)
+      end
+    end
+
+    test "recovers scoped resolution when registration entry is missing but supervisor is running" do
+      instance = :"ScopedRecover#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      # Simulate lost registration state while instance runtime is still alive.
+      assert :ok = Names.unregister_instance(instance)
+      refute Names.registered_instance?(instance)
+
+      assert Names.registry(jido: instance) ==
+               Module.concat([instance, "Signal", "Registry"])
+
+      # Resolution should self-heal registration state.
+      assert Names.registered_instance?(instance)
+
+      Instance.stop(instance)
     end
   end
 
@@ -140,6 +172,22 @@ defmodule Jido.Signal.InstanceTest do
       assert_receive {:DOWN, ^mon_ref, :process, ^supervisor_pid, _reason}
 
       assert :ok = Instance.stop(instance)
+    end
+
+    test "stop/1 stops running instance even if registration entry is missing" do
+      instance = :"StopRecover#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      supervisor_name = Names.supervisor(jido: instance, allow_unregistered?: true)
+      supervisor_pid = Process.whereis(supervisor_name)
+      assert is_pid(supervisor_pid)
+      assert Process.alive?(supervisor_pid)
+
+      assert :ok = Names.unregister_instance(instance)
+      refute Names.registered_instance?(instance)
+
+      assert :ok = Instance.stop(instance)
+      refute Process.alive?(supervisor_pid)
     end
   end
 

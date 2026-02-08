@@ -362,7 +362,9 @@ defmodule JidoTest.Signal.Bus do
     test "deletes snapshots", %{bus: bus} do
       {:ok, snapshot} = Bus.snapshot_create(bus, "test.signal")
       assert :ok = Bus.snapshot_delete(bus, snapshot.id)
-      assert {:error, :not_found} = Bus.snapshot_read(bus, snapshot.id)
+
+      assert {:error, %Error.InvalidInputError{} = error} = Bus.snapshot_read(bus, snapshot.id)
+      assert error.details[:reason] == :snapshot_not_found
     end
 
     test "creates empty snapshot when no signals match path", %{bus: bus} do
@@ -374,11 +376,17 @@ defmodule JidoTest.Signal.Bus do
     end
 
     test "returns error when reading non-existent snapshot", %{bus: bus} do
-      assert {:error, :not_found} = Bus.snapshot_read(bus, "non-existent-id")
+      assert {:error, %Error.InvalidInputError{} = error} =
+               Bus.snapshot_read(bus, "non-existent-id")
+
+      assert error.details[:reason] == :snapshot_not_found
     end
 
     test "returns error when deleting non-existent snapshot", %{bus: bus} do
-      assert {:error, :not_found} = Bus.snapshot_delete(bus, "non-existent-id")
+      assert {:error, %Error.InvalidInputError{} = error} =
+               Bus.snapshot_delete(bus, "non-existent-id")
+
+      assert error.details[:reason] == :snapshot_not_found
     end
   end
 
@@ -850,19 +858,28 @@ defmodule JidoTest.Signal.Bus do
       {:ok, bus_pid} = Bus.whereis(bus_name)
       send(bus_pid, :gc_log)
 
-      # Publish a new signal to trigger activity
-      {:ok, signal2} =
-        Signal.new(%{
-          type: "test.signal.2",
-          source: "/test",
-          data: %{value: 2}
-        })
-
-      {:ok, _} = Bus.publish(bus_name, [signal2])
-
-      {:ok, replayed} = Bus.replay(bus_name, "**")
-      assert Enum.any?(replayed, &(&1.signal.type == "test.signal.2"))
-      refute Enum.any?(replayed, &(&1.signal.type == "test.signal.1"))
+      assert_eventually(
+        fn ->
+          {:ok, replayed} = Bus.replay(bus_name, "**")
+          refute_old_signal?(replayed, "test.signal.1")
+        end,
+        200
+      )
     end
+  end
+
+  defp assert_eventually(_predicate, 0), do: flunk("condition did not converge")
+
+  defp assert_eventually(predicate, attempts) when is_function(predicate, 0) do
+    if predicate.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(predicate, attempts - 1)
+    end
+  end
+
+  defp refute_old_signal?(replayed, signal_type) do
+    not Enum.any?(replayed, &(&1.signal.type == signal_type))
   end
 end

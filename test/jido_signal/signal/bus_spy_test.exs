@@ -71,6 +71,15 @@ defmodule Jido.Signal.BusSpyTest do
     BusSpy.stop_spy(spy)
   end
 
+  test "start_supervised_spy/1 ties spy lifecycle to returned supervisor" do
+    assert {:ok, spy, supervisor} = BusSpy.start_supervised_spy()
+    assert Process.alive?(spy)
+
+    spy_ref = Process.monitor(spy)
+    assert :ok = Supervisor.stop(supervisor, :normal, 1_000)
+    assert_receive {:DOWN, ^spy_ref, :process, ^spy, _reason}, 1_000
+  end
+
   test "spy can wait for specific signals", %{bus_name: bus_name} do
     spy = BusSpy.start_spy()
 

@@ -302,11 +302,11 @@ defmodule Jido.Signal.Dispatch do
     # Collect ALL errors instead of returning first error
     errors =
       Enum.filter(results, &match?({:error, _}, &1))
-      |> Enum.map(fn {:error, reason} -> reason end)
+      |> Enum.map(fn {:error, reason} -> normalize_aggregate_child_error(reason) end)
 
     case errors do
       [] -> :ok
-      _ -> {:error, errors}
+      _ -> {:error, aggregate_dispatch_error(errors, length(configs))}
     end
   end
 
@@ -486,6 +486,25 @@ defmodule Jido.Signal.Dispatch do
        "Invalid adapter configuration",
        %{field: "config", value: config, adapter: adapter, reason: reason}
      )}
+  end
+
+  defp normalize_aggregate_child_error(%{__exception__: true} = error), do: error
+
+  defp normalize_aggregate_child_error(reason) do
+    Error.dispatch_error("Signal dispatch failed", %{
+      adapter: :unknown,
+      reason: reason,
+      config: :unknown
+    })
+  end
+
+  defp aggregate_dispatch_error(errors, config_count) do
+    Error.dispatch_error("One or more dispatch targets failed", %{
+      reason: :multi_dispatch_failed,
+      errors: errors,
+      error_count: length(errors),
+      config_count: config_count
+    })
   end
 
   defp dispatch_max_concurrency do

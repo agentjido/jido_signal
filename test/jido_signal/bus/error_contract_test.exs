@@ -3,6 +3,7 @@ defmodule Jido.Signal.Bus.ErrorContractTest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.Bus.Supervisor, as: BusSupervisor
   alias Jido.Signal.Error
 
   test "reconnect returns normalized validation error for missing subscription" do
@@ -69,5 +70,34 @@ defmodule Jido.Signal.Bus.ErrorContractTest do
              Bus.snapshot_list(missing_bus)
 
     assert snapshot_error.details[:reason] == :not_found
+  end
+
+  test "snapshot boundaries return normalized structured errors" do
+    bus_name = :"bus_error_snapshot_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name})
+
+    assert {:error, %Error.InvalidInputError{} = read_error} =
+             Bus.snapshot_read(bus_name, "missing-snapshot")
+
+    assert read_error.details[:reason] == :snapshot_not_found
+    assert read_error.details[:field] == :snapshot_id
+
+    assert {:error, %Error.InvalidInputError{} = delete_error} =
+             Bus.snapshot_delete(bus_name, "missing-snapshot")
+
+    assert delete_error.details[:reason] == :snapshot_not_found
+    assert delete_error.details[:field] == :snapshot_id
+  end
+
+  test "public bus boundary rejects non-bus pid targets with normalized error" do
+    bus_name = :"bus_error_invalid_target_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name})
+    {:ok, bus_supervisor_pid} = BusSupervisor.whereis(bus_name)
+
+    assert {:error, %Error.ExecutionFailureError{} = error} =
+             Bus.snapshot_list(bus_supervisor_pid)
+
+    assert error.details[:reason] == :invalid_bus_target
+    assert error.details[:action] == :snapshot_list
   end
 end

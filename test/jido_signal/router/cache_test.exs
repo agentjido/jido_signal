@@ -44,6 +44,61 @@ defmodule Jido.Signal.Router.CacheTest do
     end
   end
 
+  describe "managed lifecycle mode" do
+    test "put_managed/3 removes cache entry when owner process exits" do
+      {:ok, router} = Router.new([{"managed.created", :handler}])
+
+      owner =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      owner_ref = Process.monitor(owner)
+
+      assert :ok = Cache.put_managed(:managed_cache, router, owner)
+      assert Cache.cached?(:managed_cache)
+
+      send(owner, :stop)
+      assert_receive {:DOWN, ^owner_ref, :process, ^owner, :normal}, 1_000
+
+      assert_eventually(fn -> not Cache.cached?(:managed_cache) end)
+    end
+
+    test "put_managed/3 rebinds lifecycle ownership on cache overwrite" do
+      {:ok, router} = Router.new([{"managed.rebind", :handler}])
+
+      owner1 =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      owner2 =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      owner1_ref = Process.monitor(owner1)
+      owner2_ref = Process.monitor(owner2)
+
+      assert :ok = Cache.put_managed(:managed_rebind_cache, router, owner1)
+      assert :ok = Cache.put_managed(:managed_rebind_cache, router, owner2)
+
+      send(owner1, :stop)
+      assert_receive {:DOWN, ^owner1_ref, :process, ^owner1, :normal}, 1_000
+      assert Cache.cached?(:managed_rebind_cache)
+
+      send(owner2, :stop)
+      assert_receive {:DOWN, ^owner2_ref, :process, ^owner2, :normal}, 1_000
+      assert_eventually(fn -> not Cache.cached?(:managed_rebind_cache) end)
+    end
+  end
+
   describe "Cache.delete/1" do
     test "removes a cached router" do
       {:ok, router} = Router.new([{"user.created", :handler1}])
@@ -402,6 +457,20 @@ defmodule Jido.Signal.Router.CacheTest do
       assert metadata.matched == false
 
       :telemetry.detach("test-router-telemetry-nomatch")
+    end
+  end
+
+  defp assert_eventually(fun, attempts \\ 100)
+  defp assert_eventually(_fun, 0), do: flunk("condition not met")
+
+  defp assert_eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        10 -> assert_eventually(fun, attempts - 1)
+      end
     end
   end
 end

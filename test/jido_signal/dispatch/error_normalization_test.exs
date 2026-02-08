@@ -30,10 +30,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
 
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
 
-    {:ok, pid} = Agent.start(fn -> :ok end)
-    Agent.stop(pid)
-
-    config = {:pid, [target: pid, delivery_mode: :async]}
+    config = {:named, [target: {:name, :missing_dispatch_target}, delivery_mode: :async]}
     assert {:error, %Error.DispatchError{}} = Dispatch.dispatch(signal, config)
   end
 
@@ -47,12 +44,21 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     Agent.stop(dead_pid)
 
     configs = [
-      {:pid, [target: dead_pid, delivery_mode: :async]},
+      {:pid, [target: dead_pid, delivery_mode: :sync, timeout: 50]},
       {:named, [target: {:name, :missing_dispatch_target}, delivery_mode: :async]}
     ]
 
-    assert {:error, [%Error.DispatchError{}, %Error.DispatchError{}]} =
+    assert {:error, %Error.DispatchError{} = aggregate_error} =
              Dispatch.dispatch(signal, configs)
+
+    assert aggregate_error.details[:reason] == :multi_dispatch_failed
+    assert aggregate_error.details[:error_count] == 2
+    assert aggregate_error.details[:config_count] == 2
+
+    child_errors = aggregate_error.details[:errors]
+    assert is_list(child_errors)
+    assert length(child_errors) == 2
+    assert Enum.all?(child_errors, &match?(%Error.DispatchError{}, &1))
   end
 
   test "validate_opts returns normalized validation errors when config is invalid" do
@@ -70,7 +76,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     {:ok, pid} = Agent.start(fn -> :ok end)
     Agent.stop(pid)
 
-    config = {:pid, [target: pid, delivery_mode: :async]}
+    config = {:pid, [target: pid, delivery_mode: :sync, timeout: 50]}
 
     result = Dispatch.dispatch(signal, config)
 
@@ -119,7 +125,12 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
 
     configs = [{:noop, []}, {RaisingAdapter, []}]
 
-    assert {:error, [%Error.DispatchError{}]} = Dispatch.dispatch(signal, configs)
+    assert {:error, %Error.DispatchError{} = aggregate_error} =
+             Dispatch.dispatch(signal, configs)
+
+    assert aggregate_error.details[:reason] == :multi_dispatch_failed
+    assert aggregate_error.details[:error_count] == 1
+    assert [%Error.DispatchError{}] = aggregate_error.details[:errors]
   end
 
   test "telemetry events are emitted with correct metadata" do
@@ -158,9 +169,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert metadata.success? == true
 
     # Failed dispatch
-    {:ok, pid} = Agent.start(fn -> :ok end)
-    Agent.stop(pid)
-    config = {:pid, [target: pid, delivery_mode: :async]}
+    config = {:named, [target: {:name, :missing_dispatch_target}, delivery_mode: :async]}
 
     {:error, _} = Dispatch.dispatch(signal, config)
 

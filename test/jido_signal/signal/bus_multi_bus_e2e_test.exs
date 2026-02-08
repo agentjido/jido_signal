@@ -1,5 +1,5 @@
 defmodule Jido.Signal.BusMultiBusE2ETest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Jido.Signal
   alias Jido.Signal.Bus
@@ -226,6 +226,9 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
       assert Process.alive?(found_bus_b)
       assert Process.alive?(bus_a_pid)
       assert Process.alive?(bus_b_pid)
+
+      bus_a_pid = found_bus_a
+      bus_b_pid = found_bus_b
 
       Logger.info("Both buses started successfully")
 
@@ -619,17 +622,25 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
           "load_bus_#{i}_#{:erlang.unique_integer([:positive])}"
         end)
 
+      Enum.each(bus_names, fn name ->
+        start_supervised!(
+          {Bus,
+           name: name,
+           middleware: [
+             {MetricsMiddleware, test_pid: self()}
+           ]}
+        )
+      end)
+
+      wait_until(fn ->
+        Enum.all?(bus_names, fn name ->
+          match?({:ok, pid} when is_pid(pid), Bus.whereis(name))
+        end)
+      end)
+
       bus_pids =
         Enum.map(bus_names, fn name ->
-          {:ok, pid} =
-            start_supervised(
-              {Bus,
-               name: name,
-               middleware: [
-                 {MetricsMiddleware, test_pid: self()}
-               ]}
-            )
-
+          {:ok, pid} = Bus.whereis(name)
           pid
         end)
 

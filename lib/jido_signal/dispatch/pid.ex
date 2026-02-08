@@ -126,12 +126,8 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
 
     case mode do
       :async ->
-        if Process.alive?(target) do
-          send(target, message_format.(signal))
-          :ok
-        else
-          {:error, :process_not_alive}
-        end
+        send(target, message_format.(signal))
+        :ok
 
       :sync ->
         try do

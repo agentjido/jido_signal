@@ -9,6 +9,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   use GenServer
 
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Error
   alias Jido.Signal.ID
   alias Jido.Signal.Telemetry
 
@@ -109,17 +110,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         journal_adapter = Keyword.get(opts, :journal_adapter)
         journal_pid = Keyword.get(opts, :journal_pid)
         bus_name = Keyword.get(opts, :bus_name, :unknown)
+        initial_checkpoint = Keyword.get(opts, :checkpoint, 0)
 
         # Compute checkpoint key (unique per bus + subscription)
         checkpoint_key = "#{bus_name}:#{id}"
-
-        loaded_checkpoint =
-          load_checkpoint(
-            journal_adapter,
-            checkpoint_key,
-            journal_pid,
-            Keyword.get(opts, :checkpoint, 0)
-          )
 
         state = %__MODULE__{
           id: id,
@@ -127,7 +121,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
           bus_pid: Keyword.fetch!(opts, :bus_pid),
           bus_subscription: bus_subscription,
           client_pid: Keyword.get(opts, :client_pid),
-          checkpoint: loaded_checkpoint,
+          checkpoint: initial_checkpoint,
           max_in_flight: Keyword.get(opts, :max_in_flight, 1000),
           max_pending: Keyword.get(opts, :max_pending, 10_000),
           max_attempts: Keyword.get(opts, :max_attempts, 5),
@@ -146,7 +140,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
         state = maybe_monitor_client(state, state.client_pid)
 
-        {:ok, state}
+        {:ok, state, {:continue, :load_checkpoint}}
 
       {:error, reason} ->
         {:stop, reason}
@@ -166,8 +160,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   @impl GenServer
   def handle_call({:ack, _invalid_arg}, _from, state) do
     {:reply,
-     {:error,
-      Jido.Signal.Error.validation_error("invalid ack argument", %{reason: :invalid_ack_argument})},
+     {:error, Error.validation_error("invalid ack argument", %{reason: :invalid_ack_argument})},
      state}
   end
 
@@ -234,6 +227,19 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     state = %{state | work_pending?: false}
     state = drain_pending_batches(state)
     {:noreply, process_pending_signals(state)}
+  end
+
+  @impl GenServer
+  def handle_continue(:load_checkpoint, state) do
+    loaded_checkpoint =
+      load_checkpoint(
+        state.journal_adapter,
+        state.checkpoint_key,
+        state.journal_pid,
+        state.checkpoint
+      )
+
+    {:noreply, %{state | checkpoint: max(state.checkpoint, loaded_checkpoint)}}
   end
 
   @impl GenServer
@@ -330,18 +336,18 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     default_checkpoint
   end
 
-  defp load_checkpoint(journal_adapter, checkpoint_key, journal_pid, _default_checkpoint) do
+  defp load_checkpoint(journal_adapter, checkpoint_key, journal_pid, default_checkpoint) do
     case journal_adapter.get_checkpoint(checkpoint_key, journal_pid) do
       {:ok, checkpoint} ->
         checkpoint
 
       {:error, :not_found} ->
-        0
+        default_checkpoint
 
       {:error, reason} ->
         Logger.warning("Failed to load checkpoint for #{checkpoint_key}: #{inspect(reason)}")
 
-        0
+        default_checkpoint
     end
   end
 

@@ -11,22 +11,12 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
     instance1 = :"TestInstance1_#{System.unique_integer([:positive])}"
     instance2 = :"TestInstance2_#{System.unique_integer([:positive])}"
 
-    {:ok, sup1} = Instance.start_link(name: instance1)
-    {:ok, sup2} = Instance.start_link(name: instance2)
+    {:ok, _sup1} = Instance.start_link(name: instance1)
+    {:ok, _sup2} = Instance.start_link(name: instance2)
 
     on_exit(fn ->
-      # Gracefully stop if still alive, ignore errors
-      try do
-        if Process.alive?(sup1), do: Supervisor.stop(sup1, :normal, 100)
-      catch
-        :exit, _ -> :ok
-      end
-
-      try do
-        if Process.alive?(sup2), do: Supervisor.stop(sup2, :normal, 100)
-      catch
-        :exit, _ -> :ok
-      end
+      _ = Instance.stop(instance1)
+      _ = Instance.stop(instance2)
     end)
 
     {:ok, instance1: instance1, instance2: instance2}

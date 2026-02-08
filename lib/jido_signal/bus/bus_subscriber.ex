@@ -12,12 +12,16 @@ defmodule Jido.Signal.Bus.Subscriber do
   alias Jido.Signal.Error
   alias Jido.Signal.Router
 
+  @dispatch_opts_schema Zoi.list(Zoi.tuple({Zoi.atom(), Zoi.any()}))
+  @dispatch_config_schema Zoi.tuple({Zoi.atom(), @dispatch_opts_schema})
+  @dispatch_schema Zoi.union([@dispatch_config_schema, Zoi.list(@dispatch_config_schema)])
+
   @schema Zoi.struct(
             __MODULE__,
             %{
               id: Zoi.string(),
               path: Zoi.string(),
-              dispatch: Zoi.any(),
+              dispatch: @dispatch_schema,
               persistent?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               persistence_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               disconnected?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
