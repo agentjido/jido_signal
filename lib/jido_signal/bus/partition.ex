@@ -8,7 +8,9 @@ defmodule Jido.Signal.Bus.Partition do
   use GenServer
 
   alias Jido.Signal.Bus.DispatchPipeline
+  alias Jido.Signal.Context
   alias Jido.Signal.Names
+  alias Jido.Signal.Retry
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
@@ -56,42 +58,27 @@ defmodule Jido.Signal.Bus.Partition do
   def start_link(opts) do
     partition_id = Keyword.fetch!(opts, :partition_id)
     bus_name = Keyword.fetch!(opts, :bus_name)
-    do_start_link(opts, bus_name, partition_id, 3)
+    name = via_tuple(bus_name, partition_id, opts)
+
+    Retry.until(3, fn -> do_start_link(opts, name) end,
+      delay_ms: 10,
+      factor: 1.0,
+      on_exhausted: {:error, :name_conflict}
+    )
   end
 
-  defp do_start_link(opts, bus_name, partition_id, attempts) do
-    case GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id, opts)) do
+  defp do_start_link(opts, name) do
+    case GenServer.start_link(__MODULE__, opts, name: name) do
       {:ok, pid} ->
         {:ok, pid}
 
       {:error, {:already_started, pid}} when is_pid(pid) ->
-        resolve_existing_partition(
-          pid,
-          fn -> do_start_link(opts, bus_name, partition_id, attempts - 1) end,
-          attempts
-        )
+        if Process.alive?(pid), do: {:ok, pid}, else: :retry
 
       other ->
         other
     end
   end
-
-  defp resolve_existing_partition(pid, retry_fun, attempts) do
-    if Process.alive?(pid) do
-      {:ok, pid}
-    else
-      retry_or_conflict(retry_fun, attempts)
-    end
-  end
-
-  defp retry_or_conflict(retry_fun, attempts) when attempts > 0 do
-    receive do
-    after
-      10 -> retry_fun.()
-    end
-  end
-
-  defp retry_or_conflict(_retry_fun, _attempts), do: {:error, :name_conflict}
 
   @doc """
   Returns a via tuple for looking up a partition by bus name and partition ID.
@@ -299,13 +286,13 @@ defmodule Jido.Signal.Bus.Partition do
   end
 
   defp dispatch_to_subscription(signal, subscription, _subscription_id, _uuid_signal_pairs, state) do
-    DispatchPipeline.dispatch_async(signal, subscription, jido_opts(state))
+    DispatchPipeline.dispatch_async(signal, subscription, Context.jido_opts(state))
   end
 
   defp start_dispatch_task(state, signals, uuid_signal_pairs, context) do
     task =
       Task.Supervisor.async_nolink(
-        Names.task_supervisor(jido_opts(state)),
+        Names.task_supervisor(Context.jido_opts(state)),
         fn ->
           dispatch_to_subscriptions(state, signals, uuid_signal_pairs, context)
           :ok
@@ -349,7 +336,4 @@ defmodule Jido.Signal.Bus.Partition do
       Task.shutdown(task, :brutal_kill)
     end)
   end
-
-  defp jido_opts(%{jido: nil}), do: []
-  defp jido_opts(%{jido: instance}), do: [jido: instance]
 end

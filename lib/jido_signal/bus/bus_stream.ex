@@ -9,6 +9,8 @@ defmodule Jido.Signal.Bus.Stream do
   """
 
   alias Jido.Signal
+  alias Jido.Signal.Bus.PersistentRef
+  alias Jido.Signal.Bus.SignalValidation
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
@@ -117,7 +119,7 @@ defmodule Jido.Signal.Bus.Stream do
   end
 
   def publish(%BusState{} = state, signals) when is_list(signals) do
-    with :ok <- validate_signals(signals),
+    with :ok <- SignalValidation.validate_signals(signals),
          {:ok, new_state, _new_signals} <- BusState.append_signals(state, signals) do
       route_signals_to_subscribers(signals, new_state.subscriptions)
       {:ok, new_state}
@@ -149,7 +151,8 @@ defmodule Jido.Signal.Bus.Stream do
 
       subscription ->
         target =
-          Map.get(subscription, :persistence_ref) || Map.get(subscription, :persistence_pid)
+          PersistentRef.target(Map.get(subscription, :persistence_ref)) ||
+            PersistentRef.target(Map.get(subscription, :persistence_pid))
 
         if subscription.persistent? && target do
           # Send ack to persistent subscription process
@@ -177,18 +180,5 @@ defmodule Jido.Signal.Bus.Stream do
   @spec clear(BusState.t()) :: {:ok, BusState.t()}
   def clear(%BusState{} = state) do
     BusState.clear_log(state)
-  end
-
-  @spec validate_signals(list(term())) :: :ok | {:error, term()}
-  defp validate_signals(signals) do
-    invalid_signals =
-      Enum.reject(signals, fn signal ->
-        is_struct(signal, Signal)
-      end)
-
-    case invalid_signals do
-      [] -> :ok
-      _ -> {:error, :invalid_signals}
-    end
   end
 end

@@ -231,6 +231,31 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
     end
   end
 
+  @doc """
+  Returns all stored signals.
+  """
+  @impl true
+  def get_all_signals(_pid \\ nil) do
+    start_time = System.monotonic_time(:microsecond)
+
+    result =
+      Memento.transaction(fn ->
+        Memento.Query.all(Tables.Signal)
+      end)
+
+    duration_us = System.monotonic_time(:microsecond) - start_time
+    emit_telemetry(:get_all_signals, duration_us)
+
+    case result do
+      {:ok, records} ->
+        Enum.map(records, fn %Tables.Signal{signal: signal} -> signal end)
+
+      {:error, reason} ->
+        Logger.warning("Failed to fetch all journal signals from mnesia: #{inspect(reason)}")
+        []
+    end
+  end
+
   @impl true
   def put_checkpoint(subscription_id, checkpoint, _pid) do
     start_time = System.monotonic_time(:microsecond)

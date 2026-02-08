@@ -16,6 +16,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
   alias Jido.Signal
   alias Jido.Signal.Bus.Middleware
   alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.Context
   alias Jido.Signal.Error
   alias Jido.Signal.Names
   alias Jido.Signal.Telemetry
@@ -264,7 +265,7 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
 
   @spec run_with_timeout((-> term()), pos_integer(), module(), context()) :: term()
   defp run_with_timeout(fun, timeout_ms, module, context) do
-    task_supervisor = Names.task_supervisor(context_jido_opts(context))
+    task_supervisor = Names.task_supervisor(Context.jido_opts(context))
     task = Task.Supervisor.async_nolink(task_supervisor, fun)
 
     case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
@@ -286,10 +287,6 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
          Error.execution_error("Middleware timeout", %{module: module, timeout_ms: timeout_ms})}
     end
   end
-
-  defp context_jido_opts(%{jido: nil}), do: []
-  defp context_jido_opts(%{jido: instance}) when is_atom(instance), do: [jido: instance]
-  defp context_jido_opts(_context), do: []
 
   # Helper functions for before_publish
   defp execute_before_publish_callback(module, state, current_signals, context, timeout_ms) do

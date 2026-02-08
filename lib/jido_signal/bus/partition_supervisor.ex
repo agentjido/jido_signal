@@ -9,6 +9,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
 
   alias Jido.Signal.Bus.Partition
   alias Jido.Signal.Names
+  alias Jido.Signal.Retry
 
   @doc """
   Starts the partition supervisor.
@@ -25,42 +26,27 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     bus_name = Keyword.fetch!(opts, :bus_name)
-    do_start_link(opts, bus_name, 3)
+    name = via_tuple(bus_name, opts)
+
+    Retry.until(3, fn -> do_start_link(opts, name) end,
+      delay_ms: 10,
+      factor: 1.0,
+      on_exhausted: {:error, :name_conflict}
+    )
   end
 
-  defp do_start_link(opts, bus_name, attempts) do
-    case Supervisor.start_link(__MODULE__, opts, name: via_tuple(bus_name, opts)) do
+  defp do_start_link(opts, name) do
+    case Supervisor.start_link(__MODULE__, opts, name: name) do
       {:ok, pid} ->
         {:ok, pid}
 
       {:error, {:already_started, pid}} when is_pid(pid) ->
-        resolve_existing_supervisor(
-          pid,
-          fn -> do_start_link(opts, bus_name, attempts - 1) end,
-          attempts
-        )
+        if Process.alive?(pid), do: {:ok, pid}, else: :retry
 
       other ->
         other
     end
   end
-
-  defp resolve_existing_supervisor(pid, retry_fun, attempts) do
-    if Process.alive?(pid) do
-      {:ok, pid}
-    else
-      retry_or_conflict(retry_fun, attempts)
-    end
-  end
-
-  defp retry_or_conflict(retry_fun, attempts) when attempts > 0 do
-    receive do
-    after
-      10 -> retry_fun.()
-    end
-  end
-
-  defp retry_or_conflict(_retry_fun, _attempts), do: {:error, :name_conflict}
 
   @doc """
   Returns a via tuple for looking up a partition supervisor by bus name.

@@ -278,11 +278,16 @@ defmodule Jido.Signal.Journal do
   end
 
   defp get_all_signals(%__MODULE__{adapter: adapter}) do
-    if function_exported?(adapter, :get_all_signals, 0) do
-      adapter.get_all_signals()
-    else
-      Logger.debug("Journal adapter #{inspect(adapter)} does not support get_all_signals/0")
-      []
+    cond do
+      function_exported?(adapter, :get_all_signals, 0) ->
+        adapter.get_all_signals()
+
+      function_exported?(adapter, :get_all_signals, 1) ->
+        adapter.get_all_signals(nil)
+
+      true ->
+        Logger.debug("Journal adapter #{inspect(adapter)} does not support get_all_signals")
+        []
     end
   end
 
@@ -296,7 +301,16 @@ defmodule Jido.Signal.Journal do
   end
 
   defp call_adapter(%__MODULE__{adapter: adapter} = _journal, function, args) do
-    apply(adapter, function, args)
+    cond do
+      function_exported?(adapter, function, length(args)) ->
+        apply(adapter, function, args)
+
+      function_exported?(adapter, function, length(args) + 1) ->
+        apply(adapter, function, args ++ [nil])
+
+      true ->
+        {:error, {:unsupported_adapter_callback, function, length(args)}}
+    end
   end
 
   defp do_trace_chain(_journal, chain, _direction, _visited) when length(chain) > 100 do

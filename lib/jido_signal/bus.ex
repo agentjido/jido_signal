@@ -44,16 +44,20 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Bus.DispatchPipeline
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Partition
-  alias Jido.Signal.Bus.PersistentSubscription
+  alias Jido.Signal.Bus.PersistentRef
+  alias Jido.Signal.Bus.SignalValidation
   alias Jido.Signal.Bus.Snapshot
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Bus.Supervisor, as: BusSupervisor
+  alias Jido.Signal.Config
+  alias Jido.Signal.Context
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.ID
   alias Jido.Signal.Names
+  alias Jido.Signal.Retry
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
@@ -147,7 +151,7 @@ defmodule Jido.Signal.Bus do
   defp init_journal_adapter(name, opts) do
     journal_adapter =
       Keyword.get(opts, :journal_adapter) ||
-        Application.get_env(:jido_signal, :journal_adapter)
+        Config.get_env(:journal_adapter)
 
     existing_journal_pid = Keyword.get(opts, :journal_pid)
 
@@ -189,23 +193,18 @@ defmodule Jido.Signal.Bus do
   defp resolve_named_process(nil), do: {:error, :runtime_supervisor_child_missing}
 
   defp resolve_named_process(name) do
-    resolve_named_process(name, 10)
-  end
-
-  defp resolve_named_process(_name, 0), do: {:error, :runtime_supervisor_child_missing}
-
-  defp resolve_named_process(name, attempts) do
-    case GenServer.whereis(name) do
-      nil ->
-        receive do
-        after
-          10 ->
-            resolve_named_process(name, attempts - 1)
+    Retry.until(
+      10,
+      fn ->
+        case GenServer.whereis(name) do
+          nil -> :retry
+          pid when is_pid(pid) -> {:ok, pid}
         end
-
-      pid when is_pid(pid) ->
-        {:ok, pid}
-    end
+      end,
+      delay_ms: 10,
+      factor: 1.0,
+      on_exhausted: {:error, :runtime_supervisor_child_missing}
+    )
   end
 
   defp sync_partition_middleware(
@@ -224,9 +223,9 @@ defmodule Jido.Signal.Bus do
     partition_ids = 0..(partition_count - 1)
 
     Enum.each(partition_ids, fn partition_id ->
-      partition = Partition.via_tuple(name, partition_id, jido_opts(opts))
+      partition = Partition.via_tuple(name, partition_id, Context.jido_opts(opts))
 
-      case retry_partition_middleware_update(partition, middleware, 20) do
+      case retry_partition_middleware_update(partition, middleware) do
         :ok ->
           :ok
 
@@ -260,21 +259,19 @@ defmodule Jido.Signal.Bus do
     :exit, reason -> {:error, reason}
   end
 
-  defp retry_partition_middleware_update(_partition, _middleware, 0),
-    do: {:error, :partition_unavailable}
-
-  defp retry_partition_middleware_update(partition, middleware, attempts) do
-    case safe_partition_middleware_update(partition, middleware) do
-      :ok ->
-        :ok
-
-      {:error, _reason} when attempts > 0 ->
-        receive do
-        after
-          10 ->
-            retry_partition_middleware_update(partition, middleware, attempts - 1)
+  defp retry_partition_middleware_update(partition, middleware) do
+    Retry.until(
+      20,
+      fn ->
+        case safe_partition_middleware_update(partition, middleware) do
+          :ok -> :ok
+          {:error, _reason} -> :retry
         end
-    end
+      end,
+      delay_ms: 10,
+      factor: 1.0,
+      on_exhausted: {:error, :partition_unavailable}
+    )
   end
 
   defp do_init_journal_adapter(_name, journal_adapter, existing_pid)
@@ -420,8 +417,36 @@ defmodule Jido.Signal.Bus do
     GenServer.start_link(__MODULE__, {name, opts}, name: via_tuple(name, opts))
   end
 
-  defdelegate via_tuple(name, opts \\ []), to: Jido.Signal.Util
-  defdelegate whereis(server, opts \\ []), to: Jido.Signal.Util
+  @doc """
+  Returns a namespaced bus registry tuple.
+
+  Uses `{:bus, bus_name}` to avoid key collisions with other registry users.
+  """
+  @spec via_tuple(atom() | binary(), keyword()) :: {:via, Registry, {module(), tuple()}}
+  def via_tuple(name, opts \\ []) when is_atom(name) or is_binary(name) do
+    {:via, Registry, {registry(opts), {:bus, name}}}
+  end
+
+  @doc """
+  Resolves a bus pid from pid/name/registry tuple input.
+
+  Supports both the new namespaced key (`{:bus, name}`) and legacy plain-name
+  key for migration compatibility.
+  """
+  @spec whereis(server(), keyword()) :: {:ok, pid()} | {:error, :not_found}
+  def whereis(server, opts \\ [])
+
+  def whereis(pid, _opts) when is_pid(pid), do: {:ok, pid}
+
+  def whereis({name, reg}, _opts) when is_atom(reg) do
+    resolve_bus_in_registry(name, reg)
+  end
+
+  def whereis(name, opts) when is_atom(name) or is_binary(name) do
+    resolve_bus_in_registry(name, registry(opts))
+  end
+
+  def whereis(_server, _opts), do: {:error, :not_found}
 
   @doc """
   Subscribes to signals matching the given path pattern.
@@ -675,7 +700,7 @@ defmodule Jido.Signal.Bus do
   defp start_async_reply(state, from, fun) do
     task =
       Task.Supervisor.async_nolink(
-        Names.task_supervisor(jido_opts(state)),
+        Names.task_supervisor(Context.jido_opts(state)),
         fun
       )
 
@@ -703,7 +728,7 @@ defmodule Jido.Signal.Bus do
       partition_id = Partition.partition_for(subscription_id, state.partition_count)
 
       GenServer.cast(
-        Partition.via_tuple(state.name, partition_id, jido_opts(state)),
+        Partition.via_tuple(state.name, partition_id, Context.jido_opts(state)),
         {:remove_subscription, subscription_id}
       )
     end
@@ -717,7 +742,7 @@ defmodule Jido.Signal.Bus do
   def handle_call({:publish, signals}, from, state) do
     task =
       Task.Supervisor.async_nolink(
-        Names.task_supervisor(jido_opts(state)),
+        Names.task_supervisor(Context.jido_opts(state)),
         fn -> run_publish_pipeline(state, signals) end
       )
 
@@ -737,7 +762,7 @@ defmodule Jido.Signal.Bus do
   def handle_call({:snapshot_create, path}, from, state) do
     task =
       Task.Supervisor.async_nolink(
-        Names.task_supervisor(jido_opts(state)),
+        Names.task_supervisor(Context.jido_opts(state)),
         fn -> Snapshot.create(state, path) end
       )
 
@@ -819,7 +844,7 @@ defmodule Jido.Signal.Bus do
   def handle_call({:dlq_entries, subscription_id}, from, state) do
     task =
       Task.Supervisor.async_nolink(
-        Names.task_supervisor(jido_opts(state)),
+        Names.task_supervisor(Context.jido_opts(state)),
         fn -> adapter_get_dlq_entries(state, subscription_id, []) end
       )
 
@@ -834,7 +859,7 @@ defmodule Jido.Signal.Bus do
   def handle_call({:redrive_dlq, subscription_id, opts}, from, state) do
     task =
       Task.Supervisor.async_nolink(
-        Names.task_supervisor(jido_opts(state)),
+        Names.task_supervisor(Context.jido_opts(state)),
         fn -> do_redrive_dlq(state, subscription_id, opts) end
       )
 
@@ -849,7 +874,7 @@ defmodule Jido.Signal.Bus do
   def handle_call({:clear_dlq, subscription_id}, from, state) do
     task =
       Task.Supervisor.async_nolink(
-        Names.task_supervisor(jido_opts(state)),
+        Names.task_supervisor(Context.jido_opts(state)),
         fn -> adapter_clear_dlq(state, subscription_id, []) end
       )
 
@@ -903,7 +928,7 @@ defmodule Jido.Signal.Bus do
     partition_id = Partition.partition_for(subscription_id, state.partition_count)
 
     GenServer.cast(
-      Partition.via_tuple(state.name, partition_id, jido_opts(state)),
+      Partition.via_tuple(state.name, partition_id, Context.jido_opts(state)),
       {:add_subscription, subscription_id, subscription}
     )
   end
@@ -1079,7 +1104,7 @@ defmodule Jido.Signal.Bus do
   # Accumulates middleware state changes across all dispatches
   # Also collects dispatch results for backpressure detection
   defp publish_with_middleware(state, signals, context, timeout_ms) do
-    with :ok <- validate_signals(signals),
+    with :ok <- SignalValidation.validate_signals(signals),
          {:ok, new_state, uuid_signal_pairs} <- BusState.append_signals(state, signals) do
       if state.partition_count <= 1 do
         publish_without_partitions(new_state, signals, uuid_signal_pairs, context, timeout_ms)
@@ -1185,7 +1210,7 @@ defmodule Jido.Signal.Bus do
   defp broadcast_to_partitions(state, signals, uuid_signal_pairs, context) do
     Enum.each(0..(state.partition_count - 1), fn partition_id ->
       GenServer.cast(
-        Partition.via_tuple(state.name, partition_id, jido_opts(state)),
+        Partition.via_tuple(state.name, partition_id, Context.jido_opts(state)),
         {:dispatch, signals, uuid_signal_pairs, context}
       )
     end)
@@ -1300,7 +1325,7 @@ defmodule Jido.Signal.Bus do
       end
     else
       # For regular subscriptions, use async dispatch
-      DispatchPipeline.dispatch_async(signal, subscription, jido_opts(state))
+      DispatchPipeline.dispatch_async(signal, subscription, Context.jido_opts(state))
     end
   end
 
@@ -1329,18 +1354,6 @@ defmodule Jido.Signal.Bus do
 
       :exit, _reason ->
         {:error, :subscription_not_available}
-    end
-  end
-
-  defp validate_signals(signals) do
-    invalid_signals =
-      Enum.reject(signals, fn signal ->
-        is_struct(signal, Jido.Signal)
-      end)
-
-    case invalid_signals do
-      [] -> :ok
-      _ -> {:error, :invalid_signals}
     end
   end
 
@@ -1433,7 +1446,7 @@ defmodule Jido.Signal.Bus do
   defp maybe_start_gc_prune(%{gc_task_ref: ref} = state) when is_reference(ref), do: state
 
   defp maybe_start_gc_prune(state) do
-    task_supervisor = Names.task_supervisor(jido_opts(state))
+    task_supervisor = Names.task_supervisor(Context.jido_opts(state))
 
     try do
       task =
@@ -1544,13 +1557,26 @@ defmodule Jido.Signal.Bus do
     end
   end
 
-  defp jido_opts(%{jido: nil}), do: []
-  defp jido_opts(%{jido: instance}), do: [jido: instance]
-
-  defp jido_opts(opts) when is_list(opts) do
+  defp registry(opts) do
     case Keyword.get(opts, :jido) do
-      nil -> []
-      instance -> [jido: instance]
+      nil -> Keyword.get(opts, :registry, Jido.Signal.Registry)
+      _ -> Names.registry(opts)
+    end
+  end
+
+  defp resolve_bus_in_registry(name, reg) when is_atom(reg) do
+    case Registry.lookup(reg, {:bus, name}) do
+      [{pid, _}] ->
+        {:ok, pid}
+
+      [] ->
+        # Backwards-compatible fallback for buses registered before namespaced keys.
+        legacy_name = if is_atom(name), do: Atom.to_string(name), else: name
+
+        case Registry.lookup(reg, legacy_name) do
+          [{pid, _}] -> {:ok, pid}
+          [] -> {:error, :not_found}
+        end
     end
   end
 
@@ -1681,16 +1707,18 @@ defmodule Jido.Signal.Bus do
   end
 
   defp persistence_target(subscription) when is_map(subscription) do
-    Map.get(subscription, :persistence_ref) || Map.get(subscription, :persistence_pid)
+    subscription
+    |> Map.get(:persistence_ref)
+    |> PersistentRef.target()
+    |> case do
+      nil -> PersistentRef.target(Map.get(subscription, :persistence_pid))
+      target -> target
+    end
   end
 
   defp persistence_target(subscription, state) when is_map(subscription) do
-    case {Map.get(subscription, :persistent?), Map.get(subscription, :id)} do
-      {true, id} when is_binary(id) ->
-        PersistentSubscription.via_tuple(state.name, id, jido_opts(state))
-
-      _ ->
-        persistence_target(subscription)
-    end
+    ref = PersistentRef.from_subscription(subscription, state.name, Context.jido_opts(state))
+    target = PersistentRef.target(ref)
+    target || persistence_target(subscription)
   end
 end

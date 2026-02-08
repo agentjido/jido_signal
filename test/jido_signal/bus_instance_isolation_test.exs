@@ -34,9 +34,7 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
 
       # Bus should be registered in the instance's registry
       instance_registry = Names.registry(jido: instance)
-      bus_name_str = Atom.to_string(bus_name)
-
-      assert [{^bus_pid, _}] = Registry.lookup(instance_registry, bus_name_str)
+      assert [{^bus_pid, _}] = Registry.lookup(instance_registry, {:bus, bus_name})
     end
 
     test "buses in different instances are isolated", %{
@@ -87,8 +85,7 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
       {:ok, bus_pid} = Bus.start_link(name: bus_name)
 
       # Should be accessible via global registry
-      bus_name_str = Atom.to_string(bus_name)
-      assert [{^bus_pid, _}] = Registry.lookup(Jido.Signal.Registry, bus_name_str)
+      assert [{^bus_pid, _}] = Registry.lookup(Jido.Signal.Registry, {:bus, bus_name})
     end
 
     test "whereis resolves bus from correct instance", %{

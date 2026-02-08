@@ -205,6 +205,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
       2
   """
   @spec get_all_signals(pid() | nil) :: [Jido.Signal.t()]
+  @impl true
   def get_all_signals(pid \\ nil) do
     target = pid || __MODULE__
 

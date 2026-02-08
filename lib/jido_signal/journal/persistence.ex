@@ -28,6 +28,8 @@ defmodule Jido.Signal.Journal.Persistence do
 
   @callback get_conversation(conversation_id(), pid() | nil) :: {:ok, MapSet.t()} | error()
 
+  @callback get_all_signals(pid() | nil) :: [Signal.t()]
+
   @callback put_checkpoint(subscription_id(), checkpoint(), pid() | nil) :: :ok | error()
 
   @callback get_checkpoint(subscription_id(), pid() | nil) ::
@@ -59,5 +61,5 @@ defmodule Jido.Signal.Journal.Persistence do
 
   @callback clear_dlq(subscription_id(), pid() | nil, keyword()) :: :ok | error()
 
-  @optional_callbacks get_dlq_entries: 3, clear_dlq: 3
+  @optional_callbacks get_all_signals: 1, get_dlq_entries: 3, clear_dlq: 3
 end

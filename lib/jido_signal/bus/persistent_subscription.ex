@@ -8,6 +8,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   """
   use GenServer
 
+  alias Jido.Signal.Context
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.ID
@@ -90,7 +91,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     case validate_init_opts(opts) do
       :ok ->
         bus_name = Keyword.get(opts, :bus_name, :unknown)
-        GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, id, jido_opts(opts)))
+
+        GenServer.start_link(__MODULE__, opts,
+          name: via_tuple(bus_name, id, Context.jido_opts(opts))
+        )
 
       {:error, reason} ->
         {:error, reason}
@@ -621,7 +625,11 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   defp start_dispatch_signal(state, signal_log_id: signal_log_id, signal: signal) do
     if state.bus_subscription.dispatch do
-      case Dispatch.dispatch_async(signal, state.bus_subscription.dispatch, jido_opts(state)) do
+      case Dispatch.dispatch_async(
+             signal,
+             state.bus_subscription.dispatch,
+             Context.jido_opts(state)
+           ) do
         {:ok, task} ->
           dispatch_tasks = Map.put(state.dispatch_tasks, task.ref, {task, signal_log_id, signal})
           %{state | dispatch_tasks: dispatch_tasks}
@@ -736,16 +744,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     Enum.each(dispatch_tasks, fn {_ref, {task, _signal_log_id, _signal}} ->
       Task.shutdown(task, :brutal_kill)
     end)
-  end
-
-  defp jido_opts(%{jido: nil}), do: []
-  defp jido_opts(%{jido: instance}), do: [jido: instance]
-
-  defp jido_opts(opts) when is_list(opts) do
-    case Keyword.get(opts, :jido) do
-      nil -> []
-      instance -> [jido: instance]
-    end
   end
 
   defp clear_signal_tracking(state, signal_log_id) do

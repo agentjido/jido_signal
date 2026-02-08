@@ -3,6 +3,7 @@ defmodule Jido.Signal.Journal.Adapters.MnesiaTest do
 
   alias Jido.Signal
   alias Jido.Signal.ID
+  alias Jido.Signal.Journal
   alias Jido.Signal.Journal.Adapters.Mnesia
   alias Jido.Signal.Journal.Adapters.Mnesia.Tables
 
@@ -144,6 +145,31 @@ defmodule Jido.Signal.Journal.Adapters.MnesiaTest do
 
     :ok = Mnesia.delete_checkpoint(subscription_id, nil)
     assert {:error, :not_found} = Mnesia.get_checkpoint(subscription_id, nil)
+  end
+
+  test "get_all_signals/1 returns stored signals" do
+    signal1 = create_test_signal(type: "mnesia.all.1")
+    signal2 = create_test_signal(type: "mnesia.all.2")
+
+    :ok = Mnesia.put_signal(signal1, nil)
+    :ok = Mnesia.put_signal(signal2, nil)
+
+    signals = Mnesia.get_all_signals(nil)
+
+    assert length(signals) == 2
+    assert Enum.any?(signals, &(&1.id == signal1.id))
+    assert Enum.any?(signals, &(&1.id == signal2.id))
+  end
+
+  test "journal query works with mnesia adapter" do
+    journal = Journal.new(Mnesia)
+    signal = create_test_signal(type: "mnesia.query")
+
+    assert {:ok, ^journal} = Journal.record(journal, signal)
+
+    results = Journal.query(journal, type: "mnesia.query")
+    assert length(results) == 1
+    assert hd(results).id == signal.id
   end
 
   test "multiple signals in conversation" do

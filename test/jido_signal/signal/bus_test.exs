@@ -481,6 +481,11 @@ defmodule JidoTest.Signal.Bus do
       assert is_pid(pid)
     end
 
+    test "registers bus under namespaced registry key", %{bus: bus} do
+      {:ok, pid} = Bus.whereis(bus)
+      assert [{^pid, _}] = Registry.lookup(Jido.Signal.Registry, {:bus, bus})
+    end
+
     test "returns error for non-existent bus" do
       assert {:error, :not_found} = Bus.whereis("non-existent-bus")
     end

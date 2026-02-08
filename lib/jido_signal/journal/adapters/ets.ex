@@ -227,6 +227,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   @doc """
   Gets all signals in the journal.
   """
+  @impl true
   def get_all_signals(pid) do
     get_all_signals(pid, [])
   end

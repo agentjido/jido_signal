@@ -7,9 +7,11 @@ defmodule Jido.Signal.Bus.Subscriber do
   persistent subscriptions, handling subscription lifetime and signal delivery.
   """
 
+  alias Jido.Signal.Bus.PersistentRef
   alias Jido.Signal.Bus.PersistentSubscription
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.Context
   alias Jido.Signal.Error
   alias Jido.Signal.Router
 
@@ -134,13 +136,13 @@ defmodule Jido.Signal.Bus.Subscriber do
   defp start_persistent_child(state, persistent_sub_opts) do
     DynamicSupervisor.start_child(
       state.child_supervisor,
-      {Jido.Signal.Bus.PersistentSubscription, persistent_sub_opts}
+      {PersistentSubscription, persistent_sub_opts}
     )
   end
 
   defp finalize_persistent_subscription(state, subscription_id, subscription, pid) do
     persistence_ref =
-      PersistentSubscription.via_tuple(state.name, subscription_id, jido_opts(state))
+      PersistentRef.new(state.name, subscription_id, Context.jido_opts(state), pid)
 
     subscription = %{subscription | persistence_pid: pid, persistence_ref: persistence_ref}
 
@@ -228,7 +230,11 @@ defmodule Jido.Signal.Bus.Subscriber do
   defp cleanup_persistent_subscription(_state, %{persistent?: false}, _sub_id, _del), do: :ok
 
   defp cleanup_persistent_subscription(state, subscription, subscription_id, delete_persistence) do
-    target = Map.get(subscription, :persistence_ref) || Map.get(subscription, :persistence_pid)
+    target =
+      subscription
+      |> PersistentRef.from_subscription(state.name, Context.jido_opts(state))
+      |> PersistentRef.target()
+
     if target, do: stop_persistent_subscription(state.child_supervisor, target)
     if delete_persistence, do: delete_persistent_data(state, subscription_id)
     :ok
@@ -303,7 +309,4 @@ defmodule Jido.Signal.Bus.Subscriber do
       :ok
     end
   end
-
-  defp jido_opts(%{jido: nil}), do: []
-  defp jido_opts(%{jido: instance}), do: [jido: instance]
 end
