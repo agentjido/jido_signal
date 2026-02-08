@@ -33,6 +33,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
               attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
               retry_timer_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
+              pending_batches: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              work_pending?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               client_monitor_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
               journal_adapter: Zoi.module() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
@@ -133,6 +135,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
           dispatch_tasks: %{},
           in_flight_signals: %{},
           pending_signals: %{},
+          pending_batches: [],
+          work_pending?: false,
           acked_signals: %{},
           attempts: %{},
           journal_adapter: journal_adapter,
@@ -161,7 +165,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_call({:ack, _invalid_arg}, _from, state) do
-    {:reply, {:error, :invalid_ack_argument}, state}
+    {:reply,
+     {:error,
+      Jido.Signal.Error.validation_error("invalid ack argument", %{reason: :invalid_ack_argument})},
+     state}
   end
 
   @impl GenServer
@@ -191,6 +198,14 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   @impl GenServer
+  def handle_cast({:signal_batch, signal_batch, reply_to, publish_ref}, state)
+      when is_list(signal_batch) and is_pid(reply_to) and is_reference(publish_ref) do
+    state
+    |> enqueue_batch(signal_batch, reply_to, publish_ref)
+    |> noreply_with_work()
+  end
+
+  @impl GenServer
   def handle_cast({:reconnect, new_client_pid}, state) do
     handle_cast({:reconnect, new_client_pid, []}, state)
   end
@@ -207,10 +222,18 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     # Update state with new client PID and subscription
     new_state = %{state | client_pid: new_client_pid, bus_subscription: updated_subscription}
     new_state = maybe_monitor_client(new_state, new_client_pid)
+    replay_batch = normalize_replay_batch(missed_signals)
 
-    Enum.each(missed_signals, &dispatch_replay_signal(&1, new_state))
+    new_state
+    |> enqueue_batch(replay_batch, nil, nil)
+    |> noreply_with_work()
+  end
 
-    {:noreply, new_state}
+  @impl GenServer
+  def handle_continue(:drain, state) do
+    state = %{state | work_pending?: false}
+    state = drain_pending_batches(state)
+    {:noreply, process_pending_signals(state)}
   end
 
   @impl GenServer
@@ -278,18 +301,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   def handle_info(_msg, state) do
     {:noreply, state}
-  end
-
-  defp dispatch_replay_signal(signal, state) do
-    case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.debug(
-          "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
-        )
-    end
   end
 
   @impl GenServer
@@ -600,6 +611,79 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         pending: map_size(state.pending_signals)
       }
     )
+  end
+
+  defp enqueue_batch(state, [], _reply_to, _publish_ref), do: state
+
+  defp enqueue_batch(state, signal_batch, reply_to, publish_ref) do
+    pending_batches = [{signal_batch, reply_to, publish_ref} | state.pending_batches]
+    %{state | pending_batches: pending_batches}
+  end
+
+  defp drain_pending_batches(%{pending_batches: []} = state), do: state
+
+  defp drain_pending_batches(state) do
+    state
+    |> Map.put(:pending_batches, [])
+    |> drain_pending_batches(Enum.reverse(state.pending_batches))
+  end
+
+  defp drain_pending_batches(state, pending_batches) do
+    Enum.reduce(pending_batches, state, fn {signal_batch, reply_to, publish_ref}, acc ->
+      {next_state, dropped_count} = accept_signal_batch(acc, signal_batch)
+      batch_result = if dropped_count > 0, do: {:error, :queue_full}, else: :ok
+      maybe_send_batch_result(reply_to, publish_ref, batch_result)
+      maybe_emit_bus_backpressure(next_state, publish_ref, dropped_count)
+      next_state
+    end)
+  end
+
+  defp accept_signal_batch(state, signal_batch) do
+    Enum.reduce(signal_batch, {state, 0}, fn {signal_log_id, signal},
+                                             {acc_state, dropped_count} ->
+      case accept_signal(acc_state, signal_log_id, signal) do
+        {:ok, new_state} ->
+          {new_state, dropped_count}
+
+        {:error, :queue_full, new_state} ->
+          {new_state, dropped_count + 1}
+      end
+    end)
+  end
+
+  defp normalize_replay_batch(missed_signals) do
+    Enum.flat_map(missed_signals, fn
+      {signal_log_id, %Jido.Signal{} = signal} when is_binary(signal_log_id) ->
+        [{signal_log_id, signal}]
+
+      %Jido.Signal{} = signal ->
+        [{ID.generate!(), signal}]
+
+      _other ->
+        []
+    end)
+  end
+
+  defp maybe_send_batch_result(reply_to, publish_ref, batch_result)
+       when is_pid(reply_to) and is_reference(publish_ref) do
+    send(reply_to, {:persistent_enqueue_result, publish_ref, batch_result})
+    :ok
+  end
+
+  defp maybe_send_batch_result(_reply_to, _publish_ref, _batch_result), do: :ok
+
+  defp maybe_emit_bus_backpressure(state, publish_ref, dropped_count)
+       when dropped_count > 0 and is_reference(publish_ref) do
+    send(state.bus_pid, {:persistent_backpressure, state.id, publish_ref, dropped_count})
+    :ok
+  end
+
+  defp maybe_emit_bus_backpressure(_state, _publish_ref, _dropped_count), do: :ok
+
+  defp noreply_with_work(%{work_pending?: true} = state), do: {:noreply, state}
+
+  defp noreply_with_work(state) do
+    {:noreply, %{state | work_pending?: true}, {:continue, :drain}}
   end
 
   defp handle_client_down(pid, %{client_pid: client_pid} = state) when pid == client_pid do

@@ -176,7 +176,7 @@ Bus.start_link(name: :bus, middleware: [{MyMiddleware, []}])
 
 ### Persistent Subscriptions
 ```elixir
-{:ok, sub_id} = Bus.subscribe(:bus, "order.*", persistent: true)
+{:ok, sub_id} = Bus.subscribe(:bus, "order.*", persistent?: true)
 :ok = Bus.ack(:bus, sub_id, signal_id)
 ```
 

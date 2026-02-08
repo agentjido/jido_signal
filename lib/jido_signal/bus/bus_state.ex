@@ -11,6 +11,7 @@ defmodule Jido.Signal.Bus.State do
   alias Jido.Signal
   alias Jido.Signal.ID
   alias Jido.Signal.Router
+  alias Jido.Signal.Error
   alias Jido.Signal.Telemetry
 
   @schema Zoi.struct(
@@ -142,10 +143,12 @@ defmodule Jido.Signal.Bus.State do
         {:ok, %{state | log: final_log}, uuid_signal_pairs}
       rescue
         e in KeyError ->
-          {:error, "Invalid signal format: #{Exception.message(e)}"}
+          {:error,
+           Error.validation_error("Invalid signal format", %{reason: Exception.message(e)})}
 
         e ->
-          {:error, "Error processing signals: #{Exception.message(e)}"}
+          {:error,
+           Error.execution_error("Error processing signals", %{reason: Exception.message(e)})}
       end
     end
   end

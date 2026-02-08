@@ -261,6 +261,46 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       assert_receive {:signal, %Signal{type: "test.replay", data: %{value: 2}}}, 500
       send(old_client, :stop)
     end
+
+    test "does not replay entries whose log timestamp equals checkpoint" do
+      bus_name = :"test_bus_replay_equal_#{:erlang.unique_integer([:positive])}"
+      start_supervised!({Bus, name: bus_name})
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus_name, "test.replay.equal",
+          persistent?: true,
+          dispatch: {:pid, target: self(), delivery_mode: :async}
+        )
+
+      signal = Signal.new!(type: "test.replay.equal", source: "/test", data: %{value: 1})
+      {:ok, [recorded]} = Bus.publish(bus_name, [signal])
+      assert_receive {:signal, %Signal{type: "test.replay.equal"}}, 1_000
+      :ok = Bus.ack(bus_name, subscription_id, recorded.id)
+
+      assert {:ok, _checkpoint} = Bus.reconnect(bus_name, subscription_id, self())
+      refute_receive {:signal, %Signal{type: "test.replay.equal"}}, 200
+    end
+
+    test "reconnect tolerates malformed log ids without crashing" do
+      bus_name = :"test_bus_replay_malformed_#{:erlang.unique_integer([:positive])}"
+      start_supervised!({Bus, name: bus_name})
+      {:ok, bus_pid} = Bus.whereis(bus_name)
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus_name, "test.replay.malformed",
+          persistent?: true,
+          dispatch: {:pid, target: self(), delivery_mode: :async}
+        )
+
+      malformed_signal =
+        Signal.new!(type: "test.replay.malformed", source: "/test", data: %{bad: true})
+
+      :sys.replace_state(bus_pid, fn state ->
+        %{state | log: Map.put(state.log, "not-a-uuid", malformed_signal)}
+      end)
+
+      assert {:ok, _checkpoint} = Bus.reconnect(bus_name, subscription_id, self())
+    end
   end
 
   describe "start_link option validation" do

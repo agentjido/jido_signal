@@ -106,7 +106,7 @@ Persistent subscriptions provide reliable message delivery with acknowledgments,
 ```elixir
 # Create persistent subscription with reliability options
 {:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "order.*",
-  persistent: true,
+  persistent?: true,
   dispatch: {:pid, target: self(), delivery_mode: :async},
   max_in_flight: 500,      # Max unacknowledged signals (default: 1000)
   max_pending: 5_000,      # Max queued signals before backpressure (default: 10_000)
@@ -134,6 +134,8 @@ Persistent subscriptions require a journal adapter to persist checkpoints across
 ```
 
 When configured, checkpoints are automatically persisted and restored on reconnection.
+
+`persistent?` is the canonical subscription option. The legacy `persistent:` alias is still accepted for compatibility and emits a deprecation warning.
 
 ## Dead Letter Queue (DLQ)
 
@@ -293,7 +295,7 @@ Persistent subscription options:
 
 ```elixir
 {:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "events.*",
-  persistent: true,
+  persistent?: true,
   dispatch: {:pid, target: self(), delivery_mode: :async},
   max_in_flight: 100,    # Max unacknowledged signals
   max_pending: 5_000,    # Max pending before backpressure

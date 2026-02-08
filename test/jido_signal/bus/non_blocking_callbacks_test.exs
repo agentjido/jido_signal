@@ -235,6 +235,35 @@ defmodule Jido.Signal.Bus.NonBlockingCallbacksTest do
     end
   end
 
+  test "publish returns promptly when persistent subscription process is unresponsive" do
+    bus_name = :"non_blocking_persistent_accept_#{System.unique_integer([:positive])}"
+    start_supervised!({Bus, name: bus_name})
+
+    {:ok, subscription_id} =
+      Bus.subscribe(bus_name, "test.unresponsive",
+        persistent?: true,
+        max_in_flight: 1,
+        max_pending: 1,
+        dispatch: {:pid, target: self(), delivery_mode: :async}
+      )
+
+    {:ok, bus_pid} = Bus.whereis(bus_name)
+    bus_state = :sys.get_state(bus_pid)
+    %{persistence_pid: persistence_pid} = Map.fetch!(bus_state.subscriptions, subscription_id)
+
+    :ok = :sys.suspend(persistence_pid)
+
+    signal = Signal.new!(type: "test.unresponsive", source: "/test", data: %{value: 1})
+    task = Task.async(fn -> Bus.publish(bus_name, [signal]) end)
+
+    try do
+      assert {:ok, _result} = Task.yield(task, 200)
+    after
+      Task.shutdown(task, :brutal_kill)
+      :ok = :sys.resume(persistence_pid)
+    end
+  end
+
   test "ack returns before processing pending blocking dispatch work" do
     bus_name = :"non_blocking_ack_#{System.unique_integer([:positive])}"
     start_supervised!({Bus, name: bus_name})

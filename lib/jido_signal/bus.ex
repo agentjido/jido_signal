@@ -58,6 +58,8 @@ defmodule Jido.Signal.Bus do
 
   require Logger
 
+  @persistent_enqueue_timeout_ms 50
+
   @type start_option ::
           {:name, atom()}
           | {atom(), term()}
@@ -426,6 +428,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec subscribe(server(), path(), Keyword.t()) :: {:ok, subscription_id()} | {:error, term()}
   def subscribe(bus, path, opts \\ []) do
+    opts = normalize_persistent_subscription_opts(opts)
+
     # Ensure we have a dispatch configuration
     opts =
       if Keyword.has_key?(opts, :dispatch) do
@@ -447,6 +451,38 @@ defmodule Jido.Signal.Bus do
       end
 
     bus_call(bus, {:subscribe, path, opts})
+  end
+
+  defp normalize_persistent_subscription_opts(opts) do
+    has_canonical? = Keyword.has_key?(opts, :persistent?)
+    legacy_value = Keyword.get(opts, :persistent, nil)
+
+    cond do
+      has_canonical? and is_nil(legacy_value) ->
+        opts
+
+      has_canonical? ->
+        canonical_value = Keyword.get(opts, :persistent?)
+
+        if canonical_value != legacy_value do
+          Logger.warning(
+            "Both :persistent and :persistent? were provided; using :persistent? and ignoring :persistent"
+          )
+        end
+
+        Keyword.delete(opts, :persistent)
+
+      true ->
+        if is_nil(legacy_value) do
+          opts
+        else
+          Logger.warning("The :persistent option is deprecated; use :persistent? instead")
+
+          opts
+          |> Keyword.delete(:persistent)
+          |> Keyword.put(:persistent?, legacy_value)
+        end
+    end
   end
 
   @doc """
@@ -578,17 +614,49 @@ defmodule Jido.Signal.Bus do
   end
 
   defp bus_call(bus, message) do
-    with {:ok, pid} <- whereis(bus) do
-      target_pid = resolve_bus_target_pid(pid)
+    case whereis(bus) do
+      {:ok, pid} ->
+        target_pid = resolve_bus_target_pid(pid)
 
-      try do
-        GenServer.call(target_pid, message)
-      catch
-        :exit, {:noproc, _} -> {:error, :not_found}
-        :exit, {:timeout, _} -> {:error, :timeout}
-      end
+        try do
+          GenServer.call(target_pid, message)
+        catch
+          :exit, {:noproc, _} -> {:error, normalize_bus_call_error(:not_found, message)}
+          :exit, {:timeout, _} -> {:error, normalize_bus_call_error(:timeout, message)}
+        end
+
+      {:error, reason} ->
+        {:error, normalize_bus_call_error(reason, message)}
     end
   end
+
+  defp normalize_bus_call_error(:timeout, message) do
+    Error.timeout_error("Bus call timed out", %{
+      reason: :timeout,
+      action: bus_call_action(message)
+    })
+  end
+
+  defp normalize_bus_call_error(reason, message) do
+    Error.execution_error("Bus is unavailable", %{
+      reason: normalize_not_found_reason(reason),
+      action: bus_call_action(message)
+    })
+  end
+
+  defp normalize_not_found_reason(reason), do: reason
+
+  defp bus_call_action(message) when is_tuple(message) do
+    message
+    |> Tuple.to_list()
+    |> List.first()
+    |> case do
+      action when is_atom(action) -> action
+      _ -> :unknown
+    end
+  end
+
+  defp bus_call_action(action) when is_atom(action), do: action
 
   defp resolve_bus_target_pid(pid) when is_pid(pid) do
     case bus_worker_from_supervisor(pid) do
@@ -807,6 +875,7 @@ defmodule Jido.Signal.Bus do
   defp run_publish_pipeline(state, signals) do
     context = %{
       bus_name: state.name,
+      jido: state.jido,
       timestamp: DateTime.utc_now(),
       metadata: %{}
     }
@@ -868,6 +937,7 @@ defmodule Jido.Signal.Bus do
     Enum.map(uuid_signal_pairs, fn {uuid, signal} ->
       %Jido.Signal.Bus.RecordedSignal{
         id: uuid,
+        log_id: uuid,
         type: signal.type,
         created_at: DateTime.utc_now(),
         signal: signal
@@ -923,9 +993,21 @@ defmodule Jido.Signal.Bus do
     state.log
     |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
     |> Enum.filter(fn {log_id, signal} ->
-      ID.extract_timestamp(log_id) > checkpoint and Router.matches?(signal.type, path)
+      case safe_log_timestamp(log_id) do
+        {:ok, timestamp} ->
+          timestamp > checkpoint and Router.matches?(signal.type, path)
+
+        :error ->
+          false
+      end
     end)
-    |> Enum.map(fn {_log_id, signal} -> signal end)
+    |> Enum.map(fn {log_id, signal} -> {log_id, signal} end)
+  end
+
+  defp safe_log_timestamp(log_id) do
+    {:ok, ID.extract_timestamp(log_id)}
+  rescue
+    _ -> :error
   end
 
   defp do_redrive_dlq(state, subscription_id, opts) do
@@ -1034,15 +1116,37 @@ defmodule Jido.Signal.Bus do
   end
 
   defp dispatch_to_persistent_subscriptions(state, signals, signal_log_id_map) do
-    Enum.flat_map(signals, &dispatch_signal_to_persistent(state, &1, signal_log_id_map))
+    state.subscriptions
+    |> Enum.reduce([], fn {subscription_id, subscription}, acc ->
+      if subscription.persistent? do
+        signal_batch = build_persistent_signal_batch(signals, subscription, signal_log_id_map)
+
+        case signal_batch do
+          [] ->
+            acc
+
+          _ ->
+            [{subscription_id, enqueue_persistent_batch(subscription, signal_batch)} | acc]
+        end
+      else
+        acc
+      end
+    end)
   end
 
-  defp dispatch_signal_to_persistent(state, signal, signal_log_id_map) do
-    state.subscriptions
-    |> Enum.filter(fn {_id, sub} -> sub.persistent? && Router.matches?(signal.type, sub.path) end)
-    |> Enum.map(fn {subscription_id, subscription} ->
-      {subscription_id, dispatch_to_subscription(signal, subscription, signal_log_id_map, state)}
+  defp build_persistent_signal_batch(signals, subscription, signal_log_id_map) do
+    signals
+    |> Enum.reduce([], fn signal, acc ->
+      if Router.matches?(signal.type, subscription.path) do
+        case Map.fetch(signal_log_id_map, signal.id) do
+          {:ok, signal_log_id} -> [{signal_log_id, signal} | acc]
+          :error -> acc
+        end
+      else
+        acc
+      end
     end)
+    |> Enum.reverse()
   end
 
   defp find_saturated_subscriptions(results) do
@@ -1159,21 +1263,44 @@ defmodule Jido.Signal.Bus do
   # For regular subscriptions, use normal async dispatch
   defp dispatch_to_subscription(signal, subscription, signal_log_id_map, state) do
     if subscription.persistent? && subscription.persistence_pid do
-      # For persistent subscriptions, call synchronously to get backpressure feedback
       signal_log_id = Map.get(signal_log_id_map, signal.id)
 
-      try do
-        GenServer.call(subscription.persistence_pid, {:signal, {signal_log_id, signal}})
-      catch
-        :exit, {:noproc, _} ->
-          {:error, :subscription_not_available}
-
-        :exit, {:timeout, _} ->
-          {:error, :timeout}
+      if is_binary(signal_log_id) do
+        enqueue_persistent_batch(subscription, [{signal_log_id, signal}])
+      else
+        {:error, :missing_signal_log_id}
       end
     else
       # For regular subscriptions, use async dispatch
       DispatchPipeline.dispatch_async(signal, subscription, jido_opts(state))
+    end
+  end
+
+  defp enqueue_persistent_batch(%{persistence_pid: nil}, _signal_batch),
+    do: {:error, :subscription_not_available}
+
+  defp enqueue_persistent_batch(subscription, signal_batch) do
+    publish_ref = make_ref()
+
+    try do
+      GenServer.cast(
+        subscription.persistence_pid,
+        {:signal_batch, signal_batch, self(), publish_ref}
+      )
+
+      receive do
+        {:persistent_enqueue_result, ^publish_ref, result} ->
+          result
+      after
+        @persistent_enqueue_timeout_ms ->
+          {:error, :subscription_not_available}
+      end
+    catch
+      :exit, {:noproc, _} ->
+        {:error, :subscription_not_available}
+
+      :exit, _reason ->
+        {:error, :subscription_not_available}
     end
   end
 
@@ -1221,6 +1348,17 @@ defmodule Jido.Signal.Bus do
       true ->
         handle_subscription_down(pid, reason, state)
     end
+  end
+
+  @impl GenServer
+  def handle_info({:persistent_backpressure, subscription_id, _publish_ref, dropped_count}, state) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :persistent_backpressure],
+      %{dropped_count: dropped_count},
+      %{bus_name: state.name, subscription_id: subscription_id}
+    )
+
+    {:noreply, state}
   end
 
   def handle_info(:gc_log, %{log_ttl_ms: nil} = state), do: {:noreply, state}

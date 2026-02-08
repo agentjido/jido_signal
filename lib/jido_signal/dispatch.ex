@@ -400,7 +400,7 @@ defmodule Jido.Signal.Dispatch do
     validated_configs_with_idx = extract_validated_configs(valid_configs)
 
     dispatch_results =
-      process_batches(signal, validated_configs_with_idx, batch_size, max_concurrency)
+      process_batches(signal, validated_configs_with_idx, batch_size, max_concurrency, opts)
 
     validation_errors = extract_validation_errors(validation_errors)
     dispatch_errors = extract_dispatch_errors(dispatch_results)
@@ -432,10 +432,10 @@ defmodule Jido.Signal.Dispatch do
     Enum.map(valid_configs, fn {:ok, {config, idx}} -> {config, idx} end)
   end
 
-  defp process_batches(signal, validated_configs_with_idx, _batch_size, max_concurrency) do
+  defp process_batches(signal, validated_configs_with_idx, _batch_size, max_concurrency, opts) do
     # Single stream over all configs (batch_size is now a no-op for backwards compat)
     Task.Supervisor.async_stream(
-      Jido.Signal.TaskSupervisor,
+      task_supervisor(opts),
       validated_configs_with_idx,
       fn {config, original_idx} ->
         case dispatch_single(signal, config) do

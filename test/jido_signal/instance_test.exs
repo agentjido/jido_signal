@@ -2,7 +2,10 @@ defmodule Jido.Signal.InstanceTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal.Instance
+  alias Jido.Signal.Bus
+  alias Jido.Signal.Dispatch
   alias Jido.Signal.Names
+  alias Jido.Signal
 
   describe "Names.scoped/2" do
     test "returns default when no jido option" do
@@ -137,6 +140,67 @@ defmodule Jido.Signal.InstanceTest do
       assert_receive {:DOWN, ^mon_ref, :process, ^supervisor_pid, _reason}
 
       assert :ok = Instance.stop(instance)
+    end
+  end
+
+  describe "instance-scoped task supervisor usage" do
+    defmodule PassThroughMiddleware do
+      @behaviour Jido.Signal.Bus.Middleware
+
+      @impl true
+      def init(opts), do: {:ok, opts}
+
+      @impl true
+      def before_publish(signals, _context, state), do: {:cont, signals, state}
+    end
+
+    test "dispatch_batch uses instance task supervisor when jido option is provided" do
+      instance = :"DispatchScoped#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      signal =
+        Signal.new!(type: "instance.dispatch.batch", source: "/instance", data: %{ok: true})
+
+      task = Task.async(fn -> Dispatch.dispatch_batch(signal, [{:noop, []}], jido: instance) end)
+
+      :ok = :sys.suspend(Jido.Signal.TaskSupervisor)
+
+      try do
+        assert {:ok, :ok} = Task.yield(task, 300)
+      after
+        Task.shutdown(task, :brutal_kill)
+        :ok = :sys.resume(Jido.Signal.TaskSupervisor)
+        Instance.stop(instance)
+      end
+    end
+
+    test "middleware timeout runner uses instance task supervisor when bus is scoped" do
+      instance = :"MiddlewareScoped#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      bus_name = :"instance_bus_#{System.unique_integer([:positive])}"
+
+      {:ok, bus_pid} =
+        Bus.start_link(
+          name: bus_name,
+          jido: instance,
+          middleware: [{PassThroughMiddleware, []}]
+        )
+
+      signal =
+        Signal.new!(type: "instance.middleware.publish", source: "/instance", data: %{ok: true})
+
+      task = Task.async(fn -> Bus.publish(bus_pid, [signal]) end)
+
+      :ok = :sys.suspend(Jido.Signal.TaskSupervisor)
+
+      try do
+        assert {:ok, {:ok, [_recorded]}} = Task.yield(task, 300)
+      after
+        Task.shutdown(task, :brutal_kill)
+        :ok = :sys.resume(Jido.Signal.TaskSupervisor)
+        Instance.stop(instance)
+      end
     end
   end
 end

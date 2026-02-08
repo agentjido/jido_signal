@@ -314,6 +314,102 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       assert map_size(state_after.pending_signals) == 2
     end
 
+    test "supports cast-based signal batch enqueue with queue_full feedback", %{
+      bus_pid: bus_pid,
+      test_pid: test_pid
+    } do
+      dispatch_config = [{:pid, [target: test_pid]}]
+
+      opts = [
+        bus_pid: bus_pid,
+        path: "test.path",
+        client_pid: test_pid,
+        max_in_flight: 1,
+        max_pending: 1,
+        bus_subscription: %Subscriber{
+          id: ID.generate!(),
+          path: "test.path",
+          dispatch: dispatch_config
+        }
+      ]
+
+      {:ok, pid} = PersistentSubscription.start_link(opts)
+
+      signal1 = Signal.new!(%{type: "test.batch.1", source: "/test", data: %{i: 1}})
+      signal2 = Signal.new!(%{type: "test.batch.2", source: "/test", data: %{i: 2}})
+      signal3 = Signal.new!(%{type: "test.batch.3", source: "/test", data: %{i: 3}})
+
+      log_id1 = ID.generate!()
+      log_id2 = ID.generate!()
+      log_id3 = ID.generate!()
+
+      publish_ref = make_ref()
+
+      GenServer.cast(
+        pid,
+        {:signal_batch, [{log_id1, signal1}, {log_id2, signal2}, {log_id3, signal3}], self(),
+         publish_ref}
+      )
+
+      assert_receive {:persistent_enqueue_result, ^publish_ref, {:error, :queue_full}}, 500
+
+      wait_until(fn ->
+        state = :sys.get_state(pid)
+        total_in_flight(state) == 1 and map_size(state.pending_signals) == 1
+      end)
+    end
+
+    test "reconnect replay does not block callback responsiveness", %{
+      bus_pid: bus_pid,
+      test_pid: test_pid
+    } do
+      replay_signals =
+        for index <- 1..50_000 do
+          signal =
+            Signal.new!(%{
+              type: "test.replay.block",
+              source: "/test",
+              data: %{value: index}
+            })
+
+          {ID.generate!(), signal}
+        end
+
+      opts = [
+        id: ID.generate!(),
+        bus_pid: bus_pid,
+        path: "test.replay.block",
+        client_pid: test_pid,
+        bus_subscription: %Subscriber{
+          id: ID.generate!(),
+          path: "test.replay.block",
+          dispatch: {:pid, [target: test_pid]}
+        }
+      ]
+
+      {:ok, pid} = PersistentSubscription.start_link(opts)
+      sink_pid = spawn(fn -> Process.sleep(:infinity) end)
+      GenServer.cast(pid, {:reconnect, sink_pid, replay_signals})
+      parent = self()
+
+      spawn(fn ->
+        result =
+          try do
+            {:ok, GenServer.call(pid, :checkpoint, 200)}
+          catch
+            :exit, reason -> {:error, reason}
+          end
+
+        send(parent, {:checkpoint_result, result})
+      end)
+
+      try do
+        assert_receive {:checkpoint_result, {:ok, 0}}, 300
+      after
+        Process.exit(sink_pid, :kill)
+      end
+    end
+
     test "drops signal when queue full via handle_info", %{bus_pid: bus_pid, test_pid: test_pid} do
       dispatch_config = [{:pid, [target: test_pid]}]
 

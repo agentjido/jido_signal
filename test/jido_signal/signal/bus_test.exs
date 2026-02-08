@@ -1,6 +1,8 @@
 defmodule JidoTest.Signal.Bus do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Jido.Signal
   alias Jido.Signal.Bus
   alias Jido.Signal.Error
@@ -54,6 +56,16 @@ defmodule JidoTest.Signal.Bus do
 
       # Acknowledge the signal
       :ok = Bus.ack(bus, subscription_id, 1)
+    end
+
+    test "logs deprecation warning for legacy persistent option alias", %{bus: bus} do
+      log =
+        capture_log(fn ->
+          assert {:ok, _subscription_id} = Bus.subscribe(bus, "test.signal", persistent: true)
+        end)
+
+      assert log =~ "deprecated"
+      assert log =~ ":persistent?"
     end
   end
 

@@ -55,4 +55,19 @@ defmodule Jido.Signal.Bus.ErrorContractTest do
 
     assert error.details[:reason] == :subscription_not_available
   end
+
+  test "bus_call boundaries return normalized errors when bus is unavailable" do
+    missing_bus = :"missing_bus_#{System.unique_integer([:positive])}"
+    signal = Signal.new!(type: "test.error.missing_bus", source: "/test", data: %{value: 1})
+
+    assert {:error, %Error.ExecutionFailureError{} = publish_error} =
+             Bus.publish(missing_bus, [signal])
+
+    assert publish_error.details[:reason] == :not_found
+
+    assert {:error, %Error.ExecutionFailureError{} = snapshot_error} =
+             Bus.snapshot_list(missing_bus)
+
+    assert snapshot_error.details[:reason] == :not_found
+  end
 end

@@ -50,7 +50,7 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       assert %DateTime{} = snapshot_ref.created_at
       assert Map.has_key?(new_state.snapshots, snapshot_ref.id)
 
-      # Verify the actual data in persistent_term
+      # Verify the actual data in snapshot storage
       {:ok, snapshot_data} = Snapshot.read(new_state, snapshot_ref.id)
       assert map_size(snapshot_data.signals) == 1
       assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.1"
@@ -210,25 +210,29 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.1"
     end
 
-    test "returns not_found when snapshot reference exists but persistent_term entry is gone", %{
+    test "returns not_found when snapshot reference exists but payload is gone", %{
       state: state
     } do
-      {:ok, snapshot_ref, state} = Snapshot.create(state, "test.signal.1")
+      {:ok, snapshot_ref, state_with_snapshot} = Snapshot.create(state, "test.signal.1")
+      {:ok, state_without_payload} = Snapshot.delete(state_with_snapshot, snapshot_ref.id)
 
-      :persistent_term.erase({Snapshot, snapshot_ref.id})
+      state_with_stale_ref = %{
+        state_without_payload
+        | snapshots: Map.put(state_without_payload.snapshots, snapshot_ref.id, snapshot_ref)
+      }
 
-      assert {:error, :not_found} = Snapshot.read(state, snapshot_ref.id)
+      assert {:error, :not_found} = Snapshot.read(state_with_stale_ref, snapshot_ref.id)
     end
   end
 
   describe "delete/2" do
-    test "deletes existing snapshot from both state and persistent_term", %{state: state} do
+    test "deletes existing snapshot from both state and snapshot storage", %{state: state} do
       {:ok, snapshot_ref, state} = Snapshot.create(state, "test.signal.1")
       {:ok, new_state} = Snapshot.delete(state, snapshot_ref.id)
 
       # Verify removed from state
       refute Map.has_key?(new_state.snapshots, snapshot_ref.id)
-      # Verify removed from persistent_term
+      # Verify removed from snapshot storage
       assert {:error, :not_found} = Snapshot.read(new_state, snapshot_ref.id)
     end
 

@@ -86,6 +86,7 @@ defmodule Jido.Signal.Bus.Stream do
             # Convert to RecordedSignal struct
             %Jido.Signal.Bus.RecordedSignal{
               id: log_id,
+              log_id: log_id,
               type: signal.type,
               created_at: DateTime.utc_now(),
               signal: signal

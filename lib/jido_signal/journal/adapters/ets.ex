@@ -565,6 +565,10 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   defp delete_dlq_index_entry(adapter, subscription_id, entry_id) do
     :ets.match_delete(adapter.dlq_subscription_index_table, {subscription_id, entry_id})
     :ok
+  catch
+    :error, :badarg ->
+      # Direct-read callers can hit protected tables from non-owner processes.
+      :ok
   end
 
   defp maybe_limit_entries(entries, :infinity), do: entries
@@ -585,12 +589,11 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   end
 
   defp clear_dlq_entries(adapter, subscription_id, limit) do
-    adapter
-    |> dlq_entries_for_subscription(subscription_id)
-    |> maybe_limit_entries(limit)
-    |> Enum.each(fn entry ->
-      :ets.delete(adapter.dlq_table, entry.id)
-      delete_dlq_index_entry(adapter, entry.subscription_id, entry.id)
+    entry_ids = dlq_entry_ids_for_subscription(adapter, subscription_id, limit)
+
+    Enum.each(entry_ids, fn entry_id ->
+      :ets.delete(adapter.dlq_table, entry_id)
+      delete_dlq_index_entry(adapter, subscription_id, entry_id)
     end)
   end
 
@@ -598,24 +601,58 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
          %{dlq_subscription_index_table: nil} = adapter,
          subscription_id
        ) do
-    adapter.dlq_table
-    |> :ets.tab2list()
-    |> Enum.map(fn {_id, entry} -> entry end)
-    |> Enum.filter(fn entry -> entry.subscription_id == subscription_id end)
-    |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
+    adapter
+    |> dlq_entries_with_ids_for_subscription(subscription_id)
+    |> Enum.map(fn {_entry_id, entry} -> entry end)
   end
 
   defp dlq_entries_for_subscription(adapter, subscription_id) do
+    adapter
+    |> dlq_entries_with_ids_for_subscription(subscription_id)
+    |> Enum.map(fn {_entry_id, entry} -> entry end)
+  end
+
+  defp dlq_entry_ids_for_subscription(adapter, subscription_id, limit) do
+    adapter
+    |> dlq_entries_with_ids_for_subscription(subscription_id)
+    |> maybe_limit_entries(limit)
+    |> Enum.map(fn {entry_id, _entry} -> entry_id end)
+  end
+
+  defp dlq_entries_with_ids_for_subscription(
+         %{dlq_subscription_index_table: nil} = adapter,
+         subscription_id
+       ) do
+    :ets.foldl(
+      fn {entry_id, entry}, acc ->
+        if entry.subscription_id == subscription_id do
+          [{entry_id, entry} | acc]
+        else
+          acc
+        end
+      end,
+      [],
+      adapter.dlq_table
+    )
+    |> Enum.sort_by(fn {_entry_id, entry} -> entry.inserted_at end, DateTime)
+  end
+
+  defp dlq_entries_with_ids_for_subscription(adapter, subscription_id) do
     adapter.dlq_subscription_index_table
     |> :ets.lookup(subscription_id)
     |> Enum.map(fn {^subscription_id, entry_id} -> entry_id end)
     |> Enum.reduce([], fn entry_id, acc ->
       case :ets.lookup(adapter.dlq_table, entry_id) do
-        [{^entry_id, entry}] -> [entry | acc]
-        [] -> acc
+        [{^entry_id, entry}] ->
+          [{entry_id, entry} | acc]
+
+        [] ->
+          # Keep index table self-healing when stale references are encountered.
+          delete_dlq_index_entry(adapter, subscription_id, entry_id)
+          acc
       end
     end)
-    |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
+    |> Enum.sort_by(fn {_entry_id, entry} -> entry.inserted_at end, DateTime)
   end
 
   defp select_signals(signals_table, :infinity) do

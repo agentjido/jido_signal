@@ -281,7 +281,7 @@ Track signal acknowledgments for reliable processing:
 ```elixir
 # Create persistent subscription with full options
 {:ok, sub_id} = Bus.subscribe(:my_app_bus, "payment.*",
-  persistent: true,
+  persistent?: true,
   dispatch: {:pid, target: self()},
   max_in_flight: 100,      # Max unacknowledged signals
   max_pending: 5_000,      # Max queued signals before backpressure
@@ -302,6 +302,8 @@ end
 # After max_attempts failures, signals move to Dead Letter Queue
 # See Event Bus guide for DLQ management
 ```
+
+Use `persistent?` as the canonical option name. The legacy `persistent:` alias remains available with a deprecation warning.
 
 ### Middleware Pipeline
 
