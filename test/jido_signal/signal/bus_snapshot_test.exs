@@ -146,8 +146,15 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       # Create first snapshot
       {:ok, snapshot_ref1, state} = Snapshot.create(state, "test.signal.1")
 
-      # Wait a moment to ensure different timestamps
-      Process.sleep(10)
+      older_snapshot_ref1 = %{
+        snapshot_ref1
+        | created_at: DateTime.add(snapshot_ref1.created_at, -1, :second)
+      }
+
+      state = %{
+        state
+        | snapshots: Map.put(state.snapshots, snapshot_ref1.id, older_snapshot_ref1)
+      }
 
       # Create second snapshot
       {:ok, snapshot_ref2, state} = Snapshot.create(state, "test.signal.2")
@@ -159,7 +166,7 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       [first, second] = snapshot_refs
       assert first.id == snapshot_ref2.id
       assert second.id == snapshot_ref1.id
-      assert DateTime.after?(first.created_at, second.created_at)
+      assert DateTime.after?(first.created_at, older_snapshot_ref1.created_at)
     end
   end
 
@@ -201,6 +208,16 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       # Verify the snapshot still only contains the original signals
       assert map_size(snapshot_data.signals) == 1
       assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.1"
+    end
+
+    test "returns not_found when snapshot reference exists but persistent_term entry is gone", %{
+      state: state
+    } do
+      {:ok, snapshot_ref, state} = Snapshot.create(state, "test.signal.1")
+
+      :persistent_term.erase({Snapshot, snapshot_ref.id})
+
+      assert {:error, :not_found} = Snapshot.read(state, snapshot_ref.id)
     end
   end
 
@@ -336,8 +353,15 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       # Create first snapshot
       {:ok, snapshot_ref1, state} = Snapshot.create(state, "test.signal.1")
 
-      # Wait to ensure different timestamps
-      Process.sleep(10)
+      older_snapshot_ref1 = %{
+        snapshot_ref1
+        | created_at: DateTime.add(snapshot_ref1.created_at, -1, :second)
+      }
+
+      state = %{
+        state
+        | snapshots: Map.put(state.snapshots, snapshot_ref1.id, older_snapshot_ref1)
+      }
 
       # Create second snapshot
       {:ok, snapshot_ref2, state} = Snapshot.create(state, "test.signal.2")
@@ -355,7 +379,7 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       snapshot_refs = Snapshot.list(new_state)
       assert length(snapshot_refs) == 1
       assert hd(snapshot_refs).id == snapshot_ref2.id
-      refute Map.has_key?(new_state.snapshots, snapshot_ref1.id)
+      refute Map.has_key?(new_state.snapshots, older_snapshot_ref1.id)
     end
   end
 end

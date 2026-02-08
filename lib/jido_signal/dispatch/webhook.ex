@@ -167,23 +167,25 @@ defmodule Jido.Signal.Dispatch.Webhook do
   end
 
   defp do_deliver(signal, opts) do
-    # Prepare the payload
-    payload = Jason.encode!(signal)
-    timestamp = DateTime.utc_now() |> DateTime.to_unix()
+    case Jason.encode(signal) do
+      {:ok, payload} ->
+        timestamp = DateTime.utc_now() |> DateTime.to_unix()
 
-    # Generate webhook-specific headers
-    webhook_headers =
-      []
-      |> add_signature_header(payload, timestamp, opts)
-      |> add_event_type_header(signal, opts)
-      |> add_timestamp_header(timestamp)
+        webhook_headers =
+          []
+          |> add_signature_header(payload, timestamp, opts)
+          |> add_event_type_header(signal, opts)
+          |> add_timestamp_header(timestamp)
 
-    # Merge with existing headers
-    headers = (Keyword.get(opts, :headers, []) ++ webhook_headers) |> Enum.uniq_by(&elem(&1, 0))
+        headers =
+          (Keyword.get(opts, :headers, []) ++ webhook_headers) |> Enum.uniq_by(&elem(&1, 0))
 
-    # Delegate to HTTP adapter - use do_deliver to avoid double circuit breaker
-    opts = Keyword.put(opts, :headers, headers)
-    Http.do_deliver(signal, opts)
+        opts = Keyword.put(opts, :headers, headers)
+        Http.do_deliver(signal, opts)
+
+      {:error, reason} ->
+        {:error, {:json_encode_error, reason}}
+    end
   end
 
   # Private Helpers

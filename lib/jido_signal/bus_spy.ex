@@ -46,6 +46,12 @@ defmodule Jido.Signal.BusSpy do
   - `[:jido, :signal, :bus, :dispatch_error]` - When dispatch fails
 
   Each event includes full signal and subscription metadata for test verification.
+
+  ## Lifecycle
+
+  `BusSpy` is intended for test/runtime instrumentation and should be stopped with
+  `stop_spy/1` so telemetry handlers are detached deterministically. As with all OTP
+  processes, `:brutal_kill` bypasses `terminate/2`.
   """
 
   use GenServer
@@ -195,8 +201,8 @@ defmodule Jido.Signal.BusSpy do
       nil ->
         # Add to waiters list and set timeout
         ref = Process.monitor(elem(from, 0))
-        waiter = %{from: from, pattern: pattern, ref: ref}
-        Process.send_after(self(), {:wait_timeout, ref}, timeout)
+        timer_ref = Process.send_after(self(), {:wait_timeout, ref}, timeout)
+        waiter = %{from: from, pattern: pattern, ref: ref, timer_ref: timer_ref}
         {:noreply, %{state | waiters: [waiter | state.waiters]}}
 
       event ->
@@ -237,6 +243,7 @@ defmodule Jido.Signal.BusSpy do
     # Reply to satisfied waiters
     for waiter <- satisfied_waiters do
       GenServer.reply(waiter.from, {:ok, signal_event})
+      cancel_waiter_timer(waiter)
       Process.demonitor(waiter.ref, [:flush])
     end
 
@@ -258,12 +265,20 @@ defmodule Jido.Signal.BusSpy do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    # Remove any waiters for the dead process
-    remaining_waiters = Enum.reject(state.waiters, &(&1.ref == ref))
+    # Remove any waiters for the dead process and cancel their timers.
+    {removed_waiters, remaining_waiters} =
+      Enum.split_with(state.waiters, fn waiter -> waiter.ref == ref end)
+
+    Enum.each(removed_waiters, &cancel_waiter_timer/1)
     {:noreply, %{state | waiters: remaining_waiters}}
   end
 
-  def terminate(_reason, _state) do
+  def terminate(_reason, state) do
+    Enum.each(state.waiters, fn waiter ->
+      cancel_waiter_timer(waiter)
+      Process.demonitor(waiter.ref, [:flush])
+    end)
+
     # Detach all telemetry handlers
     for event <- @events do
       Telemetry.detach({__MODULE__, self(), event})
@@ -320,4 +335,10 @@ defmodule Jido.Signal.BusSpy do
         false
     end
   end
+
+  defp cancel_waiter_timer(%{timer_ref: timer_ref}) when is_reference(timer_ref) do
+    Process.cancel_timer(timer_ref)
+  end
+
+  defp cancel_waiter_timer(_waiter), do: false
 end

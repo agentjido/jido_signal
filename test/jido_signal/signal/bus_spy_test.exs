@@ -50,8 +50,7 @@ defmodule Jido.Signal.BusSpyTest do
 
     {:ok, _recorded} = Bus.publish(bus_name, [signal])
 
-    # Give the telemetry events time to be processed
-    Process.sleep(50)
+    wait_until(fn -> BusSpy.get_signals_by_type(spy, "test.event") != [] end)
 
     # Check that the spy captured the signal
     dispatched_signals = BusSpy.get_dispatched_signals(spy)
@@ -79,8 +78,6 @@ defmodule Jido.Signal.BusSpyTest do
 
     # Start a task to publish signal after delay
     Task.start(fn ->
-      Process.sleep(100)
-
       {:ok, signal} =
         Signal.new(%{
           type: "async.test",
@@ -118,7 +115,7 @@ defmodule Jido.Signal.BusSpyTest do
       Bus.publish(bus_name, [signal])
     end
 
-    Process.sleep(50)
+    wait_until(fn -> length(BusSpy.get_dispatched_signals(spy)) >= 4 end)
 
     # Test different pattern matches
     user_events = BusSpy.get_signals_by_type(spy, "user.*")
@@ -160,7 +157,10 @@ defmodule Jido.Signal.BusSpyTest do
 
     {:ok, _recorded} = Bus.publish(bus_name, [signal])
 
-    Process.sleep(50)
+    wait_until(fn ->
+      BusSpy.get_dispatched_signals(spy)
+      |> Enum.any?(&(&1.event == :after_dispatch))
+    end)
 
     # Check for after_dispatch events with results
     dispatched_signals = BusSpy.get_dispatched_signals(spy)
@@ -186,7 +186,7 @@ defmodule Jido.Signal.BusSpyTest do
       })
 
     Bus.publish(bus_name, [signal])
-    Process.sleep(50)
+    wait_until(fn -> not Enum.empty?(BusSpy.get_dispatched_signals(spy)) end)
 
     # Verify events exist
     events = BusSpy.get_dispatched_signals(spy)
@@ -200,5 +200,81 @@ defmodule Jido.Signal.BusSpyTest do
     assert events == []
 
     BusSpy.stop_spy(spy)
+  end
+
+  test "waiter timer is canceled when a waiter is satisfied" do
+    spy = BusSpy.start_spy()
+
+    waiter_task =
+      Task.async(fn ->
+        BusSpy.wait_for_signal(spy, "timer.cancel", 5_000)
+      end)
+
+    waiter = wait_for_registered_waiter(spy)
+    timer_ref = Map.fetch!(waiter, :timer_ref)
+    assert is_reference(timer_ref)
+
+    {:ok, signal} =
+      Signal.new(%{
+        type: "timer.cancel",
+        source: "test",
+        data: %{value: 1}
+      })
+
+    send(
+      spy,
+      {:telemetry_event, [:jido, :signal, :bus, :before_dispatch],
+       %{timestamp: System.monotonic_time(:microsecond)},
+       %{
+         bus_name: :timer_cancel_bus,
+         signal_id: signal.id,
+         signal_type: signal.type,
+         subscription_id: "timer-subscription",
+         subscription_path: "timer.cancel",
+         signal: signal,
+         subscription: %{},
+         dispatch_result: nil,
+         error: nil,
+         reason: nil
+       }}
+    )
+
+    assert {:ok, event} = Task.await(waiter_task, 1_000)
+    assert event.signal_type == "timer.cancel"
+    assert [] = :sys.get_state(spy).waiters
+    assert :erlang.read_timer(timer_ref) == false
+
+    BusSpy.stop_spy(spy)
+  end
+
+  defp wait_for_registered_waiter(spy, attempts \\ 500)
+
+  defp wait_for_registered_waiter(_spy, 0), do: flunk("waiter was not registered")
+
+  defp wait_for_registered_waiter(spy, attempts) do
+    case :sys.get_state(spy).waiters do
+      [waiter | _] ->
+        waiter
+
+      [] ->
+        receive do
+        after
+          0 -> wait_for_registered_waiter(spy, attempts - 1)
+        end
+    end
+  end
+
+  defp wait_until(fun, attempts \\ 500)
+  defp wait_until(_fun, 0), do: flunk("condition not met in wait_until/2")
+
+  defp wait_until(fun, attempts) when is_function(fun, 0) do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        0 -> wait_until(fun, attempts - 1)
+      end
+    end
   end
 end

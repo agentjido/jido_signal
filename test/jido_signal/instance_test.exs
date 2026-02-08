@@ -42,6 +42,10 @@ defmodule Jido.Signal.InstanceTest do
   end
 
   describe "Instance.start_link/1" do
+    test "global signal supervisor uses rest_for_one strategy" do
+      assert :rest_for_one == Jido.Signal.Supervisor |> :sys.get_state() |> elem(2)
+    end
+
     test "starts instance supervisor with all children" do
       instance = :"TestInstance#{System.unique_integer()}"
       assert {:ok, pid} = Instance.start_link(name: instance)
@@ -57,6 +61,15 @@ defmodule Jido.Signal.InstanceTest do
       assert Process.whereis(Names.bus_runtime_supervisor(instance_opts)) |> is_pid()
 
       # Cleanup
+      Instance.stop(instance)
+    end
+
+    test "instance supervisor uses rest_for_one strategy" do
+      instance = :"TestInstance#{System.unique_integer()}"
+      assert {:ok, pid} = Instance.start_link(name: instance)
+
+      assert :rest_for_one == pid |> :sys.get_state() |> elem(2)
+
       Instance.stop(instance)
     end
 

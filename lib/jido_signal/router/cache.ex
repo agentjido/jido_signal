@@ -48,6 +48,12 @@ defmodule Jido.Signal.Router.Cache do
   - Reads from persistent_term are extremely fast (no copying)
   - Writes trigger a global garbage collection of all persistent_terms
   - Best for routers that are configured at startup and rarely change
+
+  ## Lifecycle Contract
+
+  Cache entries are process-independent `:persistent_term` values. Callers that create
+  cache entries are responsible for deleting them with `delete/1` (or `list_cached/0`
+  followed by `delete/1`) during shutdown/reconfiguration.
   """
 
   alias Jido.Signal

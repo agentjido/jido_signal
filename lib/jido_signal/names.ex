@@ -12,6 +12,13 @@ defmodule Jido.Signal.Names do
   - No cross-instance signal leakage
   - Easy to test isolation guarantees
 
+  ## Atom Growth Boundary
+
+  Scoped names are derived with `Module.concat/1`, which creates atoms for each distinct
+  `{instance, component}` pair. This is acceptable for bounded, long-lived instance sets
+  (for example: a small number of OTP application instances), but should not be used with
+  unbounded user input as instance identifiers.
+
   ## Examples
 
       # Global (default) - uses Jido.Signal.Registry

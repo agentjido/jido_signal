@@ -28,6 +28,7 @@ defmodule Jido.Signal.Serialization.Config do
       Jido.Signal.Serialization.Config.set_default_type_provider(MyCustomTypeProvider)
   """
 
+  alias Jido.Signal.Config, as: SignalConfig
   alias Jido.Signal.Serialization.{JsonSerializer, ModuleNameTypeProvider}
 
   @doc """
@@ -35,11 +36,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec default_serializer() :: module()
   def default_serializer do
-    Application.get_env(
-      :jido_signal,
-      :default_serializer,
-      Application.get_env(:jido, :default_serializer, JsonSerializer)
-    )
+    SignalConfig.get_env(:default_serializer, JsonSerializer)
   end
 
   @doc """
@@ -47,11 +44,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec default_type_provider() :: module()
   def default_type_provider do
-    Application.get_env(
-      :jido_signal,
-      :default_type_provider,
-      Application.get_env(:jido, :default_type_provider, ModuleNameTypeProvider)
-    )
+    SignalConfig.get_env(:default_type_provider, ModuleNameTypeProvider)
   end
 
   @doc """
@@ -59,8 +52,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec set_default_serializer(module()) :: :ok
   def set_default_serializer(serializer) when is_atom(serializer) do
-    Application.put_env(:jido_signal, :default_serializer, serializer)
-    Application.put_env(:jido, :default_serializer, serializer)
+    SignalConfig.put_env(:default_serializer, serializer)
   end
 
   @doc """
@@ -68,8 +60,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec set_default_type_provider(module()) :: :ok
   def set_default_type_provider(type_provider) when is_atom(type_provider) do
-    Application.put_env(:jido_signal, :default_type_provider, type_provider)
-    Application.put_env(:jido, :default_type_provider, type_provider)
+    SignalConfig.put_env(:default_type_provider, type_provider)
   end
 
   @default_max_payload_bytes 10_000_000
@@ -92,11 +83,7 @@ defmodule Jido.Signal.Serialization.Config do
   """
   @spec max_payload_bytes() :: non_neg_integer()
   def max_payload_bytes do
-    Application.get_env(
-      :jido_signal,
-      :max_payload_bytes,
-      Application.get_env(:jido, :max_payload_bytes, @default_max_payload_bytes)
-    )
+    SignalConfig.get_env(:max_payload_bytes, @default_max_payload_bytes)
   end
 
   @doc """

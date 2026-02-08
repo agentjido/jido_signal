@@ -19,9 +19,9 @@ defmodule Jido.Signal.Bus.Subscriber do
               path: Zoi.string(),
               dispatch: Zoi.any(),
               persistent?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
-              persistence_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              persistence_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               disconnected?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
-              created_at: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              created_at: Zoi.default(Zoi.datetime(), DateTime.utc_now())
             }
           )
 
@@ -118,6 +118,7 @@ defmodule Jido.Signal.Bus.Subscriber do
       max_attempts: opts[:max_attempts] || 5,
       retry_interval: opts[:retry_interval] || 100,
       client_pid: client_pid,
+      jido: state.jido,
       journal_adapter: state.journal_adapter,
       journal_pid: state.journal_pid
     ]

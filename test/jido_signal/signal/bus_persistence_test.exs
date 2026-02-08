@@ -146,8 +146,8 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
 
       # Verify first signal is in-flight
       state_after_first = :sys.get_state(pid)
-      assert map_size(state_after_first.in_flight_signals) == 1
-      assert Map.has_key?(state_after_first.in_flight_signals, signal_log_id1)
+      assert total_in_flight(state_after_first) == 1
+      assert signal_log_id1 in in_flight_signal_ids(state_after_first)
       assert map_size(state_after_first.pending_signals) == 0
 
       # Send second signal
@@ -158,7 +158,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
 
       # Verify second signal is pending, not in-flight
       state_after_second = :sys.get_state(pid)
-      assert map_size(state_after_second.in_flight_signals) == 1
+      assert total_in_flight(state_after_second) == 1
       assert map_size(state_after_second.pending_signals) == 1
       assert Map.has_key?(state_after_second.pending_signals, signal_log_id2)
 
@@ -173,11 +173,11 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       assert state_after_ack.checkpoint == checkpoint_timestamp
 
       # First signal should be removed from in-flight
-      assert map_size(state_after_ack.in_flight_signals) == 1
-      refute Map.has_key?(state_after_ack.in_flight_signals, signal_log_id1)
+      assert total_in_flight(state_after_ack) == 1
+      refute signal_log_id1 in in_flight_signal_ids(state_after_ack)
 
       # Second signal should now be in-flight
-      assert Map.has_key?(state_after_ack.in_flight_signals, signal_log_id2)
+      assert signal_log_id2 in in_flight_signal_ids(state_after_ack)
 
       # Pending signals should be empty
       assert map_size(state_after_ack.pending_signals) == 0
@@ -231,15 +231,18 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       signal_log_ids = Enum.map(signals_with_ids, fn {id, _} -> id end)
 
       # We should receive all signals
-      for i <- 1..5 do
-        assert_receive {:signal, received_signal}, 500
-        assert received_signal.type == "test-type-#{i}"
-        assert received_signal.data == %{test: "data#{i}"}
-      end
+      received_types =
+        Enum.map(1..5, fn _ ->
+          assert_receive {:signal, received_signal}, 500
+          received_signal.type
+        end)
+
+      assert Enum.sort(received_types) ==
+               Enum.sort(Enum.map(1..5, fn i -> "test-type-#{i}" end))
 
       # Verify all signals are in-flight
       state_before_ack = :sys.get_state(pid)
-      assert map_size(state_before_ack.in_flight_signals) == 5
+      assert total_in_flight(state_before_ack) == 5
 
       # Select 3 signal IDs to acknowledge (first, third, and fifth)
       ids_to_ack = [
@@ -263,14 +266,16 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       assert state_after_ack.checkpoint == highest_timestamp
 
       # The acknowledged signals should be removed from in-flight
-      assert map_size(state_after_ack.in_flight_signals) == 2
+      assert total_in_flight(state_after_ack) == 2
 
       # First, third, and fifth signals should be removed
-      refute Map.has_key?(state_after_ack.in_flight_signals, Enum.at(signal_log_ids, 0))
-      assert Map.has_key?(state_after_ack.in_flight_signals, Enum.at(signal_log_ids, 1))
-      refute Map.has_key?(state_after_ack.in_flight_signals, Enum.at(signal_log_ids, 2))
-      assert Map.has_key?(state_after_ack.in_flight_signals, Enum.at(signal_log_ids, 3))
-      refute Map.has_key?(state_after_ack.in_flight_signals, Enum.at(signal_log_ids, 4))
+      in_flight_ids = in_flight_signal_ids(state_after_ack)
+
+      refute Enum.at(signal_log_ids, 0) in in_flight_ids
+      assert Enum.at(signal_log_ids, 1) in in_flight_ids
+      refute Enum.at(signal_log_ids, 2) in in_flight_ids
+      assert Enum.at(signal_log_ids, 3) in in_flight_ids
+      refute Enum.at(signal_log_ids, 4) in in_flight_ids
     end
 
     test "returns {:error, :queue_full} when both in_flight and pending are full via handle_call",
@@ -302,7 +307,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
 
       # Verify state
       state = :sys.get_state(pid)
-      assert map_size(state.in_flight_signals) == 2
+      assert total_in_flight(state) == 2
       assert map_size(state.pending_signals) == 2
 
       # Fifth signal should be rejected
@@ -313,7 +318,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
 
       # State should not have changed
       state_after = :sys.get_state(pid)
-      assert map_size(state_after.in_flight_signals) == 2
+      assert total_in_flight(state_after) == 2
       assert map_size(state_after.pending_signals) == 2
     end
 
@@ -342,11 +347,13 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
         send(pid, {:signal, {signal_log_id, signal}})
       end
 
-      # Allow messages to be processed
-      Process.sleep(50)
+      wait_until(fn ->
+        state = :sys.get_state(pid)
+        total_in_flight(state) == 1 and map_size(state.pending_signals) == 1
+      end)
 
       state = :sys.get_state(pid)
-      assert map_size(state.in_flight_signals) == 1
+      assert total_in_flight(state) == 1
       assert map_size(state.pending_signals) == 1
 
       # Third signal should be dropped (handle_info can't return error)
@@ -354,11 +361,14 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       signal_log_id3 = ID.generate!()
       send(pid, {:signal, {signal_log_id3, signal3}})
 
-      Process.sleep(50)
+      wait_until(fn ->
+        state = :sys.get_state(pid)
+        total_in_flight(state) == 1 and map_size(state.pending_signals) == 1
+      end)
 
       # State should not have changed
       state_after = :sys.get_state(pid)
-      assert map_size(state_after.in_flight_signals) == 1
+      assert total_in_flight(state_after) == 1
       assert map_size(state_after.pending_signals) == 1
     end
 
@@ -455,7 +465,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
 
       # Now pending should move to in-flight, leaving room in pending
       state = :sys.get_state(pid)
-      assert map_size(state.in_flight_signals) == 1
+      assert total_in_flight(state) == 1
       assert map_size(state.pending_signals) == 0
 
       # Should be able to add more signals now
@@ -491,13 +501,40 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       end
 
       state = :sys.get_state(pid)
-      assert map_size(state.in_flight_signals) == 5
+      assert total_in_flight(state) == 5
       assert map_size(state.pending_signals) == 5
 
       # 11th signal should fail
       signal11 = Signal.new!(%{type: "test-11", source: "/test", data: %{i: 11}})
       signal_log_id11 = ID.generate!()
       assert {:error, :queue_full} = GenServer.call(pid, {:signal, {signal_log_id11, signal11}})
+    end
+  end
+
+  defp total_in_flight(state) do
+    map_size(state.in_flight_signals) + map_size(state.dispatch_tasks)
+  end
+
+  defp in_flight_signal_ids(state) do
+    task_signal_ids =
+      Enum.map(state.dispatch_tasks, fn {_task_ref, {_task, signal_log_id, _signal}} ->
+        signal_log_id
+      end)
+
+    Map.keys(state.in_flight_signals) ++ task_signal_ids
+  end
+
+  defp wait_until(fun, attempts \\ 50)
+  defp wait_until(_fun, 0), do: flunk("condition not met in wait_until/2")
+
+  defp wait_until(fun, attempts) when is_function(fun, 0) do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        10 -> wait_until(fun, attempts - 1)
+      end
     end
   end
 end

@@ -7,8 +7,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
 
   use Agent
 
-  alias Jido.Signal.ID
-  alias Jido.Signal.Telemetry
+  alias Jido.Signal.Journal.Adapters.Helpers
 
   @impl true
   def init do
@@ -100,11 +99,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
   def put_checkpoint(subscription_id, checkpoint, pid \\ nil) do
     target = pid || __MODULE__
 
-    Telemetry.execute(
-      [:jido, :signal, :journal, :checkpoint, :put],
-      %{},
-      %{subscription_id: subscription_id}
-    )
+    Helpers.emit_checkpoint_put(subscription_id)
 
     Agent.update(target, fn state ->
       put_in(state, [:checkpoints, subscription_id], checkpoint)
@@ -117,20 +112,12 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
 
     case Agent.get(target, fn state -> get_in(state, [:checkpoints, subscription_id]) end) do
       nil ->
-        Telemetry.execute(
-          [:jido, :signal, :journal, :checkpoint, :get],
-          %{},
-          %{subscription_id: subscription_id, found: false}
-        )
+        Helpers.emit_checkpoint_get(subscription_id, false)
 
         {:error, :not_found}
 
       checkpoint ->
-        Telemetry.execute(
-          [:jido, :signal, :journal, :checkpoint, :get],
-          %{},
-          %{subscription_id: subscription_id, found: true}
-        )
+        Helpers.emit_checkpoint_get(subscription_id, true)
 
         {:ok, checkpoint}
     end
@@ -149,26 +136,14 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
   @impl true
   def put_dlq_entry(subscription_id, signal, reason, metadata, pid \\ nil) do
     target = pid || __MODULE__
-    entry_id = ID.generate!()
-
-    entry = %{
-      id: entry_id,
-      subscription_id: subscription_id,
-      signal: signal,
-      reason: reason,
-      metadata: metadata,
-      inserted_at: DateTime.utc_now()
-    }
+    entry = Helpers.build_dlq_entry(subscription_id, signal, reason, metadata)
+    entry_id = entry.id
 
     Agent.update(target, fn state ->
       put_in(state, [:dlq, entry_id], entry)
     end)
 
-    Telemetry.execute(
-      [:jido, :signal, :journal, :dlq, :put],
-      %{},
-      %{subscription_id: subscription_id, entry_id: entry_id}
-    )
+    Helpers.emit_dlq_put(subscription_id, entry_id)
 
     {:ok, entry_id}
   end
@@ -185,11 +160,7 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
         |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
       end)
 
-    Telemetry.execute(
-      [:jido, :signal, :journal, :dlq, :get],
-      %{count: length(entries)},
-      %{subscription_id: subscription_id}
-    )
+    Helpers.emit_dlq_get(subscription_id, length(entries))
 
     {:ok, entries}
   end

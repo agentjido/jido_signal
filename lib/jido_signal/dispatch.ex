@@ -115,6 +115,7 @@ defmodule Jido.Signal.Dispatch do
       :ok = Dispatch.dispatch(signal, config)
   """
 
+  alias Jido.Signal.Config
   alias Jido.Signal.Error
   alias Jido.Signal.Names
   alias Jido.Signal.Telemetry
@@ -218,15 +219,11 @@ defmodule Jido.Signal.Dispatch do
   end
 
   def validate_opts(invalid_config) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.validation_error(
-         "Invalid dispatch configuration",
-         %{field: "dispatch_config", value: invalid_config, reason: :invalid_dispatch_config}
-       )}
-    else
-      {:error, :invalid_dispatch_config}
-    end
+    {:error,
+     Error.validation_error(
+       "Invalid dispatch configuration",
+       %{field: "dispatch_config", value: invalid_config, reason: :invalid_dispatch_config}
+     )}
   end
 
   @doc """
@@ -314,7 +311,15 @@ defmodule Jido.Signal.Dispatch do
   end
 
   def dispatch(_signal, _config, _dispatch_opts) do
-    {:error, :invalid_dispatch_config}
+    {:error,
+     Error.validation_error(
+       "Invalid dispatch configuration",
+       %{
+         field: "dispatch_config",
+         value: :invalid_dispatch_config,
+         reason: :invalid_dispatch_config
+       }
+     )}
   end
 
   @doc """
@@ -468,43 +473,23 @@ defmodule Jido.Signal.Dispatch do
   # Private helpers
 
   defp normalize_error(reason, adapter, config) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.dispatch_error(
-         "Signal dispatch failed",
-         %{adapter: adapter, reason: reason, config: config}
-       )}
-    else
-      {:error, reason}
-    end
+    {:error,
+     Error.dispatch_error(
+       "Signal dispatch failed",
+       %{adapter: adapter, reason: reason, config: config}
+     )}
   end
 
   defp normalize_validation_error(reason, adapter, config) do
-    if should_normalize_errors?() do
-      {:error,
-       Error.validation_error(
-         "Invalid adapter configuration",
-         %{field: "config", value: config, adapter: adapter, reason: reason}
-       )}
-    else
-      {:error, reason}
-    end
-  end
-
-  defp should_normalize_errors? do
-    Application.get_env(
-      :jido_signal,
-      :normalize_dispatch_errors,
-      Application.get_env(:jido, :normalize_dispatch_errors, false)
-    )
+    {:error,
+     Error.validation_error(
+       "Invalid adapter configuration",
+       %{field: "config", value: config, adapter: adapter, reason: reason}
+     )}
   end
 
   defp dispatch_max_concurrency do
-    Application.get_env(
-      :jido_signal,
-      :dispatch_max_concurrency,
-      Application.get_env(:jido, :dispatch_max_concurrency, 8)
-    )
+    Config.get_env(:dispatch_max_concurrency, 8)
   end
 
   defp task_supervisor(opts) do
@@ -543,7 +528,7 @@ defmodule Jido.Signal.Dispatch do
   defp validate_adapter_opts(nil, opts, _adapter), do: {:ok, opts}
 
   defp validate_adapter_opts(adapter_module, opts, _adapter) do
-    adapter_module.validate_opts(opts)
+    safe_validate_adapter_opts(adapter_module, opts)
   end
 
   defp dispatch_single(_signal, {nil, _opts}), do: :ok
@@ -611,10 +596,34 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp dispatch_deliver(signal, adapter_module, adapter, opts) do
-    case adapter_module.deliver(signal, opts) do
+    case safe_deliver(adapter_module, signal, opts) do
       :ok -> :ok
       {:error, reason} -> normalize_error(reason, adapter, {adapter, opts})
     end
+  end
+
+  defp safe_validate_adapter_opts(adapter_module, opts) do
+    adapter_module.validate_opts(opts)
+  rescue
+    exception ->
+      {:error, {:adapter_validate_exception, inspect(exception)}}
+  catch
+    kind, reason ->
+      {:error, {:adapter_validate_exit, kind, reason}}
+  end
+
+  defp safe_deliver(adapter_module, signal, opts) do
+    case adapter_module.deliver(signal, opts) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:invalid_adapter_response, other}}
+    end
+  rescue
+    exception ->
+      {:error, {:adapter_exception, inspect(exception)}}
+  catch
+    kind, reason ->
+      {:error, {:adapter_exit, kind, reason}}
   end
 
   defp resolve_adapter(nil), do: {:ok, nil}

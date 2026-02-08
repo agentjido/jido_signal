@@ -20,6 +20,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
   @behaviour Jido.Signal.Journal.Persistence
 
   alias Jido.Signal.ID
+  alias Jido.Signal.Journal.Adapters.Helpers
   alias Jido.Signal.Journal.Adapters.Mnesia.Tables
   alias Jido.Signal.Telemetry
 
@@ -293,32 +294,27 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
   @impl true
   def put_dlq_entry(subscription_id, signal, reason, metadata, _pid) do
     start_time = System.monotonic_time(:microsecond)
-    entry_id = ID.generate!()
-    inserted_at = DateTime.utc_now()
+    entry = Helpers.build_dlq_entry(subscription_id, signal, reason, metadata, ID.generate!())
 
     result =
       Memento.transaction(fn ->
         Memento.Query.write(%Tables.DLQ{
-          id: entry_id,
-          subscription_id: subscription_id,
-          signal: signal,
-          reason: reason,
-          metadata: metadata,
-          inserted_at: inserted_at
+          id: entry.id,
+          subscription_id: entry.subscription_id,
+          signal: entry.signal,
+          reason: entry.reason,
+          metadata: entry.metadata,
+          inserted_at: entry.inserted_at
         })
       end)
 
     duration_us = System.monotonic_time(:microsecond) - start_time
     emit_telemetry(:put_dlq_entry, duration_us)
 
-    Telemetry.execute(
-      [:jido, :signal, :journal, :dlq, :put],
-      %{},
-      %{subscription_id: subscription_id, entry_id: entry_id}
-    )
+    Helpers.emit_dlq_put(subscription_id, entry.id)
 
     case result do
-      {:ok, _} -> {:ok, entry_id}
+      {:ok, _} -> {:ok, entry.id}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -358,11 +354,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
           end)
           |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
 
-        Telemetry.execute(
-          [:jido, :signal, :journal, :dlq, :get],
-          %{count: length(entries)},
-          %{subscription_id: subscription_id}
-        )
+        Helpers.emit_dlq_get(subscription_id, length(entries))
 
         {:ok, entries}
 

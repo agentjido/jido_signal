@@ -18,24 +18,25 @@ defmodule Jido.Signal.Bus.State do
             %{
               name: Zoi.atom(),
               jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
-              router: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              router: Zoi.any(),
               log: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               snapshots: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
-              child_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
-              child_supervisor_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              child_supervisor: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
+              child_supervisor_monitor_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
               middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
               middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
-              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
-              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_adapter: Zoi.module() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
               journal_owned?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               async_calls: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
-              partition_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
-              partition_supervisor_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              partition_supervisor: Zoi.pid() |> Zoi.nullable() |> Zoi.optional(),
+              partition_supervisor_monitor_ref:
+                Zoi.reference() |> Zoi.nullable() |> Zoi.optional(),
               max_log_size: Zoi.default(Zoi.integer(), 100_000) |> Zoi.optional(),
               log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional(),
-              gc_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              gc_timer_ref: Zoi.reference() |> Zoi.nullable() |> Zoi.optional()
             }
           )
 

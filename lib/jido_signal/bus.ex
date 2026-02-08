@@ -41,6 +41,7 @@ defmodule Jido.Signal.Bus do
 
   use GenServer
 
+  alias Jido.Signal.Bus.DispatchPipeline
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Partition
   alias Jido.Signal.Bus.PartitionSupervisor
@@ -109,10 +110,10 @@ defmodule Jido.Signal.Bus do
   def init({name, opts}) do
     Process.flag(:trap_exit, true)
 
-    with {:ok, child_supervisor} <- start_bus_child_supervisor(opts),
-         {journal_adapter, journal_pid, journal_owned?} <- init_journal_adapter(name, opts),
+    with {journal_adapter, journal_pid, journal_owned?} <- init_journal_adapter(name, opts),
          middleware_specs = Keyword.get(opts, :middleware, []),
-         {:ok, middleware_configs} <- MiddlewarePipeline.init_middleware(middleware_specs) do
+         {:ok, middleware_configs} <- MiddlewarePipeline.init_middleware(middleware_specs),
+         {:ok, child_supervisor} <- start_bus_child_supervisor(opts) do
       init_state(
         name,
         opts,
@@ -136,8 +137,20 @@ defmodule Jido.Signal.Bus do
 
     existing_journal_pid = Keyword.get(opts, :journal_pid)
 
-    do_init_journal_adapter(name, journal_adapter, existing_journal_pid)
+    case validate_journal_config(journal_adapter, existing_journal_pid) do
+      :ok ->
+        do_init_journal_adapter(name, journal_adapter, existing_journal_pid)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
+
+  defp validate_journal_config(nil, journal_pid) when not is_nil(journal_pid) do
+    {:error, :journal_pid_without_adapter}
+  end
+
+  defp validate_journal_config(_journal_adapter, _journal_pid), do: :ok
 
   defp start_bus_child_supervisor(opts) do
     runtime_supervisor = Names.bus_runtime_supervisor(opts)
@@ -1051,69 +1064,30 @@ defmodule Jido.Signal.Bus do
   end
 
   defp emit_before_dispatch_telemetry(bus_name, signal, subscription_id, subscription) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :before_dispatch],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        signal: signal,
-        subscription: subscription
-      }
-    )
+    DispatchPipeline.emit_before_dispatch(bus_name, signal, subscription_id, subscription)
   end
 
   defp emit_after_dispatch_telemetry(bus_name, signal, subscription_id, subscription, result) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :after_dispatch],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        dispatch_result: result,
-        signal: signal,
-        subscription: subscription
-      }
-    )
+    DispatchPipeline.emit_after_dispatch(bus_name, signal, subscription_id, subscription, result)
   end
 
   defp emit_dispatch_skipped_telemetry(bus_name, signal, subscription_id, subscription) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :dispatch_skipped],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        reason: :middleware_skip,
-        signal: signal,
-        subscription: subscription
-      }
+    DispatchPipeline.emit_dispatch_skipped(
+      bus_name,
+      signal,
+      subscription_id,
+      subscription,
+      :middleware_skip
     )
   end
 
   defp emit_dispatch_error_telemetry(bus_name, signal, subscription_id, subscription, reason) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :dispatch_error],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        error: reason,
-        signal: signal,
-        subscription: subscription
-      }
+    DispatchPipeline.emit_dispatch_error(
+      bus_name,
+      signal,
+      subscription_id,
+      subscription,
+      reason
     )
   end
 
@@ -1136,10 +1110,7 @@ defmodule Jido.Signal.Bus do
       end
     else
       # For regular subscriptions, use async dispatch
-      case Dispatch.dispatch_async(signal, subscription.dispatch, jido_opts(state)) do
-        {:ok, _task} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
+      DispatchPipeline.dispatch_async(signal, subscription, jido_opts(state))
     end
   end
 

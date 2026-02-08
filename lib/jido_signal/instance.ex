@@ -98,11 +98,14 @@ defmodule Jido.Signal.Instance do
     ]
 
     supervisor_name = Names.supervisor(instance_opts)
-    Supervisor.start_link(children, strategy: :one_for_one, name: supervisor_name)
+    Supervisor.start_link(children, strategy: :rest_for_one, name: supervisor_name)
   end
 
   @doc """
   Checks if an instance is running.
+
+  This is an advisory liveness check. The process may terminate immediately after this function
+  returns `true`.
 
   ## Examples
 

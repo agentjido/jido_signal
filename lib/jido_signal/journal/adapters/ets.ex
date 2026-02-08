@@ -19,8 +19,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   use GenServer
 
-  alias Jido.Signal.ID
-  alias Jido.Signal.Telemetry
+  alias Jido.Signal.Journal.Adapters.Helpers
 
   @schema Zoi.struct(
             __MODULE__,
@@ -309,11 +308,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl GenServer
   def handle_call({:put_checkpoint, subscription_id, checkpoint}, _from, adapter) do
-    Telemetry.execute(
-      [:jido, :signal, :journal, :checkpoint, :put],
-      %{},
-      %{subscription_id: subscription_id}
-    )
+    Helpers.emit_checkpoint_put(subscription_id)
 
     true = :ets.insert(adapter.checkpoints_table, {subscription_id, checkpoint})
     {:reply, :ok, adapter}
@@ -324,20 +319,12 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
     reply =
       case :ets.lookup(adapter.checkpoints_table, subscription_id) do
         [{^subscription_id, checkpoint}] ->
-          Telemetry.execute(
-            [:jido, :signal, :journal, :checkpoint, :get],
-            %{},
-            %{subscription_id: subscription_id, found: true}
-          )
+          Helpers.emit_checkpoint_get(subscription_id, true)
 
           {:ok, checkpoint}
 
         [] ->
-          Telemetry.execute(
-            [:jido, :signal, :journal, :checkpoint, :get],
-            %{},
-            %{subscription_id: subscription_id, found: false}
-          )
+          Helpers.emit_checkpoint_get(subscription_id, false)
 
           {:error, :not_found}
       end
@@ -353,24 +340,12 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl GenServer
   def handle_call({:put_dlq_entry, subscription_id, signal, reason, metadata}, _from, adapter) do
-    entry_id = ID.generate!()
-
-    entry = %{
-      id: entry_id,
-      subscription_id: subscription_id,
-      signal: signal,
-      reason: reason,
-      metadata: metadata,
-      inserted_at: DateTime.utc_now()
-    }
+    entry = Helpers.build_dlq_entry(subscription_id, signal, reason, metadata)
+    entry_id = entry.id
 
     true = :ets.insert(adapter.dlq_table, {entry_id, entry})
 
-    Telemetry.execute(
-      [:jido, :signal, :journal, :dlq, :put],
-      %{},
-      %{subscription_id: subscription_id, entry_id: entry_id}
-    )
+    Helpers.emit_dlq_put(subscription_id, entry_id)
 
     {:reply, {:ok, entry_id}, adapter}
   end
@@ -383,11 +358,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
       |> Enum.filter(fn entry -> entry.subscription_id == subscription_id end)
       |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
 
-    Telemetry.execute(
-      [:jido, :signal, :journal, :dlq, :get],
-      %{count: length(entries)},
-      %{subscription_id: subscription_id}
-    )
+    Helpers.emit_dlq_get(subscription_id, length(entries))
 
     {:reply, {:ok, entries}, adapter}
   end

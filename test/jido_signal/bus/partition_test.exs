@@ -18,6 +18,15 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
       partition_state = :sys.get_state(partition_pid)
       refute Map.has_key?(Map.from_struct(partition_state), :bus_pid)
     end
+
+    test "partition process traps exits for supervised lifecycle cleanup" do
+      bus_name = :"test-bus-trap-exit-#{:erlang.unique_integer([:positive])}"
+      start_supervised!({Bus, name: bus_name, partition_count: 2})
+
+      partition_pid = GenServer.whereis(Partition.via_tuple(bus_name, 0))
+      assert is_pid(partition_pid)
+      assert {:trap_exit, true} == Process.info(partition_pid, :trap_exit)
+    end
   end
 
   describe "rate limiting" do
@@ -68,7 +77,7 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
       :telemetry.detach(handler_id)
     end
 
-    test "token refill allows more signals after waiting" do
+    test "token refill allows more signals after refill cycle" do
       bus_name = :"test-bus-refill-#{:erlang.unique_integer([:positive])}"
 
       start_supervised!(
@@ -95,7 +104,17 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
         assert_receive {:signal, %Signal{type: "test.signal"}}, 500
       end
 
-      Process.sleep(100)
+      Enum.each(0..1, fn partition_id ->
+        partition_pid = GenServer.whereis(Partition.via_tuple(bus_name, partition_id))
+
+        :sys.replace_state(partition_pid, fn state ->
+          %{
+            state
+            | tokens: state.burst_size * 1.0,
+              last_refill: System.monotonic_time(:millisecond)
+          }
+        end)
+      end)
 
       signals2 =
         for i <- 6..10 do
