@@ -141,6 +141,54 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       assert checkpoint == highest_timestamp
     end
 
+    test "reconnect replays signals newer than millisecond checkpoint", %{bus: bus} do
+      parent = self()
+
+      start_client = fn tag ->
+        spawn(fn ->
+          receive_loop = fn receive_loop ->
+            receive do
+              {:signal, signal} ->
+                send(parent, {tag, signal})
+                receive_loop.(receive_loop)
+            end
+          end
+
+          receive_loop.(receive_loop)
+        end)
+      end
+
+      old_client = start_client.(:old_client_signal)
+      on_exit(fn -> if Process.alive?(old_client), do: Process.exit(old_client, :kill) end)
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal",
+          persistent?: true,
+          retry_interval: 1000,
+          dispatch: {:pid, target: old_client}
+        )
+
+      {:ok, signal1} = Signal.new("test.signal", %{value: 1}, source: "/test")
+      signal1_id = signal1.id
+      {:ok, [recorded1]} = Bus.publish(bus, [signal1])
+      assert_receive {:old_client_signal, %Signal{id: ^signal1_id}}
+      assert :ok = Bus.ack(bus, subscription_id, recorded1.id)
+
+      Process.exit(old_client, :kill)
+      Process.sleep(50)
+
+      {:ok, signal2} = Signal.new("test.signal", %{value: 2}, source: "/test")
+      signal2_id = signal2.id
+      {:ok, _} = Bus.publish(bus, [signal2])
+
+      new_client = start_client.(:new_client_signal)
+      on_exit(fn -> if Process.alive?(new_client), do: Process.exit(new_client, :kill) end)
+
+      assert {:ok, _checkpoint} = Bus.reconnect(bus, subscription_id, new_client)
+      assert_receive {:new_client_signal, %Signal{id: ^signal2_id}}, 1000
+      refute_receive {:new_client_signal, %Signal{id: ^signal1_id}}, 100
+    end
+
     test "unsubscribe keeps checkpoint and dlq when delete_persistence is false", %{
       bus: bus,
       journal_pid: journal_pid
