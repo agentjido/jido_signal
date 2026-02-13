@@ -45,13 +45,31 @@ defmodule JidoTest.Signal.Bus do
           data: %{value: 1}
         })
 
-      {:ok, _} = Bus.publish(bus, [signal])
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
 
       # Verify signal is received
       assert_receive {:signal, %Signal{type: "test.signal"}}
 
       # Acknowledge the signal
-      :ok = Bus.ack(bus, subscription_id, 1)
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+    end
+
+    test "supports persistent alias option", %{bus: bus} do
+      {:ok, subscription_id} = Bus.subscribe(bus, "test.signal", persistent: true)
+      assert is_binary(subscription_id)
+
+      {:ok, pid} = Bus.whereis(bus)
+      state = :sys.get_state(pid)
+      assert state.subscriptions[subscription_id].persistent? == true
+    end
+
+    test "prefers persistent? when both persistent keys are present", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal", persistent: false, persistent?: true)
+
+      {:ok, pid} = Bus.whereis(bus)
+      state = :sys.get_state(pid)
+      assert state.subscriptions[subscription_id].persistent? == true
     end
   end
 
@@ -195,6 +213,31 @@ defmodule JidoTest.Signal.Bus do
       # Replay all
       {:ok, all_replayed} = Bus.replay(bus, "**")
       assert length(all_replayed) == 2
+    end
+
+    test "replays in recorded order with non-chronological signal IDs", %{bus: bus} do
+      {:ok, signal1} =
+        Signal.new(%{
+          id: "signal-z",
+          type: "test.signal",
+          source: "/test",
+          data: %{order: 1}
+        })
+
+      {:ok, signal2} =
+        Signal.new(%{
+          id: "signal-a",
+          type: "test.signal",
+          source: "/test",
+          data: %{order: 2}
+        })
+
+      {:ok, _recorded} = Bus.publish(bus, [signal1, signal2])
+
+      {:ok, replayed} = Bus.replay(bus, "test.signal")
+
+      assert Enum.map(replayed, fn recorded -> recorded.signal.id end) == ["signal-z", "signal-a"]
+      assert Enum.map(replayed, fn recorded -> recorded.signal.data.order end) == [1, 2]
     end
 
     test "replays signals from start_timestamp", %{bus: bus} do
@@ -357,52 +400,90 @@ defmodule JidoTest.Signal.Bus do
   #   end
   # end
 
-  # describe "reconnect/2" do
-  #   test "reconnects a client to a persistent subscription", %{bus: bus} do
-  #     # Create persistent subscription
-  #     {:ok, subscription_id} = Bus.subscribe(bus, "test.signal", persistent: true)
+  describe "reconnect/3" do
+    test "reconnects a client to a persistent subscription", %{bus: bus} do
+      {:ok, subscription_id} = Bus.subscribe(bus, "test.signal", persistent?: true)
 
-  #     # Publish a signal
-  #     {:ok, signal} =
-  #       Signal.new(%{
-  #         type: "test.signal",
-  #         source: "/test",
-  #         data: %{value: 1}
-  #       })
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
 
-  #     {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+      assert :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
 
-  #     # Acknowledge the signal
-  #     :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+      new_client = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> if Process.alive?(new_client), do: Process.exit(new_client, :kill) end)
 
-  #     # Create a new process to simulate a new client
-  #     task =
-  #       Task.async(fn ->
-  #         receive do
-  #           :continue -> :ok
-  #         end
-  #       end)
+      assert {:ok, checkpoint} = Bus.reconnect(bus, subscription_id, new_client)
+      assert checkpoint
+    end
 
-  #     # Reconnect with the new client
-  #     {:ok, checkpoint} = Bus.reconnect(bus, subscription_id, task.pid)
-  #     assert is_integer(checkpoint)
+    test "reconnect replays only signals newer than the checkpoint", %{bus: bus} do
+      parent = self()
 
-  #     # Clean up
-  #     send(task.pid, :continue)
-  #     Task.await(task)
-  #   end
+      start_client = fn tag ->
+        spawn(fn ->
+          receive_loop = fn receive_loop ->
+            receive do
+              {:signal, signal} ->
+                send(parent, {tag, signal})
+                receive_loop.(receive_loop)
+            end
+          end
 
-  #   test "returns error when reconnecting to non-existent subscription", %{bus: bus} do
-  #     assert {:error, _} = Bus.reconnect(bus, "non-existent", self())
-  #   end
+          receive_loop.(receive_loop)
+        end)
+      end
 
-  #   test "returns error when reconnecting to non-persistent subscription", %{bus: bus} do
-  #     # Create non-persistent subscription
-  #     {:ok, subscription_id} = Bus.subscribe(bus, "test.signal")
+      old_client = start_client.(:old_client_signal)
+      on_exit(fn -> if Process.alive?(old_client), do: Process.exit(old_client, :kill) end)
 
-  #     assert {:error, _} = Bus.reconnect(bus, subscription_id, self())
-  #   end
-  # end
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal",
+          persistent?: true,
+          retry_interval: 1000,
+          dispatch: {:pid, target: old_client}
+        )
+
+      {:ok, signal1} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      signal1_id = signal1.id
+      {:ok, [recorded1]} = Bus.publish(bus, [signal1])
+      assert_receive {:old_client_signal, %Signal{id: ^signal1_id}}
+      assert :ok = Bus.ack(bus, subscription_id, recorded1.id)
+
+      Process.exit(old_client, :kill)
+      Process.sleep(50)
+
+      {:ok, signal2} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 2}
+        })
+
+      signal2_id = signal2.id
+      {:ok, _} = Bus.publish(bus, [signal2])
+      refute_receive {:old_client_signal, _}, 100
+
+      new_client = start_client.(:new_client_signal)
+      on_exit(fn -> if Process.alive?(new_client), do: Process.exit(new_client, :kill) end)
+
+      assert {:ok, _checkpoint} = Bus.reconnect(bus, subscription_id, new_client)
+
+      assert_receive {:new_client_signal, %Signal{id: ^signal2_id}}, 1000
+      refute_receive {:new_client_signal, %Signal{id: ^signal1_id}}, 100
+    end
+  end
 
   describe "whereis/1" do
     test "finds a bus by name", %{bus: bus} do
@@ -412,6 +493,26 @@ defmodule JidoTest.Signal.Bus do
 
     test "returns error for non-existent bus" do
       assert {:error, :not_found} = Bus.whereis("non-existent-bus")
+    end
+  end
+
+  describe "process down handling" do
+    test "ignores synthetic :DOWN messages and remains functional", %{bus: bus} do
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_monitor = Process.monitor(bus_pid)
+
+      send(bus_pid, {:DOWN, make_ref(), :process, self(), :synthetic_test_down})
+
+      refute_receive {:DOWN, ^bus_monitor, :process, ^bus_pid, _}, 100
+      assert Process.alive?(bus_pid)
+
+      {:ok, _subscription_id} = Bus.subscribe(bus, "test.signal")
+      {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+
+      assert {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      Process.demonitor(bus_monitor, [:flush])
     end
   end
 
