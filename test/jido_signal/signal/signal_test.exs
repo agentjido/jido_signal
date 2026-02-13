@@ -1,6 +1,7 @@
 defmodule JidoTest.SignalTest do
   use ExUnit.Case, async: true
 
+  alias Jido.Signal.ID
   alias Jido.Signal
 
   # Simple test extension for testing extension API
@@ -12,6 +13,10 @@ defmodule JidoTest.SignalTest do
         count: [type: :non_neg_integer, default: 0],
         enabled: [type: :boolean, default: true]
       ]
+  end
+
+  defmodule TestPayload do
+    defstruct [:value]
   end
 
   describe "new/1" do
@@ -128,6 +133,29 @@ defmodule JidoTest.SignalTest do
 
       assert {:ok, signal} = Signal.from_map(map)
       assert signal.datacontenttype == "application/json"
+    end
+  end
+
+  describe "map_to_signal_data/2" do
+    test "returns signal with UUID id for single struct input" do
+      payload = %TestPayload{value: 1}
+
+      signal = Signal.map_to_signal_data(payload)
+
+      assert %Signal{} = signal
+      assert signal.data == payload
+      assert is_binary(signal.id)
+      assert ID.valid?(signal.id)
+    end
+
+    test "returns signals with UUID ids for list input" do
+      payloads = [%TestPayload{value: 1}, %TestPayload{value: 2}]
+
+      signals = Signal.map_to_signal_data(payloads)
+
+      assert length(signals) == 2
+      assert Enum.all?(signals, &ID.valid?(&1.id))
+      assert signals |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 2
     end
   end
 
