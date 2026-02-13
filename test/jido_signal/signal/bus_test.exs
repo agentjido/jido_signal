@@ -471,6 +471,26 @@ defmodule JidoTest.Signal.Bus do
     end
   end
 
+  describe "process down handling" do
+    test "ignores synthetic :DOWN messages and remains functional", %{bus: bus} do
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_monitor = Process.monitor(bus_pid)
+
+      send(bus_pid, {:DOWN, make_ref(), :process, self(), :synthetic_test_down})
+
+      refute_receive {:DOWN, ^bus_monitor, :process, ^bus_pid, _}, 100
+      assert Process.alive?(bus_pid)
+
+      {:ok, _subscription_id} = Bus.subscribe(bus, "test.signal")
+      {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+
+      assert {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      Process.demonitor(bus_monitor, [:flush])
+    end
+  end
+
   describe "middleware timeout protection" do
     defmodule SlowBusMiddleware do
       use Jido.Signal.Bus.Middleware

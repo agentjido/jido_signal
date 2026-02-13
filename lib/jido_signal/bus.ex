@@ -1127,17 +1127,10 @@ defmodule Jido.Signal.Bus do
   end
 
   @impl GenServer
-  def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
-    # Remove the subscriber if it dies
-    case Enum.find(state.subscribers, fn {_id, sub_pid} -> sub_pid == pid end) do
-      nil ->
-        {:noreply, state}
-
-      {subscriber_id, _} ->
-        Logger.info("Subscriber #{subscriber_id} terminated with reason: #{inspect(reason)}")
-        {_, new_subscribers} = Map.pop(state.subscribers, subscriber_id)
-        {:noreply, %{state | subscribers: new_subscribers}}
-    end
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
+    # Bus no longer tracks subscriber pids via monitor refs.
+    # Ignore stray :DOWN messages to avoid crashing on stale state fields.
+    {:noreply, state}
   end
 
   def handle_info(:gc_log, %{log_ttl_ms: nil} = state), do: {:noreply, state}
