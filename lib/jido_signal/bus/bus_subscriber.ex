@@ -10,6 +10,7 @@ defmodule Jido.Signal.Bus.Subscriber do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
 
   @schema Zoi.struct(
@@ -97,6 +98,7 @@ defmodule Jido.Signal.Bus.Subscriber do
       max_attempts: opts[:max_attempts] || 5,
       retry_interval: opts[:retry_interval] || 100,
       client_pid: client_pid,
+      task_supervisor: Names.task_supervisor(jido: state.jido),
       journal_adapter: state.journal_adapter,
       journal_pid: state.journal_pid
     ]

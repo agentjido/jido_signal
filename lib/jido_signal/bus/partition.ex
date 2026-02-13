@@ -24,6 +24,7 @@ defmodule Jido.Signal.Bus.Partition do
               subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
               middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              task_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               rate_limit_per_sec: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
@@ -89,6 +90,7 @@ defmodule Jido.Signal.Bus.Partition do
       bus_pid: Keyword.fetch!(opts, :bus_pid),
       middleware: Keyword.get(opts, :middleware, []),
       middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
+      task_supervisor: Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor),
       journal_adapter: Keyword.get(opts, :journal_adapter),
       journal_pid: Keyword.get(opts, :journal_pid),
       rate_limit_per_sec: Keyword.get(opts, :rate_limit_per_sec, 10_000),
@@ -247,6 +249,7 @@ defmodule Jido.Signal.Bus.Partition do
        ) do
     result =
       dispatch_to_subscription(
+        state,
         processed_signal,
         subscription,
         subscription_id,
@@ -337,7 +340,13 @@ defmodule Jido.Signal.Bus.Partition do
     :ok
   end
 
-  defp dispatch_to_subscription(signal, subscription, _subscription_id, uuid_signal_pairs) do
+  defp dispatch_to_subscription(
+         state,
+         signal,
+         subscription,
+         _subscription_id,
+         uuid_signal_pairs
+       ) do
     if subscription.persistent? and subscription.persistence_pid do
       uuid = find_signal_uuid(signal, uuid_signal_pairs)
 
@@ -351,7 +360,7 @@ defmodule Jido.Signal.Bus.Partition do
           {:error, :timeout}
       end
     else
-      Dispatch.dispatch(signal, subscription.dispatch)
+      Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: state.task_supervisor)
     end
   end
 

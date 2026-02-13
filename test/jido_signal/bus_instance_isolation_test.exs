@@ -157,5 +157,27 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
       assert pid_1_0 != pid_2_0
       assert pid_1_1 != pid_2_1
     end
+
+    test "instance-scoped bus dispatch works with multi-target dispatch lists", %{
+      instance1: instance
+    } do
+      bus_name = :"dispatch_bus_#{System.unique_integer()}"
+
+      {:ok, bus} = Bus.start_link(name: bus_name, jido: instance)
+
+      dispatch = [
+        {:pid, [target: self(), delivery_mode: :async]},
+        {:logger, [level: :debug]}
+      ]
+
+      {:ok, _sub} = Bus.subscribe(bus, "dispatch.*", dispatch: dispatch)
+
+      {:ok, signal} = Signal.new("dispatch.event", %{ok: true}, source: "/test")
+      {:ok, _} = Bus.publish(bus, [signal])
+
+      assert_receive {:signal, received}
+      assert received.id == signal.id
+      assert received.data == %{ok: true}
+    end
   end
 end
