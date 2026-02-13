@@ -653,9 +653,19 @@ defmodule Jido.Signal.Bus do
     {:reply, {:error, :no_journal_adapter}, state}
   end
 
-  def handle_call({:redrive_dlq, subscription_id, opts}, _from, state) do
-    result = do_redrive_dlq(state, subscription_id, opts)
-    {:reply, result, state}
+  def handle_call({:redrive_dlq, subscription_id, opts}, from, state) do
+    task_supervisor = Names.task_supervisor(jido: state.jido)
+
+    case Task.Supervisor.start_child(task_supervisor, fn ->
+           result = safely_do_redrive_dlq(state, subscription_id, opts)
+           GenServer.reply(from, result)
+         end) do
+      {:ok, _pid} ->
+        {:noreply, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:clear_dlq, subscription_id}, _from, state) do
@@ -750,6 +760,19 @@ defmodule Jido.Signal.Bus do
       result = process_dlq_entries(state, entries_to_process, subscription, clear_on_success)
       emit_redrive_telemetry(state.name, subscription_id, result)
       {:ok, result}
+    end
+  end
+
+  defp safely_do_redrive_dlq(state, subscription_id, opts) do
+    try do
+      do_redrive_dlq(state, subscription_id, opts)
+    rescue
+      error ->
+        {:error, Exception.message(error)}
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, :timeout -> {:error, :timeout}
+      :exit, reason -> {:error, reason}
     end
   end
 
