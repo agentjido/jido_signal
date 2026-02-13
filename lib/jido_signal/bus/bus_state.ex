@@ -27,10 +27,12 @@ defmodule Jido.Signal.Bus.State do
               middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
               journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_owned?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
               partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
               partition_pids: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
               max_log_size: Zoi.default(Zoi.integer(), 100_000) |> Zoi.optional(),
-              log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional()
+              log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional(),
+              gc_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
             }
           )
 
@@ -68,10 +70,12 @@ defmodule Jido.Signal.Bus.State do
       middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
       journal_adapter: Keyword.get(opts, :journal_adapter),
       journal_pid: Keyword.get(opts, :journal_pid),
+      journal_owned?: Keyword.get(opts, :journal_owned?, false),
       partition_count: Keyword.get(opts, :partition_count, 1),
       partition_pids: Keyword.get(opts, :partition_pids, []),
       max_log_size: Keyword.get(opts, :max_log_size, 100_000),
-      log_ttl_ms: Keyword.get(opts, :log_ttl_ms)
+      log_ttl_ms: Keyword.get(opts, :log_ttl_ms),
+      gc_timer_ref: Keyword.get(opts, :gc_timer_ref)
     }
   end
 

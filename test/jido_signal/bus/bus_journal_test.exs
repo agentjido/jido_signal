@@ -112,5 +112,47 @@ defmodule JidoTest.Signal.Bus.JournalConfigTest do
 
       GenServer.stop(bus_pid)
     end
+
+    test "stops owned journal process on bus termination" do
+      bus_name = :"test_bus_owned_journal_stop_#{:erlang.unique_integer([:positive])}"
+
+      {:ok, bus_pid} =
+        Bus.start_link(
+          name: bus_name,
+          journal_adapter: InMemory
+        )
+
+      state = :sys.get_state(bus_pid)
+      assert state.journal_owned? == true
+      assert is_pid(state.journal_pid)
+      assert Process.alive?(state.journal_pid)
+
+      journal_pid = state.journal_pid
+      GenServer.stop(bus_pid)
+
+      refute Process.alive?(journal_pid)
+    end
+
+    test "does not stop externally provided journal process on bus termination" do
+      bus_name = :"test_bus_external_journal_keep_#{:erlang.unique_integer([:positive])}"
+      {:ok, external_journal_pid} = InMemory.init()
+
+      {:ok, bus_pid} =
+        Bus.start_link(
+          name: bus_name,
+          journal_adapter: InMemory,
+          journal_pid: external_journal_pid
+        )
+
+      state = :sys.get_state(bus_pid)
+      assert state.journal_owned? == false
+      assert state.journal_pid == external_journal_pid
+      assert Process.alive?(external_journal_pid)
+
+      GenServer.stop(bus_pid)
+
+      assert Process.alive?(external_journal_pid)
+      GenServer.stop(external_journal_pid)
+    end
   end
 end
