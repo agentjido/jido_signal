@@ -188,6 +188,126 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       assert_receive {:new_client_signal, %Signal{id: ^signal2_id}}, 1000
       refute_receive {:new_client_signal, %Signal{id: ^signal1_id}}, 100
     end
+
+    test "unsubscribe keeps checkpoint and dlq when delete_persistence is false", %{
+      bus: bus,
+      journal_pid: journal_pid
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+
+      :ok = Process.sleep(25)
+
+      {:ok, _dlq_id} =
+        ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
+
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id, delete_persistence: false)
+
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+    end
+
+    test "unsubscribe removes checkpoint and dlq when delete_persistence is true", %{
+      bus: bus,
+      journal_pid: journal_pid
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 2}
+        })
+
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+
+      :ok = Process.sleep(25)
+
+      {:ok, _dlq_id} =
+        ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
+
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id, delete_persistence: true)
+
+      assert {:error, :not_found} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, []} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+    end
+
+    test "bus ack returns error for invalid ack argument", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      assert {:error, :invalid_ack_argument} = Bus.ack(bus, subscription_id, :invalid)
+    end
+
+    test "bus ack supports list of signal ids", %{bus: bus, journal_pid: journal_pid} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      signals =
+        for i <- 1..2 do
+          {:ok, signal} =
+            Signal.new(%{
+              type: "test.signal.#{i}",
+              source: "/test",
+              data: %{value: i}
+            })
+
+          signal
+        end
+
+      {:ok, recorded_signals} = Bus.publish(bus, signals)
+
+      for _ <- 1..2 do
+        assert_receive {:signal, %Signal{}}
+      end
+
+      signal_ids = Enum.map(recorded_signals, & &1.id)
+      assert :ok = Bus.ack(bus, subscription_id, signal_ids)
+
+      Process.sleep(25)
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      {:ok, checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+
+      expected_checkpoint =
+        signal_ids
+        |> Enum.map(&ID.extract_timestamp/1)
+        |> Enum.max()
+
+      assert checkpoint == expected_checkpoint
+    end
   end
 
   describe "backward compatibility without journal adapter" do

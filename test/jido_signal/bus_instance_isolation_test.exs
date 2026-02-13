@@ -117,5 +117,67 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
       # They should be different processes
       assert bus1 != bus2
     end
+
+    test "partitioned buses remain isolated across instances", %{
+      instance1: instance1,
+      instance2: instance2
+    } do
+      bus_name = :partitioned_shared_bus
+
+      {:ok, bus1} = Bus.start_link(name: bus_name, jido: instance1, partition_count: 2)
+      {:ok, bus2} = Bus.start_link(name: bus_name, jido: instance2, partition_count: 2)
+
+      assert bus1 != bus2
+
+      {:ok, _sub1} = Bus.subscribe(bus1, "partitioned.*", dispatch: {:pid, target: self()})
+      {:ok, _sub2} = Bus.subscribe(bus2, "partitioned.*", dispatch: {:pid, target: self()})
+
+      {:ok, signal1} = Signal.new("partitioned.event", %{instance: 1}, source: "/test")
+      {:ok, signal2} = Signal.new("partitioned.event", %{instance: 2}, source: "/test")
+
+      {:ok, _} = Bus.publish(bus1, [signal1])
+      assert_receive {:signal, received_1}
+      assert received_1.data.instance == 1
+
+      {:ok, _} = Bus.publish(bus2, [signal2])
+      assert_receive {:signal, received_2}
+      assert received_2.data.instance == 2
+
+      reg1 = Names.registry(jido: instance1)
+      reg2 = Names.registry(jido: instance2)
+
+      partition_key_0 = {:partition, bus_name, 0}
+      partition_key_1 = {:partition, bus_name, 1}
+
+      assert [{pid_1_0, _}] = Registry.lookup(reg1, partition_key_0)
+      assert [{pid_1_1, _}] = Registry.lookup(reg1, partition_key_1)
+      assert [{pid_2_0, _}] = Registry.lookup(reg2, partition_key_0)
+      assert [{pid_2_1, _}] = Registry.lookup(reg2, partition_key_1)
+
+      assert pid_1_0 != pid_2_0
+      assert pid_1_1 != pid_2_1
+    end
+
+    test "instance-scoped bus dispatch works with multi-target dispatch lists", %{
+      instance1: instance
+    } do
+      bus_name = :"dispatch_bus_#{System.unique_integer()}"
+
+      {:ok, bus} = Bus.start_link(name: bus_name, jido: instance)
+
+      dispatch = [
+        {:pid, [target: self(), delivery_mode: :async]},
+        {:logger, [level: :debug]}
+      ]
+
+      {:ok, _sub} = Bus.subscribe(bus, "dispatch.*", dispatch: dispatch)
+
+      {:ok, signal} = Signal.new("dispatch.event", %{ok: true}, source: "/test")
+      {:ok, _} = Bus.publish(bus, [signal])
+
+      assert_receive {:signal, received}
+      assert received.id == signal.id
+      assert received.data == %{ok: true}
+    end
   end
 end

@@ -31,6 +31,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
               attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
               retry_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              task_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               checkpoint_key: Zoi.string() |> Zoi.nullable() |> Zoi.optional()
@@ -127,6 +128,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       max_pending: Keyword.get(opts, :max_pending, 10_000),
       max_attempts: Keyword.get(opts, :max_attempts, 5),
       retry_interval: Keyword.get(opts, :retry_interval, 100),
+      task_supervisor: Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor),
       in_flight_signals: %{},
       pending_signals: %{},
       attempts: %{},
@@ -387,7 +389,9 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp safe_extract_timestamp(_), do: :error
 
   defp dispatch_replay_signal(signal, state) do
-    case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
+    case Dispatch.dispatch(signal, state.bus_subscription.dispatch,
+           task_supervisor: state.task_supervisor
+         ) do
       :ok ->
         :ok
 
@@ -494,7 +498,11 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   @spec dispatch_signal(t(), String.t(), term()) :: t()
   defp dispatch_signal(state, signal_log_id, signal) do
     if state.bus_subscription.dispatch do
-      result = Dispatch.dispatch(signal, state.bus_subscription.dispatch)
+      result =
+        Dispatch.dispatch(signal, state.bus_subscription.dispatch,
+          task_supervisor: state.task_supervisor
+        )
+
       handle_dispatch_result(result, state, signal_log_id, signal)
     else
       # No dispatch configured - just add to in-flight
