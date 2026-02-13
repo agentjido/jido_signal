@@ -344,35 +344,47 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     bus_state = :sys.get_state(state.bus_pid)
 
     missed_signals =
-      Enum.filter(bus_state.log, fn {_id, signal} ->
-        signal_after_checkpoint?(signal, state.checkpoint)
+      Enum.filter(bus_state.log, fn {signal_log_id, signal} ->
+        signal_after_checkpoint?(signal_log_id, signal, state.checkpoint)
       end)
 
-    Enum.each(missed_signals, fn {_id, signal} ->
-      replay_single_signal(signal, state)
+    Enum.each(missed_signals, fn {signal_log_id, signal} ->
+      replay_single_signal(signal_log_id, signal, state)
     end)
 
     state
   end
 
-  defp signal_after_checkpoint?(signal, checkpoint) do
-    case DateTime.from_iso8601(signal.time) do
-      {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp) > checkpoint
-      _ -> false
+  defp signal_after_checkpoint?(signal_log_id, signal, checkpoint) do
+    signal_timestamp_ms(signal_log_id, signal) > checkpoint
+  end
+
+  defp replay_single_signal(signal_log_id, signal, state) do
+    if signal_after_checkpoint?(signal_log_id, signal, state.checkpoint) do
+      dispatch_replay_signal(signal, state)
     end
   end
 
-  defp replay_single_signal(signal, state) do
-    case DateTime.from_iso8601(signal.time) do
-      {:ok, timestamp, _offset} ->
-        if DateTime.to_unix(timestamp) > state.checkpoint do
-          dispatch_replay_signal(signal, state)
+  defp signal_timestamp_ms(signal_log_id, signal) do
+    case safe_extract_timestamp(signal_log_id) do
+      {:ok, ts} ->
+        ts
+
+      :error ->
+        case DateTime.from_iso8601(signal.time) do
+          {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp, :millisecond)
+          _ -> 0
         end
-
-      _ ->
-        :ok
     end
   end
+
+  defp safe_extract_timestamp(signal_log_id) when is_binary(signal_log_id) do
+    {:ok, ID.extract_timestamp(signal_log_id)}
+  rescue
+    _ -> :error
+  end
+
+  defp safe_extract_timestamp(_), do: :error
 
   defp dispatch_replay_signal(signal, state) do
     case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
