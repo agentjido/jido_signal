@@ -281,7 +281,7 @@ Track signal acknowledgments for reliable processing:
 ```elixir
 # Create persistent subscription with full options
 {:ok, sub_id} = Bus.subscribe(:my_app_bus, "payment.*",
-  persistent: true,
+  persistent?: true, # `persistent: true` is also supported (backward compatible)
   dispatch: {:pid, target: self()},
   max_in_flight: 100,      # Max unacknowledged signals
   max_pending: 5_000,      # Max queued signals before backpressure
