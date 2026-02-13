@@ -189,6 +189,38 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       refute_receive {:new_client_signal, %Signal{id: ^signal1_id}}, 100
     end
 
+    test "reconnect does not deadlock under concurrent bus activity", %{bus: bus} do
+      old_client =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      on_exit(fn -> if Process.alive?(old_client), do: Process.exit(old_client, :kill) end)
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal", persistent?: true, dispatch: {:pid, target: old_client})
+
+      {:ok, signal} = Signal.new("test.signal", %{value: 1}, source: "/test")
+      {:ok, _recorded} = Bus.publish(bus, [signal])
+
+      new_client =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      on_exit(fn -> if Process.alive?(new_client), do: Process.exit(new_client, :kill) end)
+
+      reconnect_task = Task.async(fn -> Bus.reconnect(bus, subscription_id, new_client) end)
+      snapshot_task = Task.async(fn -> Bus.snapshot_list(bus) end)
+
+      assert {:ok, _checkpoint} = Task.await(reconnect_task, 1_000)
+      assert is_list(Task.await(snapshot_task, 1_000))
+    end
+
     test "unsubscribe keeps checkpoint and dlq when delete_persistence is false", %{
       bus: bus,
       journal_pid: journal_pid

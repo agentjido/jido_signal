@@ -562,6 +562,15 @@ defmodule Jido.Signal.Bus do
     end
   end
 
+  def handle_call({:signals_since, checkpoint}, _from, state) do
+    signals =
+      state.log
+      |> Enum.filter(fn {log_id, _signal} -> log_id_after_checkpoint?(log_id, checkpoint) end)
+      |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
+
+    {:reply, {:ok, signals}, state}
+  end
+
   def handle_call({:snapshot_create, path}, _from, state) do
     case Snapshot.create(state, path) do
       {:ok, snapshot_ref, new_state} -> {:reply, {:ok, snapshot_ref}, new_state}
@@ -1177,4 +1186,21 @@ defmodule Jido.Signal.Bus do
       )
     end
   end
+
+  defp log_id_after_checkpoint?(log_id, checkpoint) when is_integer(checkpoint) do
+    case safe_extract_timestamp(log_id) do
+      {:ok, timestamp} -> timestamp > checkpoint
+      :error -> false
+    end
+  end
+
+  defp log_id_after_checkpoint?(_log_id, _checkpoint), do: false
+
+  defp safe_extract_timestamp(log_id) when is_binary(log_id) do
+    {:ok, ID.extract_timestamp(log_id)}
+  rescue
+    _ -> :error
+  end
+
+  defp safe_extract_timestamp(_log_id), do: :error
 end
