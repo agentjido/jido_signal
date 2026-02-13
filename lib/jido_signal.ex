@@ -550,7 +550,7 @@ defmodule Jido.Signal do
 
     %__MODULE__{
       data: signal,
-      id: ID.generate(),
+      id: ID.generate!(),
       source: source,
       type: TypeProvider.to_string(signal)
     }
