@@ -19,6 +19,7 @@ defmodule Jido.Signal.Bus.Stream do
   @doc """
   Filters signals from the bus state's log based on type pattern and timestamp.
   The type pattern is used for matching against the signal's type field.
+  Ordering is determined by recorded log key chronology.
   Correlation filtering reads the canonical value from the `correlation` extension.
   """
   @spec filter(BusState.t(), String.t(), integer() | nil, keyword()) ::
@@ -27,25 +28,24 @@ defmodule Jido.Signal.Bus.Stream do
     batch_size = Keyword.get(opts, :batch_size, 1_000)
     correlation_id = Keyword.get(opts, :correlation_id)
 
-    # Get list of signals from log map
-    signals = BusState.log_to_list(state)
+    # Get list of log entries from the log map in recorded order
+    log_entries = BusState.log_entries_to_list(state)
 
     # First filter by timestamp if provided
     timestamp_filtered =
       if start_timestamp do
         filtered =
-          Enum.filter(signals, fn signal ->
+          Enum.filter(log_entries, fn {log_id, _signal} ->
             # For UUID7 IDs, we can extract the timestamp directly from the ID
-            # This is more efficient than converting DateTime to Unix time
-            # Fall back to created_at if ID timestamp extraction fails
+            # so replay order/checkpoints are based on recorded log chronology.
             signal_ts =
               try do
-                ts = ID.extract_timestamp(signal.id)
+                ts = ID.extract_timestamp(log_id)
 
                 ts
               rescue
                 _error ->
-                  # Default to 0 to include the signal
+                  # Default to 0 for non-UUID log IDs
                   0
               end
 
@@ -54,13 +54,13 @@ defmodule Jido.Signal.Bus.Stream do
 
         filtered
       else
-        signals
+        log_entries
       end
 
     # Then filter by correlation_id if provided
     correlation_filtered =
       if correlation_id do
-        Enum.filter(timestamp_filtered, fn signal ->
+        Enum.filter(timestamp_filtered, fn {_log_id, signal} ->
           correlation_id_for(signal) == correlation_id
         end)
       else
@@ -72,7 +72,7 @@ defmodule Jido.Signal.Bus.Stream do
     case Router.Validator.validate_path(type_pattern) do
       {:ok, _} ->
         # Create a simple pattern matcher function
-        matches_pattern? = fn signal ->
+        matches_pattern? = fn {_log_id, signal} ->
           matches = Router.matches?(signal.type, type_pattern)
 
           matches
@@ -83,10 +83,10 @@ defmodule Jido.Signal.Bus.Stream do
           correlation_filtered
           |> Enum.filter(matches_pattern?)
           |> Enum.take(batch_size)
-          |> Enum.map(fn signal ->
+          |> Enum.map(fn {log_id, signal} ->
             # Convert to RecordedSignal struct
             %Jido.Signal.Bus.RecordedSignal{
-              id: signal.id,
+              id: log_id,
               type: signal.type,
               created_at: DateTime.utc_now(),
               signal: signal
