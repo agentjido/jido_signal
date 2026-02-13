@@ -351,23 +351,33 @@ defmodule Jido.Signal.Bus.StreamTest do
           data: %{value: 2}
         })
 
+      correlation_id = "trace-123"
+      other_correlation_id = "trace-456"
+
+      correlated_signal = %{
+        signal1
+        | extensions: %{"correlation" => %{trace_id: correlation_id}}
+      }
+
+      other_signal = %{
+        signal2
+        | extensions: %{"correlation" => %{trace_id: other_correlation_id}}
+      }
+
       state = %BusState{
         name: :test_bus,
         router: Router.new!(),
         log: %{
-          "uuid-1" => signal1,
-          "uuid-2" => signal2
+          "uuid-1" => correlated_signal,
+          "uuid-2" => other_signal
         }
       }
 
-      # The current implementation in Stream.filter checks signal.correlation_id
-      # but our signals have correlation_id in jido_metadata
-      # Let's modify the test to check if any signals are returned
-      {:ok, filtered_signals} = Stream.filter(state, "**", correlation_id: "test-correlation")
+      {:ok, filtered_signals} = Stream.filter(state, "**", nil, correlation_id: correlation_id)
 
-      # Since the implementation is looking for correlation_id directly on the signal
-      # and not in jido_metadata, we expect no matches
-      assert Enum.empty?(filtered_signals)
+      assert length(filtered_signals) == 1
+      assert hd(filtered_signals).type == "test.signal.1"
+      assert hd(filtered_signals).signal.extensions["correlation"].trace_id == correlation_id
     end
 
     test "returns signals in chronological order" do

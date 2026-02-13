@@ -125,6 +125,37 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       assert map_size(snapshot_data.signals) == 1
       assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.3"
     end
+
+    test "creates snapshot with correlation_id filter from correlation extension", %{state: state} do
+      correlation_id = "trace-123"
+      other_correlation_id = "trace-456"
+
+      correlated_signal = %{
+        state.log["uuid-1"]
+        | extensions: %{"correlation" => %{trace_id: correlation_id}}
+      }
+
+      other_signal = %{
+        state.log["uuid-2"]
+        | extensions: %{"correlation" => %{trace_id: other_correlation_id}}
+      }
+
+      traced_state = %{
+        state
+        | log: %{
+            "uuid-1" => correlated_signal,
+            "uuid-2" => other_signal
+          }
+      }
+
+      {:ok, snapshot_ref, new_state} =
+        Snapshot.create(traced_state, "**", correlation_id: correlation_id)
+
+      {:ok, snapshot_data} = Snapshot.read(new_state, snapshot_ref.id)
+
+      assert map_size(snapshot_data.signals) == 1
+      assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.1"
+    end
   end
 
   describe "list/1" do

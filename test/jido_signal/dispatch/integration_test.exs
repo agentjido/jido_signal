@@ -2,6 +2,7 @@ defmodule Jido.Signal.DispatchIntegrationTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
+  alias Jido.Signal.Dispatch
 
   # Manually register the dispatch extension for testing
   setup_all do
@@ -104,5 +105,25 @@ defmodule Jido.Signal.DispatchIntegrationTest do
     {:webhook, inflated_opts} = inflated_config
     assert inflated_opts[:url] == "https://example.com"
     assert inflated_opts[:secret] == "secret123"
+  end
+
+  test "dispatch_async supports runtime task supervisor selection" do
+    {:ok, signal} = Signal.new("test.event", %{message: "hello"}, source: "/test")
+    config = {:pid, [target: self(), delivery_mode: :async]}
+
+    # Use a non-existent supervisor to prove runtime selection is honored.
+    assert catch_exit(
+             Dispatch.dispatch_async(signal, config,
+               task_supervisor: :nonexistent_dispatch_task_supervisor
+             )
+           )
+
+    # Positive path with an explicit local Task.Supervisor.
+    local_sup = :"dispatch_test_sup_#{System.unique_integer([:positive])}"
+    start_supervised!({Task.Supervisor, name: local_sup})
+
+    {:ok, task} = Dispatch.dispatch_async(signal, config, task_supervisor: local_sup)
+    assert :ok = Task.await(task)
+    assert_receive {:signal, ^signal}
   end
 end
