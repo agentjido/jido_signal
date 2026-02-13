@@ -506,13 +506,10 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_call({:unsubscribe, subscription_id, opts}, _from, state) do
-    if not Enum.empty?(state.partition_pids) do
+    if state.partition_count > 1 do
       partition_id = Partition.partition_for(subscription_id, state.partition_count)
-      partition_pid = Enum.at(state.partition_pids, partition_id)
-
-      if partition_pid do
-        GenServer.call(partition_pid, {:remove_subscription, subscription_id})
-      end
+      partition_target = partition_target(state, partition_id)
+      safe_partition_call(partition_target, {:remove_subscription, subscription_id})
     end
 
     case Subscriber.unsubscribe(state, subscription_id, opts) do
@@ -669,17 +666,16 @@ defmodule Jido.Signal.Bus do
 
   # Private helpers for handle_call callbacks
 
-  defp sync_subscription_to_partition(_new_state, _subscription_id, %{partition_pids: []}),
-    do: :ok
+  defp sync_subscription_to_partition(_new_state, _subscription_id, %{partition_count: count})
+       when count <= 1,
+       do: :ok
 
   defp sync_subscription_to_partition(new_state, subscription_id, state) do
     subscription = BusState.get_subscription(new_state, subscription_id)
     partition_id = Partition.partition_for(subscription_id, state.partition_count)
-    partition_pid = Enum.at(state.partition_pids, partition_id)
+    partition_target = partition_target(state, partition_id)
 
-    if partition_pid do
-      GenServer.call(partition_pid, {:add_subscription, subscription_id, subscription})
-    end
+    safe_partition_call(partition_target, {:add_subscription, subscription_id, subscription})
   end
 
   defp finalize_publish(new_state, processed_signals, context) do
@@ -798,7 +794,7 @@ defmodule Jido.Signal.Bus do
   defp publish_with_middleware(state, signals, context, timeout_ms) do
     with :ok <- validate_signals(signals),
          {:ok, new_state, uuid_signal_pairs} <- BusState.append_signals(state, signals) do
-      if Enum.empty?(state.partition_pids) do
+      if state.partition_count <= 1 do
         publish_without_partitions(new_state, signals, uuid_signal_pairs, context, timeout_ms)
       else
         publish_with_partitions(new_state, signals, uuid_signal_pairs, context)
@@ -814,7 +810,7 @@ defmodule Jido.Signal.Bus do
 
     case find_saturated_subscriptions(persistent_results) do
       [] ->
-        broadcast_to_partitions(state.partition_pids, signals, uuid_signal_pairs, context)
+        broadcast_to_partitions(state, signals, uuid_signal_pairs, context)
         {:ok, state, uuid_signal_pairs}
 
       [{subscription_id, _} | _] = saturated ->
@@ -847,9 +843,11 @@ defmodule Jido.Signal.Bus do
     end)
   end
 
-  defp broadcast_to_partitions(partition_pids, signals, uuid_signal_pairs, context) do
-    Enum.each(partition_pids, fn partition_pid ->
-      GenServer.cast(partition_pid, {:dispatch, signals, uuid_signal_pairs, context})
+  defp broadcast_to_partitions(state, signals, uuid_signal_pairs, context) do
+    partition_ids(state)
+    |> Enum.each(fn partition_id ->
+      partition_target = partition_target(state, partition_id)
+      GenServer.cast(partition_target, {:dispatch, signals, uuid_signal_pairs, context})
     end)
   end
 
@@ -1175,6 +1173,27 @@ defmodule Jido.Signal.Bus do
         %{removed_count: removed_count},
         %{bus_name: state.name, new_size: map_size(new_log), ttl_ms: state.log_ttl_ms}
       )
+    end
+  end
+
+  defp partition_ids(%{partition_count: count}) when count > 1 do
+    0..(count - 1)
+  end
+
+  defp partition_ids(_state), do: []
+
+  defp partition_target(state, partition_id) do
+    Partition.via_tuple(state.name, partition_id, jido: state.jido)
+  end
+
+  defp safe_partition_call(target, message) do
+    try do
+      GenServer.call(target, message)
+    catch
+      :exit, {:noproc, _} -> :ok
+      :exit, :noproc -> :ok
+      :exit, {:timeout, _} -> :ok
+      :exit, :timeout -> :ok
     end
   end
 end
