@@ -102,11 +102,12 @@ Middleware callbacks are executed by `Jido.Signal.Bus.MiddlewarePipeline` with p
 ## Persistent Subscriptions
 
 Persistent subscriptions provide reliable message delivery with acknowledgments, checkpointing, and automatic retry with Dead Letter Queue (DLQ) support.
+Use `persistent?` as the canonical option key. `persistent` remains supported as a backward-compatible alias.
 
 ```elixir
 # Create persistent subscription with reliability options
 {:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "order.*",
-  persistent: true,
+  persistent?: true,
   dispatch: {:pid, target: self(), delivery_mode: :async},
   max_in_flight: 500,      # Max unacknowledged signals (default: 1000)
   max_pending: 5_000,      # Max queued signals before backpressure (default: 10_000)
@@ -293,7 +294,7 @@ Persistent subscription options:
 
 ```elixir
 {:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "events.*",
-  persistent: true,
+  persistent?: true,
   dispatch: {:pid, target: self(), delivery_mode: :async},
   max_in_flight: 100,    # Max unacknowledged signals
   max_pending: 5_000,    # Max pending before backpressure
