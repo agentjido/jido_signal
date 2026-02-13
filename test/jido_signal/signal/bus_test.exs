@@ -53,6 +53,24 @@ defmodule JidoTest.Signal.Bus do
       # Acknowledge the signal
       :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
     end
+
+    test "supports persistent alias option", %{bus: bus} do
+      {:ok, subscription_id} = Bus.subscribe(bus, "test.signal", persistent: true)
+      assert is_binary(subscription_id)
+
+      {:ok, pid} = Bus.whereis(bus)
+      state = :sys.get_state(pid)
+      assert state.subscriptions[subscription_id].persistent? == true
+    end
+
+    test "prefers persistent? when both persistent keys are present", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal", persistent: false, persistent?: true)
+
+      {:ok, pid} = Bus.whereis(bus)
+      state = :sys.get_state(pid)
+      assert state.subscriptions[subscription_id].persistent? == true
+    end
   end
 
   describe "unsubscribe/2" do

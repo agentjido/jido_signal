@@ -10,7 +10,10 @@ defmodule Jido.Signal.Bus.Subscriber do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
+
+  require Logger
 
   @schema Zoi.struct(
             __MODULE__,
@@ -97,6 +100,7 @@ defmodule Jido.Signal.Bus.Subscriber do
       max_attempts: opts[:max_attempts] || 5,
       retry_interval: opts[:retry_interval] || 100,
       client_pid: client_pid,
+      task_supervisor: Names.task_supervisor(jido: state.jido),
       journal_adapter: state.journal_adapter,
       journal_pid: state.journal_pid
     ]
@@ -169,17 +173,14 @@ defmodule Jido.Signal.Bus.Subscriber do
   """
   @spec unsubscribe(BusState.t(), String.t(), keyword()) ::
           {:ok, BusState.t()} | {:error, Exception.t()}
-  def unsubscribe(%BusState{} = state, subscription_id, _opts \\ []) do
+  def unsubscribe(%BusState{} = state, subscription_id, opts \\ []) do
     # Get the subscription before removing it
     subscription = BusState.get_subscription(state, subscription_id)
 
-    case BusState.remove_subscription(state, subscription_id) do
+    case BusState.remove_subscription(state, subscription_id, opts) do
       {:ok, new_state} ->
-        # If this was a persistent subscription, terminate the process
-        if subscription && subscription.persistent? && subscription.persistence_pid do
-          # Send shutdown message to terminate the process gracefully
-          Process.send(subscription.persistence_pid, {:shutdown, :normal}, [])
-        end
+        maybe_shutdown_persistent_subscription(subscription)
+        maybe_delete_persistence(state, subscription_id, subscription, opts)
 
         {:ok, new_state}
 
@@ -189,6 +190,39 @@ defmodule Jido.Signal.Bus.Subscriber do
            "Subscription does not exist",
            %{field: :subscription_id, value: subscription_id}
          )}
+    end
+  end
+
+  defp maybe_shutdown_persistent_subscription(subscription) do
+    if subscription && subscription.persistent? && subscription.persistence_pid do
+      # Send shutdown message to terminate the process gracefully
+      Process.send(subscription.persistence_pid, {:shutdown, :normal}, [])
+    end
+  end
+
+  defp maybe_delete_persistence(state, subscription_id, subscription, opts) do
+    should_delete? = Keyword.get(opts, :delete_persistence, false)
+
+    if should_delete? and subscription && subscription.persistent? and state.journal_adapter do
+      checkpoint_key = "#{state.name}:#{subscription_id}"
+
+      case state.journal_adapter.delete_checkpoint(checkpoint_key, state.journal_pid) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Failed to delete checkpoint for #{checkpoint_key}: #{inspect(reason)}")
+      end
+
+      case state.journal_adapter.clear_dlq(subscription_id, state.journal_pid) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Failed to clear DLQ for subscription #{subscription_id}: #{inspect(reason)}"
+          )
+      end
     end
   end
 

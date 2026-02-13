@@ -51,6 +51,7 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.ID
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
@@ -220,6 +221,7 @@ defmodule Jido.Signal.Bus do
       partition_count: partition_count,
       bus_name: name,
       bus_pid: self(),
+      jido: Keyword.get(opts, :jido),
       middleware: middleware_configs,
       middleware_timeout_ms: middleware_timeout_ms,
       journal_adapter: journal_adapter,
@@ -231,7 +233,7 @@ defmodule Jido.Signal.Bus do
     {:ok, _sup_pid} = PartitionSupervisor.start_link(partition_opts)
 
     0..(partition_count - 1)
-    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1)))
+    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1, partition_opts)))
     |> Enum.reject(&is_nil/1)
   end
 
@@ -282,10 +284,15 @@ defmodule Jido.Signal.Bus do
   Subscribes to signals matching the given path pattern.
   Options:
   - dispatch: How to dispatch signals to the subscriber (default: async to calling process)
-  - persistent: Whether the subscription should persist across restarts (default: false)
+  - persistent?: Canonical key for persistent subscription behavior
+  - persistent: Backward-compatible alias for `persistent?`
+
+  If both `persistent` and `persistent?` are provided, `persistent?` takes precedence.
   """
   @spec subscribe(server(), path(), Keyword.t()) :: {:ok, subscription_id()} | {:error, term()}
   def subscribe(bus, path, opts \\ []) do
+    opts = normalize_persistent_option(opts)
+
     # Ensure we have a dispatch configuration
     opts =
       if Keyword.has_key?(opts, :dispatch) do
@@ -308,6 +315,21 @@ defmodule Jido.Signal.Bus do
 
     with {:ok, pid} <- whereis(bus) do
       GenServer.call(pid, {:subscribe, path, opts})
+    end
+  end
+
+  defp normalize_persistent_option(opts) do
+    cond do
+      Keyword.has_key?(opts, :persistent?) ->
+        Keyword.delete(opts, :persistent)
+
+      Keyword.has_key?(opts, :persistent) ->
+        opts
+        |> Keyword.put(:persistent?, Keyword.get(opts, :persistent))
+        |> Keyword.delete(:persistent)
+
+      true ->
+        opts
     end
   end
 
@@ -748,7 +770,9 @@ defmodule Jido.Signal.Bus do
   end
 
   defp redrive_single_entry(state, entry, subscription, clear_on_success) do
-    case Dispatch.dispatch(entry.signal, subscription.dispatch) do
+    case Dispatch.dispatch(entry.signal, subscription.dispatch,
+           task_supervisor: Names.task_supervisor(jido: state.jido)
+         ) do
       :ok ->
         if clear_on_success,
           do: state.journal_adapter.delete_dlq_entry(entry.id, state.journal_pid)
@@ -845,7 +869,8 @@ defmodule Jido.Signal.Bus do
       state: new_state,
       context: context,
       timeout_ms: timeout_ms,
-      signal_log_id_map: signal_log_id_map
+      signal_log_id_map: signal_log_id_map,
+      task_supervisor: Names.task_supervisor(jido: new_state.jido)
     }
 
     {final_middleware, dispatch_results} =
@@ -926,7 +951,12 @@ defmodule Jido.Signal.Bus do
          dispatch_ctx
        ) do
     result =
-      dispatch_to_subscription(processed_signal, subscription, dispatch_ctx.signal_log_id_map)
+      dispatch_to_subscription(
+        processed_signal,
+        subscription,
+        dispatch_ctx.signal_log_id_map,
+        dispatch_ctx.task_supervisor
+      )
 
     emit_after_dispatch_telemetry(
       dispatch_ctx.state.name,
@@ -1059,7 +1089,12 @@ defmodule Jido.Signal.Bus do
   # Dispatch signal to a subscription
   # For persistent subscriptions, use synchronous call to get backpressure feedback
   # For regular subscriptions, use normal async dispatch
-  defp dispatch_to_subscription(signal, subscription, signal_log_id_map) do
+  defp dispatch_to_subscription(
+         signal,
+         subscription,
+         signal_log_id_map,
+         task_supervisor \\ Jido.Signal.TaskSupervisor
+       ) do
     if subscription.persistent? && subscription.persistence_pid do
       # For persistent subscriptions, call synchronously to get backpressure feedback
       signal_log_id = Map.get(signal_log_id_map, signal.id)
@@ -1075,7 +1110,7 @@ defmodule Jido.Signal.Bus do
       end
     else
       # For regular subscriptions, use async dispatch
-      Dispatch.dispatch(signal, subscription.dispatch)
+      Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: task_supervisor)
     end
   end
 
