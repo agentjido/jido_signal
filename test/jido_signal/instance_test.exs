@@ -106,5 +106,20 @@ defmodule Jido.Signal.InstanceTest do
       instance = :"TestInstance#{System.unique_integer()}"
       assert :ok = Instance.stop(instance)
     end
+
+    test "stop/1 tolerates supervisor exiting between lookup and stop" do
+      Process.flag(:trap_exit, true)
+
+      instance = :"TestInstance#{System.unique_integer()}"
+      {:ok, _pid} = Instance.start_link(name: instance)
+
+      supervisor_pid = Process.whereis(Names.supervisor(jido: instance))
+      assert is_pid(supervisor_pid)
+
+      stop_task = Task.async(fn -> Instance.stop(instance) end)
+      Process.exit(supervisor_pid, :kill)
+
+      assert :ok = Task.await(stop_task, 1_000)
+    end
   end
 end
