@@ -233,7 +233,7 @@ defmodule Jido.Signal.Bus do
     {:ok, _sup_pid} = PartitionSupervisor.start_link(partition_opts)
 
     0..(partition_count - 1)
-    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1)))
+    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1, partition_opts)))
     |> Enum.reject(&is_nil/1)
   end
 

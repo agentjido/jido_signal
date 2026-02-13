@@ -214,7 +214,7 @@ defmodule Jido.Signal.MixProject do
       {:excoveralls, "~> 0.18.3", only: [:dev, :test]},
       {:castore, "~> 1.0", only: [:dev, :test]},
       {:expublish, "~> 2.7", only: [:dev], runtime: false},
-      {:mix_test_watch, "~> 1.3.0", only: :dev, runtime: false},
+      {:mix_test_watch, "~> 1.4.0", only: :dev, runtime: false},
       {:mimic, "~> 2.0", only: :test},
       {:stream_data, "~> 1.0", only: [:dev, :test]}
     ]
