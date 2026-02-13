@@ -140,6 +140,72 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       assert checkpoint == highest_timestamp
     end
+
+    test "unsubscribe keeps checkpoint and dlq when delete_persistence is false", %{
+      bus: bus,
+      journal_pid: journal_pid
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+
+      :ok = Process.sleep(25)
+
+      {:ok, _dlq_id} =
+        ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
+
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id, delete_persistence: false)
+
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+    end
+
+    test "unsubscribe removes checkpoint and dlq when delete_persistence is true", %{
+      bus: bus,
+      journal_pid: journal_pid
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 2}
+        })
+
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+
+      :ok = Process.sleep(25)
+
+      {:ok, _dlq_id} =
+        ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
+
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id, delete_persistence: true)
+
+      assert {:error, :not_found} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, []} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+    end
   end
 
   describe "backward compatibility without journal adapter" do
