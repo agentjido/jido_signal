@@ -347,7 +347,7 @@ defmodule Jido.Signal.Bus.State do
   - `state`: The current bus state
   - `subscription_id`: The ID of the subscription to remove
   - `opts`: Options including:
-    - `:delete_persistence` - Whether to delete persistence (default: true)
+    - `:delete_persistence` - Whether to delete persistence artifacts (default: false)
 
   ## Returns
 
@@ -356,9 +356,9 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec remove_subscription(t(), String.t(), keyword()) :: {:ok, t()} | {:error, atom()}
   def remove_subscription(%__MODULE__{} = state, subscription_id, opts \\ []) do
-    delete_persistence = Keyword.get(opts, :delete_persistence, true)
+    _delete_persistence = Keyword.get(opts, :delete_persistence, false)
 
-    if has_subscription?(state, subscription_id) && delete_persistence do
+    if has_subscription?(state, subscription_id) do
       {subscription, new_subscriptions} = Map.pop(state.subscriptions, subscription_id)
       new_state = %{state | subscriptions: new_subscriptions}
 

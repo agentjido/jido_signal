@@ -20,6 +20,7 @@ defmodule Jido.Signal.Bus.Stream do
   Filters signals from the bus state's log based on type pattern and timestamp.
   The type pattern is used for matching against the signal's type field.
   Ordering is determined by recorded log key chronology.
+  Correlation filtering reads the canonical value from the `correlation` extension.
   """
   @spec filter(BusState.t(), String.t(), integer() | nil, keyword()) ::
           {:ok, list(Jido.Signal.Bus.RecordedSignal.t())} | {:error, atom()}
@@ -60,7 +61,7 @@ defmodule Jido.Signal.Bus.Stream do
     correlation_filtered =
       if correlation_id do
         Enum.filter(timestamp_filtered, fn {_log_id, signal} ->
-          signal.correlation_id == correlation_id
+          correlation_id_for(signal) == correlation_id
         end)
       else
         timestamp_filtered
@@ -185,6 +186,19 @@ defmodule Jido.Signal.Bus.Stream do
     case invalid_signals do
       [] -> :ok
       _ -> {:error, :invalid_signals}
+    end
+  end
+
+  defp correlation_id_for(%Signal{} = signal) do
+    correlation_extension =
+      Map.get(signal.extensions, "correlation") || Map.get(signal.extensions, :correlation)
+
+    case correlation_extension do
+      %{trace_id: trace_id} when is_binary(trace_id) -> trace_id
+      %{"trace_id" => trace_id} when is_binary(trace_id) -> trace_id
+      %{correlation_id: correlation_id} when is_binary(correlation_id) -> correlation_id
+      %{"correlation_id" => correlation_id} when is_binary(correlation_id) -> correlation_id
+      _ -> nil
     end
   end
 end
