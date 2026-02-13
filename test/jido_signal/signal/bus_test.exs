@@ -45,13 +45,13 @@ defmodule JidoTest.Signal.Bus do
           data: %{value: 1}
         })
 
-      {:ok, _} = Bus.publish(bus, [signal])
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
 
       # Verify signal is received
       assert_receive {:signal, %Signal{type: "test.signal"}}
 
       # Acknowledge the signal
-      :ok = Bus.ack(bus, subscription_id, 1)
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
     end
   end
 

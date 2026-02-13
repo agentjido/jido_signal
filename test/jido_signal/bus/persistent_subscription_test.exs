@@ -140,6 +140,60 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       assert checkpoint == highest_timestamp
     end
+
+    test "bus ack returns error for invalid ack argument", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      assert {:error, :invalid_ack_argument} = Bus.ack(bus, subscription_id, :invalid)
+    end
+
+    test "bus ack supports list of signal ids", %{bus: bus, journal_pid: journal_pid} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      signals =
+        for i <- 1..2 do
+          {:ok, signal} =
+            Signal.new(%{
+              type: "test.signal.#{i}",
+              source: "/test",
+              data: %{value: i}
+            })
+
+          signal
+        end
+
+      {:ok, recorded_signals} = Bus.publish(bus, signals)
+
+      for _ <- 1..2 do
+        assert_receive {:signal, %Signal{}}
+      end
+
+      signal_ids = Enum.map(recorded_signals, & &1.id)
+      assert :ok = Bus.ack(bus, subscription_id, signal_ids)
+
+      Process.sleep(25)
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      {:ok, checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+
+      expected_checkpoint =
+        signal_ids
+        |> Enum.map(&ID.extract_timestamp/1)
+        |> Enum.max()
+
+      assert checkpoint == expected_checkpoint
+    end
   end
 
   describe "backward compatibility without journal adapter" do

@@ -393,8 +393,13 @@ defmodule Jido.Signal.Bus do
 
   @doc """
   Acknowledges a signal for a persistent subscription.
+
+  `signal_id` accepts:
+  - a single recorded signal ID (binary)
+  - a list of recorded signal IDs (for batch acknowledgement)
   """
-  @spec ack(server(), subscription_id(), String.t() | integer()) :: :ok | {:error, term()}
+  @spec ack(server(), subscription_id(), String.t() | [String.t()] | integer()) ::
+          :ok | {:error, term()}
   def ack(bus, subscription_id, signal_id) do
     with {:ok, pid} <- whereis(bus) do
       GenServer.call(pid, {:ack, subscription_id, signal_id})
@@ -585,11 +590,21 @@ defmodule Jido.Signal.Bus do
 
       # Otherwise, acknowledge the signal by forwarding to PersistentSubscription
       true ->
-        if subscription.persistence_pid do
-          GenServer.call(subscription.persistence_pid, {:ack, signal_id})
-        end
+        case subscription.persistence_pid do
+          nil ->
+            {:reply, {:error, :subscription_not_available}, state}
 
-        {:reply, :ok, state}
+          persistence_pid ->
+            result =
+              try do
+                GenServer.call(persistence_pid, {:ack, signal_id})
+              catch
+                :exit, {:noproc, _} -> {:error, :subscription_not_available}
+                :exit, {:timeout, _} -> {:error, :timeout}
+              end
+
+            {:reply, result, state}
+        end
     end
   end
 
