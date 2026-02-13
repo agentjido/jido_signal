@@ -220,6 +220,7 @@ defmodule Jido.Signal.Bus do
       partition_count: partition_count,
       bus_name: name,
       bus_pid: self(),
+      jido: Keyword.get(opts, :jido),
       middleware: middleware_configs,
       middleware_timeout_ms: middleware_timeout_ms,
       journal_adapter: journal_adapter,
@@ -231,7 +232,7 @@ defmodule Jido.Signal.Bus do
     {:ok, _sup_pid} = PartitionSupervisor.start_link(partition_opts)
 
     0..(partition_count - 1)
-    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1)))
+    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1, partition_opts)))
     |> Enum.reject(&is_nil/1)
   end
 
