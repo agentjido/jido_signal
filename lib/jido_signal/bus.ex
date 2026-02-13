@@ -284,10 +284,15 @@ defmodule Jido.Signal.Bus do
   Subscribes to signals matching the given path pattern.
   Options:
   - dispatch: How to dispatch signals to the subscriber (default: async to calling process)
-  - persistent: Whether the subscription should persist across restarts (default: false)
+  - persistent?: Canonical key for persistent subscription behavior
+  - persistent: Backward-compatible alias for `persistent?`
+
+  If both `persistent` and `persistent?` are provided, `persistent?` takes precedence.
   """
   @spec subscribe(server(), path(), Keyword.t()) :: {:ok, subscription_id()} | {:error, term()}
   def subscribe(bus, path, opts \\ []) do
+    opts = normalize_persistent_option(opts)
+
     # Ensure we have a dispatch configuration
     opts =
       if Keyword.has_key?(opts, :dispatch) do
@@ -310,6 +315,21 @@ defmodule Jido.Signal.Bus do
 
     with {:ok, pid} <- whereis(bus) do
       GenServer.call(pid, {:subscribe, path, opts})
+    end
+  end
+
+  defp normalize_persistent_option(opts) do
+    cond do
+      Keyword.has_key?(opts, :persistent?) ->
+        Keyword.delete(opts, :persistent)
+
+      Keyword.has_key?(opts, :persistent) ->
+        opts
+        |> Keyword.put(:persistent?, Keyword.get(opts, :persistent))
+        |> Keyword.delete(:persistent)
+
+      true ->
+        opts
     end
   end
 
