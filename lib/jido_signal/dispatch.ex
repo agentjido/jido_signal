@@ -408,7 +408,13 @@ defmodule Jido.Signal.Dispatch do
     validated_configs_with_idx = extract_validated_configs(valid_configs)
 
     dispatch_results =
-      process_batches(signal, validated_configs_with_idx, batch_size, max_concurrency, task_supervisor)
+      process_batches(
+        signal,
+        validated_configs_with_idx,
+        batch_size,
+        max_concurrency,
+        task_supervisor
+      )
 
     validation_errors = extract_validation_errors(validation_errors)
     dispatch_errors = extract_dispatch_errors(dispatch_results)
