@@ -9,6 +9,7 @@ defmodule Jido.Signal.Bus.Partition do
 
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
@@ -56,15 +57,16 @@ defmodule Jido.Signal.Bus.Partition do
   def start_link(opts) do
     partition_id = Keyword.fetch!(opts, :partition_id)
     bus_name = Keyword.fetch!(opts, :bus_name)
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id))
+    GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id, opts))
   end
 
   @doc """
   Returns a via tuple for looking up a partition by bus name and partition ID.
   """
-  @spec via_tuple(atom(), non_neg_integer()) :: {:via, Registry, {module(), tuple()}}
-  def via_tuple(bus_name, partition_id) do
-    {:via, Registry, {Jido.Signal.Registry, {:partition, bus_name, partition_id}}}
+  @spec via_tuple(atom(), non_neg_integer(), keyword()) :: {:via, Registry, {module(), tuple()}}
+  def via_tuple(bus_name, partition_id, opts \\ []) do
+    registry = Names.registry(opts)
+    {:via, Registry, {registry, {:partition, bus_name, partition_id}}}
   end
 
   @doc """

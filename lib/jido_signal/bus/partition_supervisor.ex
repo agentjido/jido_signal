@@ -7,6 +7,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   """
   use Supervisor
 
+  alias Jido.Signal.Names
   alias Jido.Signal.Bus.Partition
 
   @doc """
@@ -25,15 +26,16 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     bus_name = Keyword.fetch!(opts, :bus_name)
-    Supervisor.start_link(__MODULE__, opts, name: via_tuple(bus_name))
+    Supervisor.start_link(__MODULE__, opts, name: via_tuple(bus_name, opts))
   end
 
   @doc """
   Returns a via tuple for looking up a partition supervisor by bus name.
   """
-  @spec via_tuple(atom()) :: {:via, Registry, {module(), tuple()}}
-  def via_tuple(bus_name) do
-    {:via, Registry, {Jido.Signal.Registry, {:partition_supervisor, bus_name}}}
+  @spec via_tuple(atom(), keyword()) :: {:via, Registry, {module(), tuple()}}
+  def via_tuple(bus_name, opts \\ []) do
+    registry = Names.registry(opts)
+    {:via, Registry, {registry, {:partition_supervisor, bus_name}}}
   end
 
   @impl Supervisor
@@ -41,6 +43,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
     partition_count = Keyword.get(opts, :partition_count, 1)
     bus_name = Keyword.fetch!(opts, :bus_name)
     bus_pid = Keyword.fetch!(opts, :bus_pid)
+    jido = Keyword.get(opts, :jido)
     middleware = Keyword.get(opts, :middleware, [])
     middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
     journal_adapter = Keyword.get(opts, :journal_adapter)
@@ -56,6 +59,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
              partition_id: i,
              bus_name: bus_name,
              bus_pid: bus_pid,
+             jido: jido,
              middleware: middleware,
              middleware_timeout_ms: middleware_timeout_ms,
              journal_adapter: journal_adapter,
