@@ -197,6 +197,31 @@ defmodule JidoTest.Signal.Bus do
       assert length(all_replayed) == 2
     end
 
+    test "replays in recorded order with non-chronological signal IDs", %{bus: bus} do
+      {:ok, signal1} =
+        Signal.new(%{
+          id: "signal-z",
+          type: "test.signal",
+          source: "/test",
+          data: %{order: 1}
+        })
+
+      {:ok, signal2} =
+        Signal.new(%{
+          id: "signal-a",
+          type: "test.signal",
+          source: "/test",
+          data: %{order: 2}
+        })
+
+      {:ok, _recorded} = Bus.publish(bus, [signal1, signal2])
+
+      {:ok, replayed} = Bus.replay(bus, "test.signal")
+
+      assert Enum.map(replayed, fn recorded -> recorded.signal.id end) == ["signal-z", "signal-a"]
+      assert Enum.map(replayed, fn recorded -> recorded.signal.data.order end) == [1, 2]
+    end
+
     test "replays signals from start_timestamp", %{bus: bus} do
       # Publish a signal
       {:ok, signal1} =

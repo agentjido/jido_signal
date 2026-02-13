@@ -146,7 +146,7 @@ defmodule Jido.Signal.Bus.State do
   end
 
   @doc """
-  Converts the signal log from a map to a sorted list.
+  Converts the signal log from a map to a list sorted by recorded log key.
 
   ## Parameters
 
@@ -154,7 +154,7 @@ defmodule Jido.Signal.Bus.State do
 
   ## Returns
 
-  A list of signals sorted by their IDs
+  A list of signals sorted by recorded log key chronology.
 
   ## Examples
 
@@ -167,9 +167,19 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec log_to_list(t()) :: list(Signal.t())
   def log_to_list(%__MODULE__{} = state) do
+    state
+    |> log_entries_to_list()
+    |> Enum.map(fn {_log_id, signal} -> signal end)
+  end
+
+  @doc """
+  Converts the signal log from a map to a list of `{log_id, signal}` tuples
+  sorted by recorded log key chronology.
+  """
+  @spec log_entries_to_list(t()) :: [{String.t(), Signal.t()}]
+  def log_entries_to_list(%__MODULE__{} = state) do
     state.log
-    |> Map.values()
-    |> Enum.sort_by(fn signal -> signal.id end)
+    |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
   end
 
   @doc """
@@ -182,16 +192,12 @@ defmodule Jido.Signal.Bus.State do
       # No truncation needed
       {:ok, state}
     else
-      sorted_signals =
-        state.log
-        |> Enum.sort_by(fn {key, _signal} -> key end)
-        |> Enum.map(fn {_key, signal} -> signal end)
+      sorted_entries = log_entries_to_list(state)
 
       # Keep only the most recent max_size signals
-      to_keep = Enum.take(sorted_signals, -max_size)
+      to_keep = Enum.take(sorted_entries, -max_size)
 
-      # Convert back to map
-      truncated_log = Map.new(to_keep, fn signal -> {signal.id, signal} end)
+      truncated_log = Map.new(to_keep)
 
       {:ok, %{state | log: truncated_log}}
     end
