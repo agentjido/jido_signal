@@ -8,6 +8,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   use Supervisor
 
   alias Jido.Signal.Bus.Partition
+  alias Jido.Signal.Names
 
   @doc """
   Starts the partition supervisor.
@@ -43,6 +44,8 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
     bus_pid = Keyword.fetch!(opts, :bus_pid)
     middleware = Keyword.get(opts, :middleware, [])
     middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
+    jido = Keyword.get(opts, :jido)
+    task_supervisor = Names.task_supervisor(jido: jido)
     journal_adapter = Keyword.get(opts, :journal_adapter)
     journal_pid = Keyword.get(opts, :journal_pid)
     rate_limit_per_sec = Keyword.get(opts, :rate_limit_per_sec, 10_000)
@@ -58,6 +61,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
              bus_pid: bus_pid,
              middleware: middleware,
              middleware_timeout_ms: middleware_timeout_ms,
+             task_supervisor: task_supervisor,
              journal_adapter: journal_adapter,
              journal_pid: journal_pid,
              rate_limit_per_sec: rate_limit_per_sec,

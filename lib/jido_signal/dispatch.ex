@@ -131,9 +131,11 @@ defmodule Jido.Signal.Dispatch do
           | module()
   @type dispatch_config :: {adapter(), Keyword.t()}
   @type dispatch_configs :: dispatch_config() | [dispatch_config()]
+  @type runtime_opts :: [task_supervisor: pid() | atom()]
   @type batch_opts :: [
           batch_size: pos_integer(),
-          max_concurrency: pos_integer()
+          max_concurrency: pos_integer(),
+          task_supervisor: pid() | atom()
         ]
 
   @default_batch_size 50
@@ -281,16 +283,24 @@ defmodule Jido.Signal.Dispatch do
       {:error, [%Jido.Signal.Error{...}]}
   """
   @spec dispatch(Jido.Signal.t(), dispatch_configs()) :: :ok | {:error, term()}
+  @spec dispatch(Jido.Signal.t(), dispatch_configs(), runtime_opts()) :: :ok | {:error, term()}
+  def dispatch(signal, config) do
+    dispatch(signal, config, [])
+  end
+
   # Handle single dispatcher
-  def dispatch(signal, {adapter, opts} = config) when is_atom(adapter) and is_list(opts) do
+  def dispatch(signal, {adapter, opts} = config, _runtime_opts)
+      when is_atom(adapter) and is_list(opts) do
     dispatch_single(signal, config)
   end
 
   # Handle multiple dispatchers
-  def dispatch(signal, configs) when is_list(configs) do
+  def dispatch(signal, configs, runtime_opts) when is_list(configs) do
+    task_supervisor = task_supervisor(runtime_opts)
+
     results =
       Task.Supervisor.async_stream(
-        Jido.Signal.TaskSupervisor,
+        task_supervisor,
         configs,
         fn config -> dispatch_single(signal, config) end,
         max_concurrency: @default_dispatch_max_concurrency,
@@ -313,7 +323,7 @@ defmodule Jido.Signal.Dispatch do
     end
   end
 
-  def dispatch(_signal, _config) do
+  def dispatch(_signal, _config, _runtime_opts) do
     {:error, :invalid_dispatch_config}
   end
 
@@ -338,12 +348,20 @@ defmodule Jido.Signal.Dispatch do
       :ok = Task.await(task)
   """
   @spec dispatch_async(Jido.Signal.t(), dispatch_configs()) :: {:ok, Task.t()} | {:error, term()}
+  @spec dispatch_async(Jido.Signal.t(), dispatch_configs(), runtime_opts()) ::
+          {:ok, Task.t()} | {:error, term()}
   def dispatch_async(signal, config) do
+    dispatch_async(signal, config, [])
+  end
+
+  def dispatch_async(signal, config, runtime_opts) do
+    task_supervisor = task_supervisor(runtime_opts)
+
     case validate_opts(config) do
       {:ok, validated_config} ->
         task =
-          Task.Supervisor.async_nolink(Jido.Signal.TaskSupervisor, fn ->
-            dispatch(signal, validated_config)
+          Task.Supervisor.async_nolink(task_supervisor, fn ->
+            dispatch(signal, validated_config, runtime_opts)
           end)
 
         {:ok, task}
@@ -382,6 +400,7 @@ defmodule Jido.Signal.Dispatch do
   def dispatch_batch(signal, configs, opts \\ []) when is_list(configs) do
     batch_size = Keyword.get(opts, :batch_size, @default_batch_size)
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
+    task_supervisor = Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor)
 
     validation_results = validate_configs_with_index(configs)
     {valid_configs, validation_errors} = split_validation_results(validation_results)
@@ -389,7 +408,7 @@ defmodule Jido.Signal.Dispatch do
     validated_configs_with_idx = extract_validated_configs(valid_configs)
 
     dispatch_results =
-      process_batches(signal, validated_configs_with_idx, batch_size, max_concurrency)
+      process_batches(signal, validated_configs_with_idx, batch_size, max_concurrency, task_supervisor)
 
     validation_errors = extract_validation_errors(validation_errors)
     dispatch_errors = extract_dispatch_errors(dispatch_results)
@@ -421,10 +440,16 @@ defmodule Jido.Signal.Dispatch do
     Enum.map(valid_configs, fn {:ok, {config, idx}} -> {config, idx} end)
   end
 
-  defp process_batches(signal, validated_configs_with_idx, _batch_size, max_concurrency) do
+  defp process_batches(
+         signal,
+         validated_configs_with_idx,
+         _batch_size,
+         max_concurrency,
+         task_supervisor
+       ) do
     # Single stream over all configs (batch_size is now a no-op for backwards compat)
     Task.Supervisor.async_stream(
-      Jido.Signal.TaskSupervisor,
+      task_supervisor,
       validated_configs_with_idx,
       fn {config, original_idx} ->
         case dispatch_single(signal, config) do
@@ -457,6 +482,10 @@ defmodule Jido.Signal.Dispatch do
       {[], errors} -> {:error, Enum.reverse(errors)}
       {val_errs, disp_errs} -> {:error, Enum.reverse(val_errs ++ disp_errs)}
     end
+  end
+
+  defp task_supervisor(runtime_opts) when is_list(runtime_opts) do
+    Keyword.get(runtime_opts, :task_supervisor, Jido.Signal.TaskSupervisor)
   end
 
   # Private helpers
