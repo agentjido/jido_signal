@@ -160,6 +160,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
 
       :ok = Process.sleep(25)
+
       {:ok, _dlq_id} =
         ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
 
@@ -192,6 +193,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
 
       :ok = Process.sleep(25)
+
       {:ok, _dlq_id} =
         ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
 

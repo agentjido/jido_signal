@@ -209,9 +209,7 @@ defmodule Jido.Signal.Bus.Subscriber do
           :ok
 
         {:error, reason} ->
-          Logger.warning(
-            "Failed to delete checkpoint for #{checkpoint_key}: #{inspect(reason)}"
-          )
+          Logger.warning("Failed to delete checkpoint for #{checkpoint_key}: #{inspect(reason)}")
       end
 
       case state.journal_adapter.clear_dlq(subscription_id, state.journal_pid) do
