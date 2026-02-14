@@ -33,6 +33,24 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
       assert Process.alive?(pid)
     end
 
+    test "signals_since query remains responsive under concurrent publish", %{bus_pid: bus_pid} do
+      signals =
+        for i <- 1..25 do
+          Signal.new!(%{
+            type: "test.concurrent.#{i}",
+            source: "/test",
+            data: %{value: i}
+          })
+        end
+
+      publish_task = Task.async(fn -> Bus.publish(bus_pid, signals) end)
+      query_task = Task.async(fn -> GenServer.call(bus_pid, {:signals_since, 0}) end)
+
+      assert {:ok, _recorded_signals} = Task.await(publish_task, 1_000)
+      assert {:ok, entries} = Task.await(query_task, 1_000)
+      assert is_list(entries)
+    end
+
     # @tag :skip
     # test "accepts signal and forwards to subscriber", %{bus_pid: bus_pid, test_pid: test_pid} do
     #   # First verify that direct dispatch works correctly

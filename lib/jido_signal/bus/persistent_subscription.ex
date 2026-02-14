@@ -338,19 +338,24 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp replay_missed_signals(state) do
     Logger.debug("Replaying missed signals for subscription #{state.id}")
 
-    # Get the bus state to access the log
-    bus_state = :sys.get_state(state.bus_pid)
-
-    missed_signals =
-      Enum.filter(bus_state.log, fn {signal_log_id, signal} ->
-        signal_after_checkpoint?(signal_log_id, signal, state.checkpoint)
-      end)
+    missed_signals = fetch_signals_since_checkpoint(state)
 
     Enum.each(missed_signals, fn {signal_log_id, signal} ->
       replay_single_signal(signal_log_id, signal, state)
     end)
 
     state
+  end
+
+  defp fetch_signals_since_checkpoint(state) do
+    try do
+      case GenServer.call(state.bus_pid, {:signals_since, state.checkpoint}) do
+        {:ok, signals} when is_list(signals) -> signals
+        _ -> []
+      end
+    catch
+      :exit, _reason -> []
+    end
   end
 
   defp signal_after_checkpoint?(signal_log_id, signal, checkpoint) do
