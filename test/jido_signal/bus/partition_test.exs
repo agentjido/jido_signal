@@ -500,6 +500,106 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
     end
   end
 
+  describe "dispatch parity between partitioned and non-partitioned buses" do
+    defmodule ParityDispatchMiddleware do
+      use Jido.Signal.Bus.Middleware
+
+      @impl true
+      def init(opts), do: {:ok, %{mode: Keyword.fetch!(opts, :mode)}}
+
+      @impl true
+      def before_dispatch(signal, _subscriber, _context, state) do
+        case state.mode do
+          :pass -> {:cont, signal, state}
+          :skip -> {:skip, state}
+          :halt -> {:halt, :forced_halt, state}
+        end
+      end
+    end
+
+    test "success path is parity-consistent across partition modes" do
+      Enum.each([1, 2], fn partition_count ->
+        bus_name =
+          :"test-bus-parity-pass-#{partition_count}-#{System.unique_integer([:positive])}"
+
+        start_supervised!(
+          {Bus,
+           name: bus_name,
+           partition_count: partition_count,
+           middleware: [{ParityDispatchMiddleware, mode: :pass}]}
+        )
+
+        handler_id =
+          attach_dispatch_handler(self(), bus_name, [:jido, :signal, :bus, :after_dispatch])
+
+        on_exit(fn -> :telemetry.detach(handler_id) end)
+
+        {:ok, _subscription} = Bus.subscribe(bus_name, "test.signal")
+        {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+
+        assert {:ok, _} = Bus.publish(bus_name, [signal])
+        assert_receive {:signal, %Signal{type: "test.signal"}}, 1000
+        assert_receive {:dispatch_event, [:jido, :signal, :bus, :after_dispatch], _, _}, 1000
+      end)
+    end
+
+    test "skip path is parity-consistent across partition modes" do
+      Enum.each([1, 2], fn partition_count ->
+        bus_name =
+          :"test-bus-parity-skip-#{partition_count}-#{System.unique_integer([:positive])}"
+
+        start_supervised!(
+          {Bus,
+           name: bus_name,
+           partition_count: partition_count,
+           middleware: [{ParityDispatchMiddleware, mode: :skip}]}
+        )
+
+        handler_id =
+          attach_dispatch_handler(self(), bus_name, [:jido, :signal, :bus, :dispatch_skipped])
+
+        on_exit(fn -> :telemetry.detach(handler_id) end)
+
+        {:ok, _subscription} = Bus.subscribe(bus_name, "test.signal")
+        {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+
+        assert {:ok, _} = Bus.publish(bus_name, [signal])
+        refute_receive {:signal, _}, 300
+        assert_receive {:dispatch_event, [:jido, :signal, :bus, :dispatch_skipped], _, _}, 1000
+      end)
+    end
+
+    test "error path is parity-consistent across partition modes" do
+      Enum.each([1, 2], fn partition_count ->
+        bus_name =
+          :"test-bus-parity-halt-#{partition_count}-#{System.unique_integer([:positive])}"
+
+        start_supervised!(
+          {Bus,
+           name: bus_name,
+           partition_count: partition_count,
+           middleware: [{ParityDispatchMiddleware, mode: :halt}]}
+        )
+
+        handler_id =
+          attach_dispatch_handler(self(), bus_name, [:jido, :signal, :bus, :dispatch_error])
+
+        on_exit(fn -> :telemetry.detach(handler_id) end)
+
+        {:ok, _subscription} = Bus.subscribe(bus_name, "test.signal")
+        {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+
+        assert {:ok, _} = Bus.publish(bus_name, [signal])
+        refute_receive {:signal, _}, 300
+
+        assert_receive {:dispatch_event, [:jido, :signal, :bus, :dispatch_error], _, metadata},
+                       1000
+
+        assert metadata.error == :forced_halt
+      end)
+    end
+  end
+
   describe "telemetry events include partition_id" do
     setup do
       bus_name = :"test-bus-telemetry-partition-#{:erlang.unique_integer([:positive])}"
@@ -588,5 +688,23 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
     after
       100 -> Enum.reverse(acc)
     end
+  end
+
+  defp attach_dispatch_handler(test_pid, bus_name, event_name) do
+    handler_id =
+      "test-partition-dispatch-handler-#{inspect(bus_name)}-#{inspect(event_name)}-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn event, measurements, metadata, config ->
+        if metadata[:bus_name] == config.bus_name do
+          send(config.test_pid, {:dispatch_event, event, measurements, metadata})
+        end
+      end,
+      %{test_pid: test_pid, bus_name: bus_name}
+    )
+
+    handler_id
   end
 end
