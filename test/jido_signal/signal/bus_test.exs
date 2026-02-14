@@ -494,6 +494,20 @@ defmodule JidoTest.Signal.Bus do
     test "returns error for non-existent bus" do
       assert {:error, :not_found} = Bus.whereis("non-existent-bus")
     end
+
+    test "public API calls return error when pid target is already down" do
+      bus_name = "down-pid-bus-#{System.unique_integer([:positive])}"
+      {:ok, bus_pid} = Bus.start_link(name: bus_name)
+
+      GenServer.stop(bus_pid)
+      refute Process.alive?(bus_pid)
+
+      {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+
+      assert {:error, :not_found} = Bus.subscribe(bus_pid, "test.signal")
+      assert {:error, :not_found} = Bus.publish(bus_pid, [signal])
+      assert {:error, :not_found} = Bus.snapshot_create(bus_pid, "**")
+    end
   end
 
   describe "process down handling" do

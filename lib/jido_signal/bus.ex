@@ -111,12 +111,20 @@ defmodule Jido.Signal.Bus do
 
     {:ok, child_supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
-    {journal_adapter, journal_pid} = init_journal_adapter(name, opts)
+    {journal_adapter, journal_pid, journal_owned?} = init_journal_adapter(name, opts)
     middleware_specs = Keyword.get(opts, :middleware, [])
 
     case MiddlewarePipeline.init_middleware(middleware_specs) do
       {:ok, middleware_configs} ->
-        init_state(name, opts, child_supervisor, journal_adapter, journal_pid, middleware_configs)
+        init_state(
+          name,
+          opts,
+          child_supervisor,
+          journal_adapter,
+          journal_pid,
+          journal_owned?,
+          middleware_configs
+        )
 
       {:error, reason} ->
         {:stop, {:middleware_init_failed, reason}}
@@ -136,24 +144,24 @@ defmodule Jido.Signal.Bus do
 
   defp do_init_journal_adapter(_name, journal_adapter, existing_pid)
        when not is_nil(journal_adapter) and not is_nil(existing_pid) do
-    {journal_adapter, existing_pid}
+    {journal_adapter, existing_pid, false}
   end
 
   defp do_init_journal_adapter(_name, journal_adapter, _existing_pid)
        when not is_nil(journal_adapter) do
     case journal_adapter.init() do
       :ok ->
-        {journal_adapter, nil}
+        {journal_adapter, nil, false}
 
       {:ok, pid} ->
-        {journal_adapter, pid}
+        {journal_adapter, pid, true}
 
       {:error, reason} ->
         Logger.warning(
           "Failed to initialize journal adapter #{inspect(journal_adapter)}: #{inspect(reason)}"
         )
 
-        {nil, nil}
+        {nil, nil, false}
     end
   end
 
@@ -162,17 +170,25 @@ defmodule Jido.Signal.Bus do
       "Bus #{name} started without journal adapter - checkpoints will be in-memory only"
     )
 
-    {nil, nil}
+    {nil, nil, false}
   end
 
   # Initializes the bus state with all configuration
-  defp init_state(name, opts, child_supervisor, journal_adapter, journal_pid, middleware_configs) do
+  defp init_state(
+         name,
+         opts,
+         child_supervisor,
+         journal_adapter,
+         journal_pid,
+         journal_owned?,
+         middleware_configs
+       ) do
     middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
     partition_count = Keyword.get(opts, :partition_count, 1)
     max_log_size = Keyword.get(opts, :max_log_size, 100_000)
     log_ttl_ms = Keyword.get(opts, :log_ttl_ms)
 
-    partition_pids =
+    {partition_pids, partition_supervisor} =
       init_partitions(
         name,
         opts,
@@ -183,7 +199,7 @@ defmodule Jido.Signal.Bus do
         journal_pid
       )
 
-    schedule_gc_if_needed(log_ttl_ms)
+    gc_timer_ref = schedule_gc_if_needed(log_ttl_ms)
 
     state = %BusState{
       name: name,
@@ -194,10 +210,13 @@ defmodule Jido.Signal.Bus do
       middleware_timeout_ms: middleware_timeout_ms,
       journal_adapter: journal_adapter,
       journal_pid: journal_pid,
+      journal_owned?: journal_owned?,
       partition_count: partition_count,
+      partition_supervisor: partition_supervisor,
       partition_pids: partition_pids,
       max_log_size: max_log_size,
-      log_ttl_ms: log_ttl_ms
+      log_ttl_ms: log_ttl_ms,
+      gc_timer_ref: gc_timer_ref
     }
 
     {:ok, state}
@@ -205,7 +224,7 @@ defmodule Jido.Signal.Bus do
 
   defp init_partitions(_name, _opts, partition_count, _middleware, _timeout, _adapter, _pid)
        when partition_count <= 1 do
-    []
+    {[], nil}
   end
 
   defp init_partitions(
@@ -230,14 +249,17 @@ defmodule Jido.Signal.Bus do
       burst_size: Keyword.get(opts, :partition_burst_size, 1_000)
     ]
 
-    {:ok, _sup_pid} = PartitionSupervisor.start_link(partition_opts)
+    {:ok, sup_pid} = PartitionSupervisor.start_link(partition_opts)
 
-    0..(partition_count - 1)
-    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1, partition_opts)))
-    |> Enum.reject(&is_nil/1)
+    partition_pids =
+      0..(partition_count - 1)
+      |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1, partition_opts)))
+      |> Enum.reject(&is_nil/1)
+
+    {partition_pids, sup_pid}
   end
 
-  defp schedule_gc_if_needed(nil), do: :ok
+  defp schedule_gc_if_needed(nil), do: nil
   defp schedule_gc_if_needed(log_ttl_ms), do: Process.send_after(self(), :gc_log, log_ttl_ms)
 
   @doc """
@@ -313,8 +335,8 @@ defmodule Jido.Signal.Bus do
         Keyword.put(opts, :dispatch, {:pid, target: self(), delivery_mode: :async})
       end
 
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:subscribe, path, opts})
+    with {:ok, result} <- bus_call(bus, {:subscribe, path, opts}) do
+      result
     end
   end
 
@@ -340,8 +362,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec unsubscribe(server(), subscription_id(), Keyword.t()) :: :ok | {:error, term()}
   def unsubscribe(bus, subscription_id, opts \\ []) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:unsubscribe, subscription_id, opts})
+    with {:ok, result} <- bus_call(bus, {:unsubscribe, subscription_id, opts}) do
+      result
     end
   end
 
@@ -356,8 +378,8 @@ defmodule Jido.Signal.Bus do
   end
 
   def publish(bus, signals) when is_list(signals) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:publish, signals})
+    with {:ok, result} <- bus_call(bus, {:publish, signals}) do
+      result
     end
   end
 
@@ -368,8 +390,8 @@ defmodule Jido.Signal.Bus do
   @spec replay(server(), path(), non_neg_integer(), Keyword.t()) ::
           {:ok, [Jido.Signal.Bus.RecordedSignal.t()]} | {:error, term()}
   def replay(bus, path \\ "*", start_timestamp \\ 0, opts \\ []) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:replay, path, start_timestamp, opts})
+    with {:ok, result} <- bus_call(bus, {:replay, path, start_timestamp, opts}) do
+      result
     end
   end
 
@@ -378,8 +400,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_create(server(), path()) :: {:ok, Snapshot.SnapshotRef.t()} | {:error, term()}
   def snapshot_create(bus, path) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:snapshot_create, path})
+    with {:ok, result} <- bus_call(bus, {:snapshot_create, path}) do
+      result
     end
   end
 
@@ -388,8 +410,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_list(server()) :: [Snapshot.SnapshotRef.t()]
   def snapshot_list(bus) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, :snapshot_list)
+    with {:ok, result} <- bus_call(bus, :snapshot_list) do
+      result
     end
   end
 
@@ -398,8 +420,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_read(server(), String.t()) :: {:ok, Snapshot.SnapshotData.t()} | {:error, term()}
   def snapshot_read(bus, snapshot_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:snapshot_read, snapshot_id})
+    with {:ok, result} <- bus_call(bus, {:snapshot_read, snapshot_id}) do
+      result
     end
   end
 
@@ -408,8 +430,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_delete(server(), String.t()) :: :ok | {:error, term()}
   def snapshot_delete(bus, snapshot_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:snapshot_delete, snapshot_id})
+    with {:ok, result} <- bus_call(bus, {:snapshot_delete, snapshot_id}) do
+      result
     end
   end
 
@@ -423,8 +445,8 @@ defmodule Jido.Signal.Bus do
   @spec ack(server(), subscription_id(), String.t() | [String.t()] | integer()) ::
           :ok | {:error, term()}
   def ack(bus, subscription_id, signal_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:ack, subscription_id, signal_id})
+    with {:ok, result} <- bus_call(bus, {:ack, subscription_id, signal_id}) do
+      result
     end
   end
 
@@ -434,8 +456,8 @@ defmodule Jido.Signal.Bus do
   @spec reconnect(server(), subscription_id(), pid()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def reconnect(bus, subscription_id, client_pid) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:reconnect, subscription_id, client_pid})
+    with {:ok, result} <- bus_call(bus, {:reconnect, subscription_id, client_pid}) do
+      result
     end
   end
 
@@ -452,8 +474,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec dlq_entries(server(), subscription_id()) :: {:ok, [map()]} | {:error, term()}
   def dlq_entries(bus, subscription_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:dlq_entries, subscription_id})
+    with {:ok, result} <- bus_call(bus, {:dlq_entries, subscription_id}) do
+      result
     end
   end
 
@@ -471,8 +493,8 @@ defmodule Jido.Signal.Bus do
   @spec redrive_dlq(server(), subscription_id(), keyword()) ::
           {:ok, %{succeeded: integer(), failed: integer()}} | {:error, term()}
   def redrive_dlq(bus, subscription_id, opts \\ []) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:redrive_dlq, subscription_id, opts})
+    with {:ok, result} <- bus_call(bus, {:redrive_dlq, subscription_id, opts}) do
+      result
     end
   end
 
@@ -485,9 +507,32 @@ defmodule Jido.Signal.Bus do
   """
   @spec clear_dlq(server(), subscription_id()) :: :ok | {:error, term()}
   def clear_dlq(bus, subscription_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:clear_dlq, subscription_id})
+    with {:ok, result} <- bus_call(bus, {:clear_dlq, subscription_id}) do
+      result
     end
+  end
+
+  defp bus_call(bus, message) do
+    target = bus_call_target(bus)
+
+    try do
+      {:ok, GenServer.call(target, message)}
+    catch
+      :exit, {:noproc, _} -> {:error, :not_found}
+      :exit, :noproc -> {:error, :not_found}
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, :timeout -> {:error, :timeout}
+    end
+  end
+
+  defp bus_call_target(bus) when is_pid(bus), do: bus
+
+  defp bus_call_target({name, registry}) when is_atom(registry) do
+    Jido.Signal.Util.via_tuple({name, registry})
+  end
+
+  defp bus_call_target(bus_name) when is_atom(bus_name) or is_binary(bus_name) do
+    via_tuple(bus_name)
   end
 
   @impl GenServer
@@ -557,6 +602,15 @@ defmodule Jido.Signal.Bus do
       {:ok, signals} -> {:reply, {:ok, signals}, state}
       {:error, error} -> {:reply, {:error, error}, state}
     end
+  end
+
+  def handle_call({:signals_since, checkpoint}, _from, state) do
+    signals =
+      state.log
+      |> Enum.filter(fn {log_id, _signal} -> log_id_after_checkpoint?(log_id, checkpoint) end)
+      |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
+
+    {:reply, {:ok, signals}, state}
   end
 
   def handle_call({:snapshot_create, path}, _from, state) do
@@ -1131,11 +1185,24 @@ defmodule Jido.Signal.Bus do
     {:noreply, state}
   end
 
+  def handle_info({:EXIT, pid, reason}, state) do
+    if linked_runtime_process?(pid, state) and reason != :normal do
+      Logger.error(
+        "Linked runtime process exited, stopping bus to avoid stale state: " <>
+          "pid=#{inspect(pid)} reason=#{inspect(reason)}"
+      )
+
+      {:stop, {:linked_runtime_exit, pid, reason}, state}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info(:gc_log, %{log_ttl_ms: nil} = state), do: {:noreply, state}
 
   def handle_info(:gc_log, state) do
-    Process.send_after(self(), :gc_log, state.log_ttl_ms)
-    new_state = prune_expired_log_entries(state)
+    gc_timer_ref = Process.send_after(self(), :gc_log, state.log_ttl_ms)
+    new_state = state |> prune_expired_log_entries() |> Map.put(:gc_timer_ref, gc_timer_ref)
     {:noreply, new_state}
   end
 
@@ -1194,6 +1261,92 @@ defmodule Jido.Signal.Bus do
       :exit, :noproc -> :ok
       :exit, {:timeout, _} -> :ok
       :exit, :timeout -> :ok
+    end
+  end
+
+  defp log_id_after_checkpoint?(log_id, checkpoint) when is_integer(checkpoint) do
+    case safe_extract_timestamp(log_id) do
+      {:ok, timestamp} -> timestamp > checkpoint
+      :error -> false
+    end
+  end
+
+  defp log_id_after_checkpoint?(_log_id, _checkpoint), do: false
+
+  defp safe_extract_timestamp(log_id) when is_binary(log_id) do
+    {:ok, ID.extract_timestamp(log_id)}
+  rescue
+    _ -> :error
+  end
+
+  defp safe_extract_timestamp(_log_id), do: :error
+
+  defp linked_runtime_process?(pid, state) do
+    pid == state.child_supervisor or pid == state.partition_supervisor
+  end
+
+  @impl GenServer
+  def terminate(_reason, state) do
+    maybe_cancel_gc_timer(state.gc_timer_ref)
+    maybe_cleanup_snapshots(state)
+    maybe_stop_child_supervisor(state.child_supervisor)
+    maybe_stop_owned_journal(state)
+    maybe_stop_partition_supervisor(state)
+
+    :ok
+  end
+
+  defp maybe_cancel_gc_timer(nil), do: :ok
+
+  defp maybe_cancel_gc_timer(timer_ref) do
+    Process.cancel_timer(timer_ref)
+    :ok
+  end
+
+  defp maybe_cleanup_snapshots(state) do
+    case Snapshot.cleanup(state) do
+      {:ok, _cleaned_state} -> :ok
+      {:error, _reason} -> :ok
+    end
+  end
+
+  defp maybe_stop_child_supervisor(nil), do: :ok
+
+  defp maybe_stop_child_supervisor(pid) when is_pid(pid) do
+    try do
+      Supervisor.stop(pid, :normal, 1_000)
+    catch
+      :exit, _reason -> :ok
+    end
+  end
+
+  defp maybe_stop_owned_journal(%{journal_owned?: true, journal_pid: pid}) when is_pid(pid) do
+    try do
+      GenServer.stop(pid, :normal, 1_000)
+    catch
+      :exit, _reason -> :ok
+    end
+  end
+
+  defp maybe_stop_owned_journal(_state), do: :ok
+
+  defp maybe_stop_partition_supervisor(state) do
+    if state.partition_count > 1 do
+      partition_supervisor = PartitionSupervisor.via_tuple(state.name, jido: state.jido)
+
+      case GenServer.whereis(partition_supervisor) do
+        pid when is_pid(pid) ->
+          try do
+            Supervisor.stop(pid, :normal, 1_000)
+          catch
+            :exit, _reason -> :ok
+          end
+
+        nil ->
+          :ok
+      end
+    else
+      :ok
     end
   end
 end

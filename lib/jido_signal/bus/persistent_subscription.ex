@@ -8,7 +8,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   """
   use GenServer
 
-  alias Jido.Signal.Bus
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
   alias Jido.Signal.Telemetry
@@ -31,6 +30,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
               attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
               retry_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              client_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               task_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
@@ -88,6 +88,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def init(opts) do
+    Process.flag(:trap_exit, true)
+
     # Extract the bus subscription
     bus_subscription = Keyword.fetch!(opts, :bus_subscription)
 
@@ -137,10 +139,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       checkpoint_key: checkpoint_key
     }
 
-    # Monitor the client process if specified
-    if state.client_pid && Process.alive?(state.client_pid) do
-      Process.monitor(state.client_pid)
-    end
+    # Establish monitor without alive?/monitor race.
+    state = maybe_monitor_client(state, state.client_pid)
 
     {:ok, state}
   end
@@ -261,27 +261,23 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_cast({:reconnect, new_client_pid}, state) do
-    # Only proceed if the new client is alive
-    if Process.alive?(new_client_pid) do
-      # Monitor the new client process
-      Process.monitor(new_client_pid)
+    # Update the bus subscription to point to the new client PID.
+    updated_subscription = %{
+      state.bus_subscription
+      | dispatch: {:pid, target: new_client_pid, delivery_mode: :async}
+    }
 
-      # Update the bus subscription to point to the new client PID
-      updated_subscription = %{
-        state.bus_subscription
-        | dispatch: {:pid, target: new_client_pid, delivery_mode: :async}
-      }
+    # Replace stale monitor ref before monitoring new client.
+    new_state =
+      state
+      |> Map.put(:client_pid, new_client_pid)
+      |> Map.put(:bus_subscription, updated_subscription)
+      |> maybe_monitor_client(new_client_pid)
 
-      # Update state with new client PID and subscription
-      new_state = %{state | client_pid: new_client_pid, bus_subscription: updated_subscription}
+    # Replay any signals that were missed while disconnected.
+    new_state = replay_missed_signals(new_state)
 
-      # Replay any signals that were missed while disconnected
-      new_state = replay_missed_signals(new_state)
-
-      {:noreply, new_state}
-    else
-      {:noreply, state}
-    end
+    {:noreply, new_state}
   end
 
   @impl GenServer
@@ -342,19 +338,24 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp replay_missed_signals(state) do
     Logger.debug("Replaying missed signals for subscription #{state.id}")
 
-    # Get the bus state to access the log
-    bus_state = :sys.get_state(state.bus_pid)
-
-    missed_signals =
-      Enum.filter(bus_state.log, fn {signal_log_id, signal} ->
-        signal_after_checkpoint?(signal_log_id, signal, state.checkpoint)
-      end)
+    missed_signals = fetch_signals_since_checkpoint(state)
 
     Enum.each(missed_signals, fn {signal_log_id, signal} ->
       replay_single_signal(signal_log_id, signal, state)
     end)
 
     state
+  end
+
+  defp fetch_signals_since_checkpoint(state) do
+    try do
+      case GenServer.call(state.bus_pid, {:signals_since, state.checkpoint}) do
+        {:ok, signals} when is_list(signals) -> signals
+        _ -> []
+      end
+    catch
+      :exit, _reason -> []
+    end
   end
 
   defp signal_after_checkpoint?(signal_log_id, signal, checkpoint) do
@@ -404,12 +405,31 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def terminate(_reason, state) do
-    # Use state.id as the subscription_id since that's what we're using to identify the subscription
-    if state.bus_pid do
-      # Best effort to unsubscribe
-      Bus.unsubscribe(state.bus_pid, state.id)
-    end
+    maybe_cancel_retry_timer(state.retry_timer_ref)
+    maybe_demonitor_client(state.client_monitor_ref)
 
+    :ok
+  end
+
+  defp maybe_monitor_client(state, client_pid) when is_pid(client_pid) do
+    maybe_demonitor_client(state.client_monitor_ref)
+    monitor_ref = Process.monitor(client_pid)
+    %{state | client_monitor_ref: monitor_ref}
+  end
+
+  defp maybe_monitor_client(state, _client_pid), do: state
+
+  defp maybe_demonitor_client(nil), do: :ok
+
+  defp maybe_demonitor_client(monitor_ref) do
+    Process.demonitor(monitor_ref, [:flush])
+    :ok
+  end
+
+  defp maybe_cancel_retry_timer(nil), do: :ok
+
+  defp maybe_cancel_retry_timer(timer_ref) do
+    Process.cancel_timer(timer_ref)
     :ok
   end
 
