@@ -53,6 +53,23 @@ defmodule Jido.Signal.DispatchTest do
     end
   end
 
+  defmodule SlowBatchAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    def validate_opts(opts) do
+      if Keyword.has_key?(opts, :delay_ms) do
+        {:ok, opts}
+      else
+        {:error, :invalid_config}
+      end
+    end
+
+    def deliver(_signal, opts) do
+      Process.sleep(opts[:delay_ms])
+      :ok
+    end
+  end
+
   describe "pid adapter" do
     setup do
       signal = %Jido.Signal{
@@ -571,6 +588,26 @@ defmodule Jido.Signal.DispatchTest do
         end
 
       assert Enum.sort(signals) == Enum.to_list(1..50)
+    end
+
+    test "reports task exit errors with the correct original config index", %{signal: signal} do
+      configs = [
+        {SlowBatchAdapter, [delay_ms: 200]},
+        {TestBatchAdapter, [target: self(), index: 2, delay: 1]}
+      ]
+
+      assert {:error, errors} =
+               Dispatch.dispatch_batch(signal, configs, max_concurrency: 2, timeout: 50)
+
+      assert Enum.any?(errors, fn
+               {0, {:task_exit, _reason}} -> true
+               _ -> false
+             end)
+
+      refute Enum.any?(errors, fn
+               {1, {:task_exit, _reason}} -> true
+               _ -> false
+             end)
     end
   end
 end
