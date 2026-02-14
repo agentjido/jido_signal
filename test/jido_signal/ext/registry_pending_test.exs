@@ -15,13 +15,20 @@ defmodule Jido.Signal.Ext.RegistryPendingTest do
 
   defmodule PendingExtensionRuntime do
     def namespace, do: "pending.runtime"
+
+    # Behaves like a no-op extension so registry residue from this test
+    # does not affect unrelated serialization tests.
+    def validate_data(data), do: {:ok, data}
+    def to_attrs(_data), do: %{}
+    def from_attrs(_attrs), do: nil
   end
 
   setup do
+    baseline_extensions = Registry.all()
     :persistent_term.erase(@pending_key)
 
     on_exit(fn ->
-      :persistent_term.erase(@pending_key)
+      restore_registry_baseline(baseline_extensions)
     end)
 
     :ok
@@ -76,5 +83,13 @@ defmodule Jido.Signal.Ext.RegistryPendingTest do
 
   defp assert_eventually(_fun, 0) do
     flunk("condition did not become true in time")
+  end
+
+  defp restore_registry_baseline(baseline_extensions) do
+    Enum.each(baseline_extensions, fn {_namespace, module} ->
+      Registry.register(module)
+    end)
+
+    :persistent_term.erase(@pending_key)
   end
 end
