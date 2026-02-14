@@ -147,54 +147,24 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_call({:ack, signal_log_id}, _from, state) when is_binary(signal_log_id) do
-    # Remove the acknowledged signal from in-flight
-    new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
+    case acknowledge_signal_log_ids(state, [signal_log_id]) do
+      {:ok, new_state} ->
+        {:reply, :ok, new_state}
 
-    # Extract timestamp from UUID7 for checkpoint comparison
-    timestamp = ID.extract_timestamp(signal_log_id)
-
-    # Update checkpoint if this is a higher number
-    new_checkpoint = max(state.checkpoint, timestamp)
-
-    # Persist checkpoint if journal adapter is configured
-    persist_checkpoint(state, new_checkpoint)
-
-    # Update state
-    new_state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
-
-    # Process any pending signals
-    new_state = process_pending_signals(new_state)
-
-    {:reply, :ok, new_state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl GenServer
   def handle_call({:ack, signal_log_ids}, _from, state) when is_list(signal_log_ids) do
-    # Remove all acknowledged signals from in-flight
-    new_in_flight =
-      Enum.reduce(signal_log_ids, state.in_flight_signals, fn id, acc ->
-        Map.delete(acc, id)
-      end)
+    case acknowledge_signal_log_ids(state, signal_log_ids) do
+      {:ok, new_state} ->
+        {:reply, :ok, new_state}
 
-    # Extract timestamps from all UUIDs and find the highest
-    highest_timestamp =
-      signal_log_ids
-      |> Enum.map(&ID.extract_timestamp/1)
-      |> Enum.max()
-
-    # Update checkpoint if this is a higher number
-    new_checkpoint = max(state.checkpoint, highest_timestamp)
-
-    # Persist checkpoint if journal adapter is configured
-    persist_checkpoint(state, new_checkpoint)
-
-    # Update state
-    new_state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
-
-    # Process any pending signals
-    new_state = process_pending_signals(new_state)
-
-    {:reply, :ok, new_state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl GenServer
@@ -238,26 +208,14 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_cast({:ack, signal_log_id}, state) when is_binary(signal_log_id) do
-    # Remove the acknowledged signal from in-flight
-    new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
-
-    # Extract timestamp from UUID7 for checkpoint comparison
-    timestamp = ID.extract_timestamp(signal_log_id)
-
-    # Update checkpoint if this is a higher number
-    new_checkpoint = max(state.checkpoint, timestamp)
-
-    # Persist checkpoint if journal adapter is configured
-    persist_checkpoint(state, new_checkpoint)
-
-    # Update state
-    new_state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
-
-    # Process any pending signals
-    new_state = process_pending_signals(new_state)
-
-    {:noreply, new_state}
+    case acknowledge_signal_log_ids(state, [signal_log_id]) do
+      {:ok, new_state} -> {:noreply, new_state}
+      {:error, _reason} -> {:noreply, state}
+    end
   end
+
+  @impl GenServer
+  def handle_cast({:ack, _invalid_arg}, state), do: {:noreply, state}
 
   @impl GenServer
   def handle_cast({:reconnect, new_client_pid}, state) do
@@ -434,6 +392,89 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   # Private Helpers
+
+  @spec acknowledge_signal_log_ids(t(), list(String.t())) :: {:ok, t()} | {:error, term()}
+  defp acknowledge_signal_log_ids(state, signal_log_ids) do
+    with :ok <- validate_ack_signal_log_ids(signal_log_ids),
+         {:ok, resolved_signal_log_ids} <- resolve_ack_signal_log_ids(state, signal_log_ids),
+         {:ok, timestamps} <- collect_ack_timestamps(resolved_signal_log_ids) do
+      highest_timestamp = Enum.max(timestamps)
+      new_checkpoint = max(state.checkpoint, highest_timestamp)
+
+      persist_checkpoint(state, new_checkpoint)
+
+      new_in_flight =
+        Enum.reduce(resolved_signal_log_ids, state.in_flight_signals, fn id, acc ->
+          Map.delete(acc, id)
+        end)
+
+      new_state = %{state | in_flight_signals: new_in_flight, checkpoint: new_checkpoint}
+      {:ok, process_pending_signals(new_state)}
+    end
+  end
+
+  @spec validate_ack_signal_log_ids(list(term())) :: :ok | {:error, :invalid_ack_argument}
+  defp validate_ack_signal_log_ids([]), do: {:error, :invalid_ack_argument}
+
+  defp validate_ack_signal_log_ids(signal_log_ids) when is_list(signal_log_ids) do
+    if Enum.all?(signal_log_ids, &is_binary/1) do
+      :ok
+    else
+      {:error, :invalid_ack_argument}
+    end
+  end
+
+  @spec collect_ack_timestamps(list(String.t())) ::
+          {:ok, list(non_neg_integer())} | {:error, term()}
+  defp collect_ack_timestamps(signal_log_ids) do
+    Enum.reduce_while(signal_log_ids, {:ok, []}, fn signal_log_id, {:ok, acc} ->
+      case ack_timestamp(signal_log_id) do
+        {:ok, timestamp} -> {:cont, {:ok, [timestamp | acc]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  @spec resolve_ack_signal_log_ids(t(), list(String.t())) ::
+          {:ok, list(String.t())} | {:error, term()}
+  defp resolve_ack_signal_log_ids(state, signal_log_ids) do
+    Enum.reduce_while(signal_log_ids, {:ok, []}, fn ack_identifier, {:ok, acc} ->
+      case resolve_ack_signal_log_id(state, ack_identifier) do
+        {:ok, signal_log_id} -> {:cont, {:ok, [signal_log_id | acc]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  @spec resolve_ack_signal_log_id(t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  defp resolve_ack_signal_log_id(state, ack_identifier) do
+    cond do
+      Map.has_key?(state.in_flight_signals, ack_identifier) ->
+        {:ok, ack_identifier}
+
+      true ->
+        case Enum.find(state.in_flight_signals, fn {_signal_log_id, signal} ->
+               is_map(signal) and Map.get(signal, :id) == ack_identifier
+             end) do
+          {signal_log_id, _signal} ->
+            {:ok, signal_log_id}
+
+          nil ->
+            if ID.valid?(ack_identifier) do
+              {:error, {:unknown_signal_log_id, ack_identifier}}
+            else
+              {:error, {:invalid_signal_log_id, ack_identifier}}
+            end
+        end
+    end
+  end
+
+  @spec ack_timestamp(String.t()) :: {:ok, non_neg_integer()} | {:error, term()}
+  defp ack_timestamp(signal_log_id) do
+    {:ok, ID.extract_timestamp(signal_log_id)}
+  rescue
+    _error -> {:error, {:invalid_signal_log_id, signal_log_id}}
+  end
 
   # Persists checkpoint to journal if adapter is configured
   @spec persist_checkpoint(t(), non_neg_integer()) :: :ok

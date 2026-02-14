@@ -674,6 +674,7 @@ defmodule Jido.Signal.Bus do
               catch
                 :exit, {:noproc, _} -> {:error, :subscription_not_available}
                 :exit, {:timeout, _} -> {:error, :timeout}
+                :exit, reason -> {:error, {:subscription_ack_failed, reason}}
               end
 
             {:reply, result, state}

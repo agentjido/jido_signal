@@ -354,6 +354,53 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       assert {:error, :invalid_ack_argument} = Bus.ack(bus, subscription_id, :invalid)
     end
 
+    test "bus ack returns error for unknown signal log id", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      unknown_signal_log_id = ID.generate!()
+
+      assert {:error, {:unknown_signal_log_id, ^unknown_signal_log_id}} =
+               Bus.ack(bus, subscription_id, unknown_signal_log_id)
+    end
+
+    test "bus ack returns error for malformed signal log id and keeps processes alive", %{
+      bus: bus
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_state = :sys.get_state(bus_pid)
+      subscription = Map.fetch!(bus_state.subscriptions, subscription_id)
+
+      assert {:error, {:invalid_signal_log_id, "not-a-uuid"}} =
+               Bus.ack(bus, subscription_id, "not-a-uuid")
+
+      assert Process.alive?(bus_pid)
+      assert Process.alive?(subscription.persistence_pid)
+    end
+
     test "bus ack supports list of signal ids", %{bus: bus, journal_pid: journal_pid} do
       {:ok, subscription_id} =
         Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
@@ -389,6 +436,41 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
         |> Enum.max()
 
       assert checkpoint == expected_checkpoint
+    end
+
+    test "bus ack list returns error for mixed known and unknown ids", %{
+      bus: bus,
+      journal_pid: journal_pid
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      signals =
+        for i <- 1..2 do
+          {:ok, signal} =
+            Signal.new(%{
+              type: "test.signal.#{i}",
+              source: "/test",
+              data: %{value: i}
+            })
+
+          signal
+        end
+
+      {:ok, recorded_signals} = Bus.publish(bus, signals)
+
+      for _ <- 1..2 do
+        assert_receive {:signal, %Signal{}}
+      end
+
+      unknown_signal_log_id = ID.generate!()
+      [known_signal_log_id | _] = Enum.map(recorded_signals, & &1.id)
+
+      assert {:error, {:unknown_signal_log_id, ^unknown_signal_log_id}} =
+               Bus.ack(bus, subscription_id, [known_signal_log_id, unknown_signal_log_id])
+
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      assert {:error, :not_found} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
     end
   end
 
