@@ -335,8 +335,8 @@ defmodule Jido.Signal.Bus do
         Keyword.put(opts, :dispatch, {:pid, target: self(), delivery_mode: :async})
       end
 
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:subscribe, path, opts})
+    with {:ok, result} <- bus_call(bus, {:subscribe, path, opts}) do
+      result
     end
   end
 
@@ -362,8 +362,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec unsubscribe(server(), subscription_id(), Keyword.t()) :: :ok | {:error, term()}
   def unsubscribe(bus, subscription_id, opts \\ []) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:unsubscribe, subscription_id, opts})
+    with {:ok, result} <- bus_call(bus, {:unsubscribe, subscription_id, opts}) do
+      result
     end
   end
 
@@ -378,8 +378,8 @@ defmodule Jido.Signal.Bus do
   end
 
   def publish(bus, signals) when is_list(signals) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:publish, signals})
+    with {:ok, result} <- bus_call(bus, {:publish, signals}) do
+      result
     end
   end
 
@@ -390,8 +390,8 @@ defmodule Jido.Signal.Bus do
   @spec replay(server(), path(), non_neg_integer(), Keyword.t()) ::
           {:ok, [Jido.Signal.Bus.RecordedSignal.t()]} | {:error, term()}
   def replay(bus, path \\ "*", start_timestamp \\ 0, opts \\ []) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:replay, path, start_timestamp, opts})
+    with {:ok, result} <- bus_call(bus, {:replay, path, start_timestamp, opts}) do
+      result
     end
   end
 
@@ -400,8 +400,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_create(server(), path()) :: {:ok, Snapshot.SnapshotRef.t()} | {:error, term()}
   def snapshot_create(bus, path) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:snapshot_create, path})
+    with {:ok, result} <- bus_call(bus, {:snapshot_create, path}) do
+      result
     end
   end
 
@@ -410,8 +410,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_list(server()) :: [Snapshot.SnapshotRef.t()]
   def snapshot_list(bus) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, :snapshot_list)
+    with {:ok, result} <- bus_call(bus, :snapshot_list) do
+      result
     end
   end
 
@@ -420,8 +420,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_read(server(), String.t()) :: {:ok, Snapshot.SnapshotData.t()} | {:error, term()}
   def snapshot_read(bus, snapshot_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:snapshot_read, snapshot_id})
+    with {:ok, result} <- bus_call(bus, {:snapshot_read, snapshot_id}) do
+      result
     end
   end
 
@@ -430,8 +430,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec snapshot_delete(server(), String.t()) :: :ok | {:error, term()}
   def snapshot_delete(bus, snapshot_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:snapshot_delete, snapshot_id})
+    with {:ok, result} <- bus_call(bus, {:snapshot_delete, snapshot_id}) do
+      result
     end
   end
 
@@ -445,8 +445,8 @@ defmodule Jido.Signal.Bus do
   @spec ack(server(), subscription_id(), String.t() | [String.t()] | integer()) ::
           :ok | {:error, term()}
   def ack(bus, subscription_id, signal_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:ack, subscription_id, signal_id})
+    with {:ok, result} <- bus_call(bus, {:ack, subscription_id, signal_id}) do
+      result
     end
   end
 
@@ -456,8 +456,8 @@ defmodule Jido.Signal.Bus do
   @spec reconnect(server(), subscription_id(), pid()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def reconnect(bus, subscription_id, client_pid) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:reconnect, subscription_id, client_pid})
+    with {:ok, result} <- bus_call(bus, {:reconnect, subscription_id, client_pid}) do
+      result
     end
   end
 
@@ -474,8 +474,8 @@ defmodule Jido.Signal.Bus do
   """
   @spec dlq_entries(server(), subscription_id()) :: {:ok, [map()]} | {:error, term()}
   def dlq_entries(bus, subscription_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:dlq_entries, subscription_id})
+    with {:ok, result} <- bus_call(bus, {:dlq_entries, subscription_id}) do
+      result
     end
   end
 
@@ -493,8 +493,8 @@ defmodule Jido.Signal.Bus do
   @spec redrive_dlq(server(), subscription_id(), keyword()) ::
           {:ok, %{succeeded: integer(), failed: integer()}} | {:error, term()}
   def redrive_dlq(bus, subscription_id, opts \\ []) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:redrive_dlq, subscription_id, opts})
+    with {:ok, result} <- bus_call(bus, {:redrive_dlq, subscription_id, opts}) do
+      result
     end
   end
 
@@ -507,9 +507,32 @@ defmodule Jido.Signal.Bus do
   """
   @spec clear_dlq(server(), subscription_id()) :: :ok | {:error, term()}
   def clear_dlq(bus, subscription_id) do
-    with {:ok, pid} <- whereis(bus) do
-      GenServer.call(pid, {:clear_dlq, subscription_id})
+    with {:ok, result} <- bus_call(bus, {:clear_dlq, subscription_id}) do
+      result
     end
+  end
+
+  defp bus_call(bus, message) do
+    target = bus_call_target(bus)
+
+    try do
+      {:ok, GenServer.call(target, message)}
+    catch
+      :exit, {:noproc, _} -> {:error, :not_found}
+      :exit, :noproc -> {:error, :not_found}
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, :timeout -> {:error, :timeout}
+    end
+  end
+
+  defp bus_call_target(bus) when is_pid(bus), do: bus
+
+  defp bus_call_target({name, registry}) when is_atom(registry) do
+    Jido.Signal.Util.via_tuple({name, registry})
+  end
+
+  defp bus_call_target(bus_name) when is_atom(bus_name) or is_binary(bus_name) do
+    via_tuple(bus_name)
   end
 
   @impl GenServer

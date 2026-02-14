@@ -134,8 +134,15 @@ defmodule Jido.Signal.Instance do
     supervisor_name = Names.supervisor(instance_opts)
 
     case Process.whereis(supervisor_name) do
-      nil -> :ok
-      pid -> Supervisor.stop(pid, :normal, timeout)
+      nil ->
+        :ok
+
+      pid ->
+        try do
+          Supervisor.stop(pid, :normal, timeout)
+        catch
+          :exit, _reason -> :ok
+        end
     end
   end
 end
