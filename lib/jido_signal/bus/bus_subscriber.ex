@@ -179,7 +179,7 @@ defmodule Jido.Signal.Bus.Subscriber do
 
     case BusState.remove_subscription(state, subscription_id, opts) do
       {:ok, new_state} ->
-        maybe_shutdown_persistent_subscription(subscription)
+        maybe_shutdown_persistent_subscription(state, subscription)
         maybe_delete_persistence(state, subscription_id, subscription, opts)
 
         {:ok, new_state}
@@ -193,10 +193,13 @@ defmodule Jido.Signal.Bus.Subscriber do
     end
   end
 
-  defp maybe_shutdown_persistent_subscription(subscription) do
+  defp maybe_shutdown_persistent_subscription(state, subscription) do
     if subscription && subscription.persistent? && subscription.persistence_pid do
-      # Send shutdown message to terminate the process gracefully
-      Process.send(subscription.persistence_pid, {:shutdown, :normal}, [])
+      try do
+        DynamicSupervisor.terminate_child(state.child_supervisor, subscription.persistence_pid)
+      catch
+        :exit, _reason -> :ok
+      end
     end
   end
 
