@@ -105,6 +105,23 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
     end
   end
 
+  defmodule CrashingMiddleware do
+    use Jido.Signal.Bus.Middleware
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def before_publish(_signals, _context, _state) do
+      raise "middleware crash"
+    end
+
+    @impl true
+    def before_dispatch(_signal, _subscriber, _context, _state) do
+      raise "middleware crash"
+    end
+  end
+
   describe "init_middleware/1" do
     test "initializes empty middleware list" do
       assert {:ok, []} = MiddlewarePipeline.init_middleware([])
@@ -466,6 +483,18 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
       assert {:ok, ^signals, _configs} = result
     end
 
+    test "before_publish returns controlled error when middleware crashes" do
+      {:ok, configs} = MiddlewarePipeline.init_middleware([{CrashingMiddleware, []}])
+
+      signals = [%Signal{id: "test-1", type: "test.signal", source: "/test", data: %{}}]
+      context = %{bus_name: :test, timestamp: DateTime.utc_now(), metadata: %{}}
+
+      result = MiddlewarePipeline.before_publish(configs, signals, context, 100)
+
+      assert {:error, %Jido.Signal.Error.ExecutionFailureError{message: "Middleware crashed"}} =
+               result
+    end
+
     test "before_dispatch times out when middleware exceeds timeout" do
       {:ok, configs} = MiddlewarePipeline.init_middleware([{SlowMiddleware, sleep_ms: 200}])
 
@@ -484,6 +513,27 @@ defmodule JidoTest.Signal.Bus.MiddlewarePipeline do
       result = MiddlewarePipeline.before_dispatch(configs, signal, subscriber, context, 50)
 
       assert {:error, %Jido.Signal.Error.ExecutionFailureError{message: "Middleware timeout"}} =
+               result
+    end
+
+    test "before_dispatch returns controlled error when middleware crashes" do
+      {:ok, configs} = MiddlewarePipeline.init_middleware([{CrashingMiddleware, []}])
+
+      signal = %Signal{id: "test-1", type: "test.signal", source: "/test", data: %{}}
+
+      subscriber = %Subscriber{
+        id: "test-sub",
+        path: "test.signal",
+        dispatch: {:pid, target: self(), delivery_mode: :async},
+        persistent?: false,
+        persistence_pid: nil
+      }
+
+      context = %{bus_name: :test, timestamp: DateTime.utc_now(), metadata: %{}}
+
+      result = MiddlewarePipeline.before_dispatch(configs, signal, subscriber, context, 100)
+
+      assert {:error, %Jido.Signal.Error.ExecutionFailureError{message: "Middleware crashed"}} =
                result
     end
 

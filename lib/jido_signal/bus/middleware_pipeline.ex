@@ -263,21 +263,45 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
 
   @spec run_with_timeout((-> term()), pos_integer(), module(), context()) :: term()
   defp run_with_timeout(fun, timeout_ms, module, context) do
-    task = Task.async(fun)
+    task = Task.Supervisor.async_nolink(Jido.Signal.TaskSupervisor, fun)
 
-    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+    case Task.yield(task, timeout_ms) do
       {:ok, result} ->
         result
 
-      nil ->
-        Telemetry.execute(
-          [:jido, :signal, :middleware, :timeout],
-          %{timeout_ms: timeout_ms},
-          %{module: module, bus_name: context[:bus_name]}
-        )
-
+      {:exit, reason} ->
         {:error,
-         Error.execution_error("Middleware timeout", %{module: module, timeout_ms: timeout_ms})}
+         Error.execution_error("Middleware crashed", %{module: module, reason: inspect(reason)})}
+
+      nil ->
+        case receive_task_exit_reason(task.ref) do
+          {:exit, reason} ->
+            {:error,
+             Error.execution_error("Middleware crashed", %{
+               module: module,
+               reason: inspect(reason)
+             })}
+
+          :timeout ->
+            Task.shutdown(task, :brutal_kill)
+
+            Telemetry.execute(
+              [:jido, :signal, :middleware, :timeout],
+              %{timeout_ms: timeout_ms},
+              %{module: module, bus_name: context[:bus_name]}
+            )
+
+            {:error,
+             Error.execution_error("Middleware timeout", %{module: module, timeout_ms: timeout_ms})}
+        end
+    end
+  end
+
+  defp receive_task_exit_reason(task_ref) do
+    receive do
+      {:DOWN, ^task_ref, :process, _pid, reason} -> {:exit, reason}
+    after
+      0 -> :timeout
     end
   end
 
