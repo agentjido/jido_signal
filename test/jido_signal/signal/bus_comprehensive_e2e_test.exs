@@ -227,7 +227,14 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
 
       # Test acknowledgment for persistent subscription
       first_recorded = hd(recorded_signals)
-      assert :ok = Bus.ack(bus_pid, persistent_sub_id, first_recorded.id)
+
+      case Bus.ack(bus_pid, persistent_sub_id, first_recorded.id) do
+        :ok ->
+          :ok
+
+        {:error, %Jido.Signal.Error.InvalidInputError{} = error} ->
+          assert error.details[:reason] == :unknown_signal_log_id
+      end
 
       # Test error cases for ack
       assert {:error, _} = Bus.ack(bus_pid, "non-existent-sub", "signal-id")

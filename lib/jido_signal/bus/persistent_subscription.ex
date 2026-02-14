@@ -627,9 +627,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
         {:ok, state}
 
-      {:ok, :noop} ->
-        {:ok, process_pending_signals(state)}
-
       {:error, _} = error ->
         error
     end
@@ -638,7 +635,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp validate_ack_ids(state, ack_identifiers) when is_list(ack_identifiers) do
     Enum.reduce_while(ack_identifiers, {:ok, []}, fn ack_identifier, {:ok, resolved_entries} ->
       case resolve_ack_identifier(state, ack_identifier) do
-        {:ok, :noop} -> {:cont, {:ok, resolved_entries}}
         {:ok, {_, _} = resolved_entry} -> {:cont, {:ok, [resolved_entry | resolved_entries]}}
         {:error, _} = error -> {:halt, error}
       end
@@ -647,9 +643,6 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   defp resolve_ack_identifier(state, ack_identifier) do
     case resolve_ack_log_id(state, ack_identifier) do
-      {:ok, :noop} ->
-        {:ok, :noop}
-
       {:ok, signal_log_id} ->
         case checkpoint_value(signal_log_id) do
           {:ok, value} ->
@@ -719,11 +712,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp signal_id_matches?(%Jido.Signal{id: id}, signal_id), do: id == signal_id
   defp signal_id_matches?(_, _), do: false
 
-  defp resolve_unknown_ack(ack_identifier) when is_binary(ack_identifier), do: {:ok, :noop}
-
   defp resolve_unknown_ack(ack_identifier)
-       when is_integer(ack_identifier) and ack_identifier >= 0,
-       do: {:ok, :noop}
+       when is_binary(ack_identifier) or
+              (is_integer(ack_identifier) and ack_identifier >= 0),
+       do: invalid_ack_error(ack_identifier, :unknown_signal_log_id)
 
   defp resolve_unknown_ack(ack_identifier),
     do: invalid_ack_error(ack_identifier, :invalid_signal_log_id)

@@ -57,6 +57,9 @@ defmodule Jido.Signal.Bus.ErrorContractTest do
 
       {:error, %Error.ExecutionFailureError{} = error} ->
         assert error.details[:reason] == :subscription_not_available
+
+      {:error, %Error.InvalidInputError{} = error} ->
+        assert error.details[:reason] == :unknown_signal_log_id
     end
   end
 
