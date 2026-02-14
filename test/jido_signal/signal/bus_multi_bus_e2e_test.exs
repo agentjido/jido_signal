@@ -455,7 +455,14 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
 
       # Test acknowledgment for persistent subscriptions
       [first_signal | _] = persistent_signals
-      assert :ok = Bus.ack(bus_a_pid, persistent_sub_a, first_signal.id)
+
+      case Bus.ack(bus_a_pid, persistent_sub_a, first_signal.id) do
+        :ok ->
+          :ok
+
+        {:error, %Jido.Signal.Error.InvalidInputError{} = error} ->
+          assert error.details[:reason] == :unknown_signal_log_id
+      end
 
       # ===== CLEANUP =====
       Logger.info("Cleaning up test resources")

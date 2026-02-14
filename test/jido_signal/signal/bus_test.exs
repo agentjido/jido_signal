@@ -49,13 +49,36 @@ defmodule JidoTest.Signal.Bus do
           data: %{value: 1}
         })
 
-      {:ok, _} = Bus.publish(bus, [signal])
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
 
       # Verify signal is received
       assert_receive {:signal, %Signal{type: "test.signal"}}
 
       # Acknowledge the signal
-      :ok = Bus.ack(bus, subscription_id, 1)
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+    end
+
+    test "returns error for unknown persistent ack identifier", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal",
+          persistent?: true,
+          dispatch: {:pid, target: self(), delivery_mode: :async}
+        )
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      assert {:error, %Error.InvalidInputError{} = error} =
+               Bus.ack(bus, subscription_id, "unknown-log-id")
+
+      assert error.details[:reason] == :unknown_signal_log_id
     end
 
     test "logs deprecation warning for legacy persistent option alias", %{bus: bus} do
@@ -119,6 +142,9 @@ defmodule JidoTest.Signal.Bus do
 
         {:error, %Error.ExecutionFailureError{} = error} ->
           assert error.details[:reason] == :subscription_not_available
+
+        {:error, %Error.InvalidInputError{} = error} ->
+          assert error.details[:reason] == :unknown_signal_log_id
       end
 
       assert Process.alive?(bus_pid)
