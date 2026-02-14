@@ -41,13 +41,15 @@ defmodule Jido.Signal.Bus.RecordedSignal do
 
   ## Returns
 
-  A JSON string representing the RecordedSignal(s)
+  `{:ok, json}` if serialization succeeds, `{:error, error}` otherwise.
+
+  Use `serialize!/1` when a raising binary-return helper is preferred.
 
   ## Examples
 
       iex> signal = %Jido.Signal{type: "example.event", source: "/example"}
       iex> recorded = %Jido.Signal.Bus.RecordedSignal{id: "rec123", type: "example.event", created_at: DateTime.utc_now(), signal: signal}
-      iex> json = Jido.Signal.Bus.RecordedSignal.serialize(recorded)
+      iex> {:ok, json} = Jido.Signal.Bus.RecordedSignal.serialize(recorded)
       iex> is_binary(json)
       true
 
@@ -57,7 +59,7 @@ defmodule Jido.Signal.Bus.RecordedSignal do
       ...>   %Jido.Signal.Bus.RecordedSignal{id: "rec1", type: "event1", created_at: DateTime.utc_now(), signal: signal},
       ...>   %Jido.Signal.Bus.RecordedSignal{id: "rec2", type: "event2", created_at: DateTime.utc_now(), signal: signal}
       ...> ]
-      iex> json = Jido.Signal.Bus.RecordedSignal.serialize(records)
+      iex> {:ok, json} = Jido.Signal.Bus.RecordedSignal.serialize(records)
       iex> is_binary(json)
       true
   """
