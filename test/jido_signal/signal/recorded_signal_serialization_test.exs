@@ -60,6 +60,36 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
       assert Enum.at(decoded, 0)["signal"]["type"] == "first.event"
       assert Enum.at(decoded, 1)["signal"]["type"] == "second.event"
     end
+
+    test "serialize!/1 returns binary output" do
+      signal = %Signal{
+        type: "test.event",
+        source: "/test/source",
+        id: "test-id-serialize-bang"
+      }
+
+      recorded = %RecordedSignal{
+        id: "record-serialize-bang",
+        type: "test.event",
+        created_at: DateTime.from_naive!(~N[2023-01-01 12:00:00], "Etc/UTC"),
+        signal: signal
+      }
+
+      json = RecordedSignal.serialize!(recorded)
+      assert is_binary(json)
+    end
+
+    test "returns error tuple for non-encodable values" do
+      recorded = %RecordedSignal{
+        id: "record-bad",
+        type: "test.event",
+        created_at: DateTime.from_naive!(~N[2023-01-01 12:00:00], "Etc/UTC"),
+        signal: self()
+      }
+
+      assert {:error, %Jido.Signal.Error.ExecutionFailureError{}} =
+               RecordedSignal.serialize(recorded)
+    end
   end
 
   describe "RecordedSignal.deserialize/1" do
