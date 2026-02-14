@@ -472,6 +472,46 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       checkpoint_key = "#{bus}:#{subscription_id}"
       assert {:error, :not_found} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
     end
+
+    test "signal_batch returns queue_full explicitly when capacity is exceeded", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**",
+          persistent?: true,
+          max_in_flight: 1,
+          max_pending: 1,
+          dispatch: {:pid, target: self()}
+        )
+
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_state = :sys.get_state(bus_pid)
+      subscription = Map.fetch!(bus_state.subscriptions, subscription_id)
+
+      {:ok, signal1} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+      {:ok, signal2} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 2}})
+      {:ok, signal3} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 3}})
+
+      signal_log_id1 = ID.generate!()
+      signal_log_id2 = ID.generate!()
+      signal_log_id3 = ID.generate!()
+
+      assert {:error, :queue_full} =
+               GenServer.call(subscription.persistence_pid, {
+                 :signal_batch,
+                 [
+                   {signal_log_id1, signal1},
+                   {signal_log_id2, signal2},
+                   {signal_log_id3, signal3}
+                 ]
+               })
+
+      assert_receive {:signal, %Signal{type: "test.signal"}}, 300
+
+      persistent_state = :sys.get_state(subscription.persistence_pid)
+      assert Map.has_key?(persistent_state.in_flight_signals, signal_log_id1)
+      assert Map.has_key?(persistent_state.pending_signals, signal_log_id2)
+      refute Map.has_key?(persistent_state.in_flight_signals, signal_log_id3)
+      refute Map.has_key?(persistent_state.pending_signals, signal_log_id3)
+    end
   end
 
   describe "backward compatibility without journal adapter" do

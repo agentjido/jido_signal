@@ -452,6 +452,52 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
       assert {:error, error} = result
       assert error.message == "Subscription saturated"
     end
+
+    test "persistent fanout uses batched signal calls per subscription", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal",
+          persistent?: true,
+          max_in_flight: 1,
+          max_pending: 100
+        )
+
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_state = :sys.get_state(bus_pid)
+      subscription = Map.fetch!(bus_state.subscriptions, subscription_id)
+      persistence_pid = subscription.persistence_pid
+
+      :erlang.trace(persistence_pid, true, [:receive])
+
+      on_exit(fn ->
+        if is_pid(persistence_pid) and Process.alive?(persistence_pid) do
+          :erlang.trace(persistence_pid, false, [:receive])
+        end
+      end)
+
+      signals =
+        for i <- 1..5 do
+          {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: i}})
+          signal
+        end
+
+      {:ok, _} = Bus.publish(bus, signals)
+      traced_messages = collect_trace_receives(persistence_pid, [])
+
+      batch_calls =
+        Enum.filter(traced_messages, fn
+          {:"$gen_call", _from, {:signal_batch, _signal_entries}} -> true
+          _ -> false
+        end)
+
+      per_signal_calls =
+        Enum.filter(traced_messages, fn
+          {:"$gen_call", _from, {:signal, _signal_entry}} -> true
+          _ -> false
+        end)
+
+      assert length(batch_calls) == 1
+      assert per_signal_calls == []
+    end
   end
 
   describe "telemetry events include partition_id" do
@@ -532,6 +578,15 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
       {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
       assert {:ok, _} = Bus.publish(bus, [signal])
       assert_receive {:signal, %Signal{type: "test.signal"}}
+    end
+  end
+
+  defp collect_trace_receives(pid, acc) do
+    receive do
+      {:trace, ^pid, :receive, msg} ->
+        collect_trace_receives(pid, [msg | acc])
+    after
+      100 -> Enum.reverse(acc)
     end
   end
 end

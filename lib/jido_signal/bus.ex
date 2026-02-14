@@ -903,15 +903,38 @@ defmodule Jido.Signal.Bus do
   end
 
   defp dispatch_to_persistent_subscriptions(state, signals, signal_log_id_map) do
-    Enum.flat_map(signals, &dispatch_signal_to_persistent(state, &1, signal_log_id_map))
+    state.subscriptions
+    |> Enum.filter(fn {_id, sub} -> sub.persistent? && is_pid(sub.persistence_pid) end)
+    |> Enum.map(fn {subscription_id, subscription} ->
+      entries = persistent_signal_entries(signals, subscription, signal_log_id_map)
+
+      result =
+        case entries do
+          [] -> :ok
+          _ -> dispatch_batch_to_persistent(subscription, entries)
+        end
+
+      {subscription_id, result}
+    end)
   end
 
-  defp dispatch_signal_to_persistent(state, signal, signal_log_id_map) do
-    state.subscriptions
-    |> Enum.filter(fn {_id, sub} -> sub.persistent? && Router.matches?(signal.type, sub.path) end)
-    |> Enum.map(fn {subscription_id, subscription} ->
-      {subscription_id, dispatch_to_subscription(signal, subscription, signal_log_id_map)}
-    end)
+  defp persistent_signal_entries(signals, subscription, signal_log_id_map) do
+    signals
+    |> Enum.filter(&Router.matches?(&1.type, subscription.path))
+    |> Enum.map(fn signal -> {Map.get(signal_log_id_map, signal.id), signal} end)
+    |> Enum.reject(fn {signal_log_id, _signal} -> is_nil(signal_log_id) end)
+  end
+
+  defp dispatch_batch_to_persistent(subscription, signal_entries) do
+    try do
+      GenServer.call(subscription.persistence_pid, {:signal_batch, signal_entries})
+    catch
+      :exit, {:noproc, _} ->
+        {:error, :subscription_not_available}
+
+      :exit, {:timeout, _} ->
+        {:error, :timeout}
+    end
   end
 
   defp find_saturated_subscriptions(results) do
@@ -941,18 +964,25 @@ defmodule Jido.Signal.Bus do
   defp publish_without_partitions(new_state, signals, uuid_signal_pairs, context, timeout_ms) do
     signal_log_id_map = Map.new(uuid_signal_pairs, fn {uuid, signal} -> {signal.id, uuid} end)
 
+    persistent_results =
+      dispatch_to_persistent_subscriptions(new_state, signals, signal_log_id_map)
+
+    non_persistent_subscriptions =
+      Enum.reject(new_state.subscriptions, fn {_id, subscription} -> subscription.persistent? end)
+
     dispatch_ctx = %{
       state: new_state,
       context: context,
       timeout_ms: timeout_ms,
-      signal_log_id_map: signal_log_id_map,
       task_supervisor: Names.task_supervisor(jido: new_state.jido)
     }
 
-    {final_middleware, dispatch_results} =
+    {final_middleware, non_persistent_results} =
       Enum.reduce(signals, {new_state.middleware, []}, fn signal, acc ->
-        dispatch_signal_to_subscriptions(signal, new_state.subscriptions, acc, dispatch_ctx)
+        dispatch_signal_to_subscriptions(signal, non_persistent_subscriptions, acc, dispatch_ctx)
       end)
+
+    dispatch_results = persistent_results ++ non_persistent_results
 
     case find_saturated_subscriptions(dispatch_results) do
       [] ->
@@ -1030,7 +1060,6 @@ defmodule Jido.Signal.Bus do
       dispatch_to_subscription(
         processed_signal,
         subscription,
-        dispatch_ctx.signal_log_id_map,
         dispatch_ctx.task_supervisor
       )
 
@@ -1163,31 +1192,14 @@ defmodule Jido.Signal.Bus do
   end
 
   # Dispatch signal to a subscription
-  # For persistent subscriptions, use synchronous call to get backpressure feedback
-  # For regular subscriptions, use normal async dispatch
+  # For regular subscriptions, use async dispatch.
+  # Persistent subscriptions are faned out via `dispatch_batch_to_persistent/2`.
   defp dispatch_to_subscription(
          signal,
          subscription,
-         signal_log_id_map,
-         task_supervisor \\ Jido.Signal.TaskSupervisor
+         task_supervisor
        ) do
-    if subscription.persistent? && subscription.persistence_pid do
-      # For persistent subscriptions, call synchronously to get backpressure feedback
-      signal_log_id = Map.get(signal_log_id_map, signal.id)
-
-      try do
-        GenServer.call(subscription.persistence_pid, {:signal, {signal_log_id, signal}})
-      catch
-        :exit, {:noproc, _} ->
-          {:error, :subscription_not_available}
-
-        :exit, {:timeout, _} ->
-          {:error, :timeout}
-      end
-    else
-      # For regular subscriptions, use async dispatch
-      Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: task_supervisor)
-    end
+    Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: task_supervisor)
   end
 
   defp validate_signals(signals) do
