@@ -68,21 +68,14 @@ defmodule Jido.Signal.Bus.SnapshotStore do
     reply =
       case :ets.lookup(state.table, key) do
         [{^key, snapshot_data}] -> {:ok, snapshot_data}
-        [] -> lookup_by_snapshot_id(state.table, key)
+        [] -> :error
       end
 
     {:reply, reply, state}
   end
 
   def handle_call({:delete, key}, _from, state) do
-    case :ets.lookup(state.table, key) do
-      [{^key, _snapshot_data}] ->
-        :ets.delete(state.table, key)
-
-      [] ->
-        delete_by_snapshot_id(state.table, key)
-    end
-
+    :ets.delete(state.table, key)
     {:reply, :ok, state}
   end
 
@@ -108,21 +101,4 @@ defmodule Jido.Signal.Bus.SnapshotStore do
     do: Names.snapshot_store(Context.jido_opts(%{jido: jido}))
 
   defp snapshot_key(jido, bus_name, snapshot_id), do: {jido, bus_name, snapshot_id}
-
-  defp lookup_by_snapshot_id(table, {jido, _bus_name, snapshot_id}) do
-    case :ets.match_object(table, {{jido, :_, snapshot_id}, :_}) do
-      [{{^jido, _found_bus_name, ^snapshot_id}, snapshot_data}] -> {:ok, snapshot_data}
-      _ -> :error
-    end
-  end
-
-  defp delete_by_snapshot_id(table, {jido, _bus_name, snapshot_id}) do
-    case :ets.match_object(table, {{jido, :_, snapshot_id}, :_}) do
-      [{{^jido, found_bus_name, ^snapshot_id}, _snapshot_data}] ->
-        :ets.delete(table, {jido, found_bus_name, snapshot_id})
-
-      _ ->
-        :ok
-    end
-  end
 end

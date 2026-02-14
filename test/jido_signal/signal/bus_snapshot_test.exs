@@ -280,13 +280,13 @@ defmodule Jido.Signal.Bus.SnapshotTest do
   end
 
   describe "snapshot data persistence" do
-    test "snapshot data persists across state changes", %{state: state} do
+    test "snapshot data persists across state changes within the same bus scope", %{state: state} do
       # Create a snapshot
       {:ok, snapshot_ref, _state} = Snapshot.create(state, "test.signal.1")
 
       # Create a completely new state with the same snapshot reference
       new_state = %BusState{
-        name: :test_bus_2,
+        name: :test_bus,
         router: Router.new!(),
         log: %{},
         snapshots: %{snapshot_ref.id => snapshot_ref}
@@ -300,6 +300,19 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       assert snapshot_data.path == "test.signal.1"
       assert map_size(snapshot_data.signals) == 1
       assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.1"
+    end
+
+    test "snapshot data is isolated across bus scopes", %{state: state} do
+      {:ok, snapshot_ref, _state} = Snapshot.create(state, "test.signal.1")
+
+      other_bus_state = %BusState{
+        name: :test_bus_2,
+        router: Router.new!(),
+        log: %{},
+        snapshots: %{snapshot_ref.id => snapshot_ref}
+      }
+
+      assert {:error, :not_found} = Snapshot.read(other_bus_state, snapshot_ref.id)
     end
 
     test "snapshot data is immutable", %{state: state} do
