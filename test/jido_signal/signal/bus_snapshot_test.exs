@@ -2,6 +2,7 @@ defmodule Jido.Signal.Bus.SnapshotTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
+  alias Jido.Signal.Bus
   alias Jido.Signal.Bus.Snapshot
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Router
@@ -387,6 +388,20 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       assert length(snapshot_refs) == 1
       assert hd(snapshot_refs).id == snapshot_ref2.id
       refute Map.has_key?(new_state.snapshots, snapshot_ref1.id)
+    end
+  end
+
+  describe "bus termination cleanup" do
+    test "bus terminate removes snapshot payloads from persistent_term" do
+      bus_name = :"test_bus_snapshot_cleanup_#{:erlang.unique_integer([:positive])}"
+
+      {:ok, bus_pid} = Bus.start_link(name: bus_name)
+      {:ok, snapshot_ref} = Bus.snapshot_create(bus_name, "**")
+      assert :persistent_term.get({Snapshot, snapshot_ref.id}, :missing) != :missing
+
+      GenServer.stop(bus_pid)
+
+      assert :persistent_term.get({Snapshot, snapshot_ref.id}, :missing) == :missing
     end
   end
 end

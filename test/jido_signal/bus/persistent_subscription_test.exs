@@ -221,6 +221,56 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
       assert is_list(Task.await(snapshot_task, 1_000))
     end
 
+    test "reconnect replaces persistent client monitor reference", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      bus_state = Bus.whereis(bus) |> elem(1) |> :sys.get_state()
+      subscription = Map.get(bus_state.subscriptions, subscription_id)
+      persistent_pid = subscription.persistence_pid
+      initial_state = :sys.get_state(persistent_pid)
+      initial_monitor_ref = initial_state.client_monitor_ref
+
+      assert is_reference(initial_monitor_ref)
+      initial_monitors = Process.info(persistent_pid, :monitors) |> elem(1)
+      assert {:process, self()} in initial_monitors
+
+      new_client =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      assert {:ok, _checkpoint} = Bus.reconnect(bus, subscription_id, new_client)
+      Process.sleep(25)
+
+      reconnected_state = :sys.get_state(persistent_pid)
+      assert reconnected_state.client_pid == new_client
+      assert reconnected_state.client_monitor_ref != initial_monitor_ref
+
+      monitors = Process.info(persistent_pid, :monitors) |> elem(1)
+      assert {:process, new_client} in monitors
+      refute {:process, self()} in monitors
+
+      Process.exit(new_client, :kill)
+    end
+
+    test "unsubscribe terminates persistent subscription process", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      bus_state = Bus.whereis(bus) |> elem(1) |> :sys.get_state()
+      subscription = Map.get(bus_state.subscriptions, subscription_id)
+      persistent_pid = subscription.persistence_pid
+      assert Process.alive?(persistent_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id)
+
+      Process.sleep(25)
+      refute Process.alive?(persistent_pid)
+    end
+
     test "unsubscribe keeps checkpoint and dlq when delete_persistence is false", %{
       bus: bus,
       journal_pid: journal_pid
