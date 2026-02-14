@@ -172,7 +172,7 @@ defmodule Jido.Signal.Bus do
     max_log_size = Keyword.get(opts, :max_log_size, 100_000)
     log_ttl_ms = Keyword.get(opts, :log_ttl_ms)
 
-    partition_pids =
+    {partition_pids, partition_supervisor} =
       init_partitions(
         name,
         opts,
@@ -195,6 +195,7 @@ defmodule Jido.Signal.Bus do
       journal_adapter: journal_adapter,
       journal_pid: journal_pid,
       partition_count: partition_count,
+      partition_supervisor: partition_supervisor,
       partition_pids: partition_pids,
       max_log_size: max_log_size,
       log_ttl_ms: log_ttl_ms
@@ -205,7 +206,7 @@ defmodule Jido.Signal.Bus do
 
   defp init_partitions(_name, _opts, partition_count, _middleware, _timeout, _adapter, _pid)
        when partition_count <= 1 do
-    []
+    {[], nil}
   end
 
   defp init_partitions(
@@ -230,11 +231,14 @@ defmodule Jido.Signal.Bus do
       burst_size: Keyword.get(opts, :partition_burst_size, 1_000)
     ]
 
-    {:ok, _sup_pid} = PartitionSupervisor.start_link(partition_opts)
+    {:ok, sup_pid} = PartitionSupervisor.start_link(partition_opts)
 
-    0..(partition_count - 1)
-    |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1, partition_opts)))
-    |> Enum.reject(&is_nil/1)
+    partition_pids =
+      0..(partition_count - 1)
+      |> Enum.map(&GenServer.whereis(Partition.via_tuple(name, &1, partition_opts)))
+      |> Enum.reject(&is_nil/1)
+
+    {partition_pids, sup_pid}
   end
 
   defp schedule_gc_if_needed(nil), do: :ok
@@ -1133,6 +1137,19 @@ defmodule Jido.Signal.Bus do
     {:noreply, state}
   end
 
+  def handle_info({:EXIT, pid, reason}, state) do
+    if linked_runtime_process?(pid, state) and reason != :normal do
+      Logger.error(
+        "Linked runtime process exited, stopping bus to avoid stale state: " <>
+          "pid=#{inspect(pid)} reason=#{inspect(reason)}"
+      )
+
+      {:stop, {:linked_runtime_exit, pid, reason}, state}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info(:gc_log, %{log_ttl_ms: nil} = state), do: {:noreply, state}
 
   def handle_info(:gc_log, state) do
@@ -1176,5 +1193,9 @@ defmodule Jido.Signal.Bus do
         %{bus_name: state.name, new_size: map_size(new_log), ttl_ms: state.log_ttl_ms}
       )
     end
+  end
+
+  defp linked_runtime_process?(pid, state) do
+    pid == state.child_supervisor or pid == state.partition_supervisor
   end
 end
