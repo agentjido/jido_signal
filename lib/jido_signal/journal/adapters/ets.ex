@@ -25,12 +25,12 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   @schema Zoi.struct(
             __MODULE__,
             %{
-              signals_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
-              causes_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
-              effects_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
-              conversations_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
-              checkpoints_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
-              dlq_table: Zoi.atom() |> Zoi.nullable() |> Zoi.optional()
+              signals_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              causes_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              effects_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              conversations_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              checkpoints_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              dlq_table: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
             }
           )
 
@@ -47,9 +47,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   Starts the ETS adapter with the given table name prefix.
   """
   def start_link(prefix) when is_binary(prefix) do
-    # Generate a unique name for this instance's GenServer
-    name = String.to_atom("#{prefix}process_#{System.unique_integer([:positive, :monotonic])}")
-    GenServer.start_link(__MODULE__, prefix, name: name)
+    GenServer.start_link(__MODULE__, prefix)
   end
 
   @impl Jido.Signal.Journal.Persistence
@@ -185,40 +183,15 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   """
   @spec init(String.t()) :: {:ok, t()} | {:error, term()}
   @impl GenServer
-  def init(prefix) do
+  def init(_prefix) do
     adapter = %__MODULE__{
-      signals_table:
-        String.to_atom("#{prefix}signals_#{System.unique_integer([:positive, :monotonic])}"),
-      causes_table:
-        String.to_atom("#{prefix}causes_#{System.unique_integer([:positive, :monotonic])}"),
-      effects_table:
-        String.to_atom("#{prefix}effects_#{System.unique_integer([:positive, :monotonic])}"),
-      conversations_table:
-        String.to_atom("#{prefix}conversations_#{System.unique_integer([:positive, :monotonic])}"),
-      checkpoints_table:
-        String.to_atom("#{prefix}checkpoints_#{System.unique_integer([:positive, :monotonic])}"),
-      dlq_table: String.to_atom("#{prefix}dlq_#{System.unique_integer([:positive, :monotonic])}")
+      signals_table: :ets.new(:signals, [:set, :public]),
+      causes_table: :ets.new(:causes, [:set, :public]),
+      effects_table: :ets.new(:effects, [:set, :public]),
+      conversations_table: :ets.new(:conversations, [:set, :public]),
+      checkpoints_table: :ets.new(:checkpoints, [:set, :public]),
+      dlq_table: :ets.new(:dlq, [:set, :public])
     }
-
-    # Create tables if they don't exist
-    tables = [
-      {:signals, adapter.signals_table, [:set, :public, :named_table]},
-      {:causes, adapter.causes_table, [:set, :public, :named_table]},
-      {:effects, adapter.effects_table, [:set, :public, :named_table]},
-      {:conversations, adapter.conversations_table, [:set, :public, :named_table]},
-      {:checkpoints, adapter.checkpoints_table, [:set, :public, :named_table]},
-      {:dlq, adapter.dlq_table, [:set, :public, :named_table]}
-    ]
-
-    Enum.each(tables, fn {_name, table, opts} ->
-      case :ets.whereis(table) do
-        :undefined ->
-          :ets.new(table, opts)
-
-        _ref ->
-          :ok
-      end
-    end)
 
     {:ok, adapter}
   end
@@ -405,9 +378,9 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   @impl GenServer
   def handle_call({:get_dlq_entries, subscription_id}, _from, adapter) do
     entries =
-      :ets.tab2list(adapter.dlq_table)
-      |> Enum.map(fn {_id, entry} -> entry end)
-      |> Enum.filter(fn entry -> entry.subscription_id == subscription_id end)
+      :ets.select(adapter.dlq_table, [
+        {{:_, :"$1"}, [{:==, {:map_get, :subscription_id, :"$1"}, subscription_id}], [:"$1"]}
+      ])
       |> Enum.sort_by(fn entry -> entry.inserted_at end, DateTime)
 
     Telemetry.execute(
@@ -427,14 +400,9 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
 
   @impl GenServer
   def handle_call({:clear_dlq, subscription_id}, _from, adapter) do
-    entries_to_delete =
-      :ets.tab2list(adapter.dlq_table)
-      |> Enum.filter(fn {_id, entry} -> entry.subscription_id == subscription_id end)
-      |> Enum.map(fn {id, _entry} -> id end)
-
-    Enum.each(entries_to_delete, fn id ->
-      :ets.delete(adapter.dlq_table, id)
-    end)
+    :ets.select_delete(adapter.dlq_table, [
+      {{:_, :"$1"}, [{:==, {:map_get, :subscription_id, :"$1"}, subscription_id}], [true]}
+    ])
 
     {:reply, :ok, adapter}
   end
@@ -459,9 +427,12 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
       adapter.dlq_table
     ]
     |> Enum.each(fn table ->
-      case :ets.whereis(table) do
-        :undefined -> :ok
-        _ref -> :ets.delete(table)
+      case :ets.info(table) do
+        :undefined ->
+          :ok
+
+        _info ->
+          :ets.delete(table)
       end
     end)
 
