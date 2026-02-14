@@ -84,6 +84,15 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 
 ## Installation
 
+### Igniter Installation
+If your project has [Igniter](https://hexdocs.pm/igniter/readme.html) available,
+you can install Jido Signal using the command 
+
+```bash
+mix igniter.install jido_signal
+```
+
+### Manual Installation
 Add `jido_signal` to your list of dependencies in `mix.exs`:
 
 ```elixir

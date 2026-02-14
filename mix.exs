@@ -38,7 +38,8 @@ defmodule Jido.Signal.MixProject do
       # Dialyzer
       dialyzer: [
         plt_local_path: "priv/plts/project.plt",
-        plt_core_path: "priv/plts/core.plt"
+        plt_core_path: "priv/plts/core.plt",
+        ignore_warnings: "dialyzer.ignore-warnings"
       ]
     ]
   end
@@ -216,7 +217,8 @@ defmodule Jido.Signal.MixProject do
       {:expublish, "~> 2.7", only: [:dev], runtime: false},
       {:mix_test_watch, "~> 1.4.0", only: :dev, runtime: false},
       {:mimic, "~> 2.0", only: :test},
-      {:stream_data, "~> 1.0", only: [:dev, :test]}
+      {:stream_data, "~> 1.0", only: [:dev, :test]},
+      {:igniter, "~> 0.7", optional: true}
     ]
   end
 
