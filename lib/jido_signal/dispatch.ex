@@ -450,7 +450,8 @@ defmodule Jido.Signal.Dispatch do
           end
         end,
         max_concurrency: max_concurrency,
-        ordered: false,
+        # Keep stream ordering aligned with input ordering so indexed errors remain accurate.
+        ordered: true,
         timeout: timeout,
         on_timeout: :kill_task
       )
