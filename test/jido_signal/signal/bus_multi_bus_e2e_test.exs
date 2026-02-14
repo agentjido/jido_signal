@@ -430,8 +430,8 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
           data: %{service: "database", version: "2.0.0"}
         })
 
-      {:ok, _} = Bus.publish(bus_a_pid, [login_signal])
-      {:ok, _} = Bus.publish(bus_b_pid, [startup_signal])
+      {:ok, [recorded_login]} = Bus.publish(bus_a_pid, [login_signal])
+      {:ok, [_recorded_startup]} = Bus.publish(bus_b_pid, [startup_signal])
 
       Process.sleep(200)
 
@@ -441,9 +441,8 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
       assert length(persistent_signals) == 2,
              "Persistent client should receive signals from both buses"
 
-      # Test acknowledgment for persistent subscriptions
-      [first_signal | _] = persistent_signals
-      assert :ok = Bus.ack(bus_a_pid, persistent_sub_a, first_signal.id)
+      # Test acknowledgment for persistent subscriptions using recorded log IDs
+      assert :ok = Bus.ack(bus_a_pid, persistent_sub_a, recorded_login.id)
 
       # ===== CLEANUP =====
       Logger.info("Cleaning up test resources")

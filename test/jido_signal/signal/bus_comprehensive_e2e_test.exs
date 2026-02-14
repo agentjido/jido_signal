@@ -221,8 +221,11 @@ defmodule Jido.Signal.BusComprehensiveE2ETest do
       Logger.info("Testing acknowledgment for persistent subscriptions")
 
       # Test acknowledgment for persistent subscription
-      first_recorded = hd(recorded_signals)
-      assert :ok = Bus.ack(bus_pid, persistent_sub_id, first_recorded.id)
+      persistent_recorded =
+        Enum.find(recorded_signals, fn recorded -> recorded.type == "test.persistent" end)
+
+      assert persistent_recorded != nil
+      assert :ok = Bus.ack(bus_pid, persistent_sub_id, persistent_recorded.id)
 
       # Test error cases for ack
       assert {:error, _} = Bus.ack(bus_pid, "non-existent-sub", "signal-id")
