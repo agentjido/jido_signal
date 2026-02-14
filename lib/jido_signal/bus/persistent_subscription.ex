@@ -174,30 +174,23 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_call({:signal, {signal_log_id, signal}}, _from, state) do
-    cond do
-      # We have in-flight capacity - dispatch immediately
-      map_size(state.in_flight_signals) < state.max_in_flight ->
-        new_state = dispatch_signal(state, signal_log_id, signal)
+    case enqueue_signal(state, signal_log_id, signal) do
+      {:ok, new_state} ->
         {:reply, :ok, new_state}
 
-      # In-flight full, but pending has room - queue it
-      map_size(state.pending_signals) < state.max_pending ->
-        new_pending = Map.put(state.pending_signals, signal_log_id, signal)
-        {:reply, :ok, %{state | pending_signals: new_pending}}
+      {:error, :queue_full, new_state} ->
+        {:reply, {:error, :queue_full}, new_state}
+    end
+  end
 
-      # Both full - reject with backpressure
-      true ->
-        Telemetry.execute(
-          [:jido, :signal, :subscription, :backpressure],
-          %{},
-          %{
-            subscription_id: state.id,
-            in_flight: map_size(state.in_flight_signals),
-            pending: map_size(state.pending_signals)
-          }
-        )
+  @impl GenServer
+  def handle_call({:signal_batch, signal_entries}, _from, state) when is_list(signal_entries) do
+    case enqueue_signal_batch(state, signal_entries) do
+      {:ok, new_state} ->
+        {:reply, :ok, new_state}
 
-        {:reply, {:error, :queue_full}, state}
+      {:error, :queue_full, new_state} ->
+        {:reply, {:error, :queue_full}, new_state}
     end
   end
 
@@ -240,32 +233,13 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_info({:signal, {signal_log_id, signal}}, state) do
-    cond do
-      # We have in-flight capacity - dispatch immediately
-      map_size(state.in_flight_signals) < state.max_in_flight ->
-        new_state = dispatch_signal(state, signal_log_id, signal)
+    case enqueue_signal(state, signal_log_id, signal) do
+      {:ok, new_state} ->
         {:noreply, new_state}
 
-      # In-flight full, but pending has room - queue it
-      map_size(state.pending_signals) < state.max_pending ->
-        new_pending = Map.put(state.pending_signals, signal_log_id, signal)
-        {:noreply, %{state | pending_signals: new_pending}}
-
-      # Both full - drop the signal with backpressure telemetry
-      true ->
-        Telemetry.execute(
-          [:jido, :signal, :subscription, :backpressure],
-          %{},
-          %{
-            subscription_id: state.id,
-            in_flight: map_size(state.in_flight_signals),
-            pending: map_size(state.pending_signals)
-          }
-        )
-
+      {:error, :queue_full, new_state} ->
         Logger.warning("Dropping signal #{signal_log_id} - subscription #{state.id} queue full")
-
-        {:noreply, state}
+        {:noreply, new_state}
     end
   end
 
@@ -303,6 +277,49 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     end)
 
     state
+  end
+
+  @spec enqueue_signal_batch(t(), list({String.t(), term()})) ::
+          {:ok, t()} | {:error, :queue_full, t()}
+  defp enqueue_signal_batch(state, signal_entries) do
+    Enum.reduce_while(signal_entries, {:ok, state}, fn {signal_log_id, signal},
+                                                       {:ok, acc_state} ->
+      case enqueue_signal(acc_state, signal_log_id, signal) do
+        {:ok, next_state} ->
+          {:cont, {:ok, next_state}}
+
+        {:error, :queue_full, next_state} ->
+          {:halt, {:error, :queue_full, next_state}}
+      end
+    end)
+  end
+
+  @spec enqueue_signal(t(), String.t(), term()) :: {:ok, t()} | {:error, :queue_full, t()}
+  defp enqueue_signal(state, signal_log_id, signal) do
+    cond do
+      map_size(state.in_flight_signals) < state.max_in_flight ->
+        {:ok, dispatch_signal(state, signal_log_id, signal)}
+
+      map_size(state.pending_signals) < state.max_pending ->
+        new_pending = Map.put(state.pending_signals, signal_log_id, signal)
+        {:ok, %{state | pending_signals: new_pending}}
+
+      true ->
+        emit_backpressure_telemetry(state)
+        {:error, :queue_full, state}
+    end
+  end
+
+  defp emit_backpressure_telemetry(state) do
+    Telemetry.execute(
+      [:jido, :signal, :subscription, :backpressure],
+      %{},
+      %{
+        subscription_id: state.id,
+        in_flight: map_size(state.in_flight_signals),
+        pending: map_size(state.pending_signals)
+      }
+    )
   end
 
   defp fetch_signals_since_checkpoint(state) do
