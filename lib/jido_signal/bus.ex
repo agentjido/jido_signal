@@ -44,6 +44,7 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Partition
   alias Jido.Signal.Bus.PartitionSupervisor
+  alias Jido.Signal.Bus.DispatchFlow
   alias Jido.Signal.Bus.Snapshot
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
@@ -1110,170 +1111,28 @@ defmodule Jido.Signal.Bus do
          acc_results,
          dispatch_ctx
        ) do
-    emit_before_dispatch_telemetry(dispatch_ctx.state.name, signal, subscription_id, subscription)
+    case DispatchFlow.dispatch(
+           acc_middleware,
+           signal,
+           subscription,
+           subscription_id,
+           dispatch_ctx.context,
+           dispatch_ctx.timeout_ms,
+           fn processed_signal, current_subscription ->
+             dispatch_to_subscription(
+               processed_signal,
+               current_subscription,
+               dispatch_ctx.task_supervisor
+             )
+           end,
+           bus_name: dispatch_ctx.state.name
+         ) do
+      {:ok, updated_middleware, result} ->
+        {updated_middleware, [{subscription_id, result} | acc_results]}
 
-    middleware_result =
-      MiddlewarePipeline.before_dispatch(
-        acc_middleware,
-        signal,
-        subscription,
-        dispatch_ctx.context,
-        dispatch_ctx.timeout_ms
-      )
-
-    handle_middleware_result(
-      middleware_result,
-      signal,
-      subscription_id,
-      subscription,
-      acc_middleware,
-      acc_results,
-      dispatch_ctx
-    )
-  end
-
-  defp handle_middleware_result(
-         {:ok, processed_signal, updated_middleware},
-         _signal,
-         subscription_id,
-         subscription,
-         _acc_middleware,
-         acc_results,
-         dispatch_ctx
-       ) do
-    result =
-      dispatch_to_subscription(
-        processed_signal,
-        subscription,
-        dispatch_ctx.task_supervisor
-      )
-
-    emit_after_dispatch_telemetry(
-      dispatch_ctx.state.name,
-      processed_signal,
-      subscription_id,
-      subscription,
-      result
-    )
-
-    new_middleware =
-      MiddlewarePipeline.after_dispatch(
-        updated_middleware,
-        processed_signal,
-        subscription,
-        result,
-        dispatch_ctx.context,
-        dispatch_ctx.timeout_ms
-      )
-
-    {new_middleware, [{subscription_id, result} | acc_results]}
-  end
-
-  defp handle_middleware_result(
-         :skip,
-         signal,
-         subscription_id,
-         subscription,
-         acc_middleware,
-         acc_results,
-         dispatch_ctx
-       ) do
-    emit_dispatch_skipped_telemetry(
-      dispatch_ctx.state.name,
-      signal,
-      subscription_id,
-      subscription
-    )
-
-    {acc_middleware, acc_results}
-  end
-
-  defp handle_middleware_result(
-         {:error, reason},
-         signal,
-         subscription_id,
-         subscription,
-         acc_middleware,
-         acc_results,
-         dispatch_ctx
-       ) do
-    emit_dispatch_error_telemetry(
-      dispatch_ctx.state.name,
-      signal,
-      subscription_id,
-      subscription,
-      reason
-    )
-
-    Logger.warning("Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}")
-    {acc_middleware, acc_results}
-  end
-
-  defp emit_before_dispatch_telemetry(bus_name, signal, subscription_id, subscription) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :before_dispatch],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        signal: signal,
-        subscription: subscription
-      }
-    )
-  end
-
-  defp emit_after_dispatch_telemetry(bus_name, signal, subscription_id, subscription, result) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :after_dispatch],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        dispatch_result: result,
-        signal: signal,
-        subscription: subscription
-      }
-    )
-  end
-
-  defp emit_dispatch_skipped_telemetry(bus_name, signal, subscription_id, subscription) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :dispatch_skipped],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        reason: :middleware_skip,
-        signal: signal,
-        subscription: subscription
-      }
-    )
-  end
-
-  defp emit_dispatch_error_telemetry(bus_name, signal, subscription_id, subscription, reason) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :dispatch_error],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      %{
-        bus_name: bus_name,
-        signal_id: signal.id,
-        signal_type: signal.type,
-        subscription_id: subscription_id,
-        subscription_path: subscription.path,
-        error: reason,
-        signal: signal,
-        subscription: subscription
-      }
-    )
+      {:skip, updated_middleware} ->
+        {updated_middleware, acc_results}
+    end
   end
 
   # Dispatch signal to a subscription
