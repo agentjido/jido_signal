@@ -62,7 +62,7 @@ defmodule Jido.Signal.Bus.Stream do
     correlation_filtered =
       if correlation_id do
         Enum.filter(timestamp_filtered, fn {_log_id, signal} ->
-          signal.correlation_id == correlation_id
+          correlation_id_for(signal) == correlation_id
         end)
       else
         timestamp_filtered
@@ -181,4 +181,20 @@ defmodule Jido.Signal.Bus.Stream do
   def clear(%BusState{} = state) do
     BusState.clear_log(state)
   end
+
+  # Correlation values are sourced from the canonical correlation extension payload.
+  defp correlation_id_for(%Signal{} = signal) do
+    correlation_extension =
+      Map.get(signal.extensions, "correlation") || Map.get(signal.extensions, :correlation)
+
+    case correlation_extension do
+      %{trace_id: trace_id} when is_binary(trace_id) -> trace_id
+      %{"trace_id" => trace_id} when is_binary(trace_id) -> trace_id
+      %{correlation_id: correlation_id} when is_binary(correlation_id) -> correlation_id
+      %{"correlation_id" => correlation_id} when is_binary(correlation_id) -> correlation_id
+      _ -> nil
+    end
+  end
+
+  defp correlation_id_for(_), do: nil
 end
