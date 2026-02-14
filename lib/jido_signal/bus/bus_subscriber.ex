@@ -206,7 +206,7 @@ defmodule Jido.Signal.Bus.Subscriber do
   defp maybe_delete_persistence(state, subscription_id, subscription, opts) do
     should_delete? = Keyword.get(opts, :delete_persistence, false)
 
-    if should_delete? and subscription && subscription.persistent? and state.journal_adapter do
+    if ((should_delete? and subscription) && subscription.persistent?) and state.journal_adapter do
       checkpoint_key = "#{state.name}:#{subscription_id}"
 
       case state.journal_adapter.delete_checkpoint(checkpoint_key, state.journal_pid) do
