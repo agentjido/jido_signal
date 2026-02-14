@@ -111,12 +111,20 @@ defmodule Jido.Signal.Bus do
 
     {:ok, child_supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
-    {journal_adapter, journal_pid} = init_journal_adapter(name, opts)
+    {journal_adapter, journal_pid, journal_owned?} = init_journal_adapter(name, opts)
     middleware_specs = Keyword.get(opts, :middleware, [])
 
     case MiddlewarePipeline.init_middleware(middleware_specs) do
       {:ok, middleware_configs} ->
-        init_state(name, opts, child_supervisor, journal_adapter, journal_pid, middleware_configs)
+        init_state(
+          name,
+          opts,
+          child_supervisor,
+          journal_adapter,
+          journal_pid,
+          journal_owned?,
+          middleware_configs
+        )
 
       {:error, reason} ->
         {:stop, {:middleware_init_failed, reason}}
@@ -136,24 +144,24 @@ defmodule Jido.Signal.Bus do
 
   defp do_init_journal_adapter(_name, journal_adapter, existing_pid)
        when not is_nil(journal_adapter) and not is_nil(existing_pid) do
-    {journal_adapter, existing_pid}
+    {journal_adapter, existing_pid, false}
   end
 
   defp do_init_journal_adapter(_name, journal_adapter, _existing_pid)
        when not is_nil(journal_adapter) do
     case journal_adapter.init() do
       :ok ->
-        {journal_adapter, nil}
+        {journal_adapter, nil, false}
 
       {:ok, pid} ->
-        {journal_adapter, pid}
+        {journal_adapter, pid, true}
 
       {:error, reason} ->
         Logger.warning(
           "Failed to initialize journal adapter #{inspect(journal_adapter)}: #{inspect(reason)}"
         )
 
-        {nil, nil}
+        {nil, nil, false}
     end
   end
 
@@ -162,11 +170,19 @@ defmodule Jido.Signal.Bus do
       "Bus #{name} started without journal adapter - checkpoints will be in-memory only"
     )
 
-    {nil, nil}
+    {nil, nil, false}
   end
 
   # Initializes the bus state with all configuration
-  defp init_state(name, opts, child_supervisor, journal_adapter, journal_pid, middleware_configs) do
+  defp init_state(
+         name,
+         opts,
+         child_supervisor,
+         journal_adapter,
+         journal_pid,
+         journal_owned?,
+         middleware_configs
+       ) do
     middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
     partition_count = Keyword.get(opts, :partition_count, 1)
     max_log_size = Keyword.get(opts, :max_log_size, 100_000)
@@ -183,7 +199,7 @@ defmodule Jido.Signal.Bus do
         journal_pid
       )
 
-    schedule_gc_if_needed(log_ttl_ms)
+    gc_timer_ref = schedule_gc_if_needed(log_ttl_ms)
 
     state = %BusState{
       name: name,
@@ -194,11 +210,13 @@ defmodule Jido.Signal.Bus do
       middleware_timeout_ms: middleware_timeout_ms,
       journal_adapter: journal_adapter,
       journal_pid: journal_pid,
+      journal_owned?: journal_owned?,
       partition_count: partition_count,
       partition_supervisor: partition_supervisor,
       partition_pids: partition_pids,
       max_log_size: max_log_size,
-      log_ttl_ms: log_ttl_ms
+      log_ttl_ms: log_ttl_ms,
+      gc_timer_ref: gc_timer_ref
     }
 
     {:ok, state}
@@ -241,7 +259,7 @@ defmodule Jido.Signal.Bus do
     {partition_pids, sup_pid}
   end
 
-  defp schedule_gc_if_needed(nil), do: :ok
+  defp schedule_gc_if_needed(nil), do: nil
   defp schedule_gc_if_needed(log_ttl_ms), do: Process.send_after(self(), :gc_log, log_ttl_ms)
 
   @doc """
@@ -1153,8 +1171,8 @@ defmodule Jido.Signal.Bus do
   def handle_info(:gc_log, %{log_ttl_ms: nil} = state), do: {:noreply, state}
 
   def handle_info(:gc_log, state) do
-    Process.send_after(self(), :gc_log, state.log_ttl_ms)
-    new_state = prune_expired_log_entries(state)
+    gc_timer_ref = Process.send_after(self(), :gc_log, state.log_ttl_ms)
+    new_state = state |> prune_expired_log_entries() |> Map.put(:gc_timer_ref, gc_timer_ref)
     {:noreply, new_state}
   end
 
@@ -1197,5 +1215,70 @@ defmodule Jido.Signal.Bus do
 
   defp linked_runtime_process?(pid, state) do
     pid == state.child_supervisor or pid == state.partition_supervisor
+  end
+
+  @impl GenServer
+  def terminate(_reason, state) do
+    maybe_cancel_gc_timer(state.gc_timer_ref)
+    maybe_cleanup_snapshots(state)
+    maybe_stop_child_supervisor(state.child_supervisor)
+    maybe_stop_owned_journal(state)
+    maybe_stop_partition_supervisor(state)
+
+    :ok
+  end
+
+  defp maybe_cancel_gc_timer(nil), do: :ok
+
+  defp maybe_cancel_gc_timer(timer_ref) do
+    Process.cancel_timer(timer_ref)
+    :ok
+  end
+
+  defp maybe_cleanup_snapshots(state) do
+    case Snapshot.cleanup(state) do
+      {:ok, _cleaned_state} -> :ok
+      {:error, _reason} -> :ok
+    end
+  end
+
+  defp maybe_stop_child_supervisor(nil), do: :ok
+
+  defp maybe_stop_child_supervisor(pid) when is_pid(pid) do
+    try do
+      Supervisor.stop(pid, :normal, 1_000)
+    catch
+      :exit, _reason -> :ok
+    end
+  end
+
+  defp maybe_stop_owned_journal(%{journal_owned?: true, journal_pid: pid}) when is_pid(pid) do
+    try do
+      GenServer.stop(pid, :normal, 1_000)
+    catch
+      :exit, _reason -> :ok
+    end
+  end
+
+  defp maybe_stop_owned_journal(_state), do: :ok
+
+  defp maybe_stop_partition_supervisor(state) do
+    if state.partition_count > 1 do
+      partition_supervisor = PartitionSupervisor.via_tuple(state.name, jido: state.jido)
+
+      case GenServer.whereis(partition_supervisor) do
+        pid when is_pid(pid) ->
+          try do
+            Supervisor.stop(pid, :normal, 1_000)
+          catch
+            :exit, _reason -> :ok
+          end
+
+        nil ->
+          :ok
+      end
+    else
+      :ok
+    end
   end
 end
