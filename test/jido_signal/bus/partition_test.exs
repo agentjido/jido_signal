@@ -498,4 +498,40 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
       :telemetry.detach(handler_id)
     end
   end
+
+  describe "partition restart handling" do
+    setup do
+      bus_name = :"test-bus-partition-restart-#{:erlang.unique_integer([:positive])}"
+      start_supervised!({Bus, name: bus_name, partition_count: 2})
+      {:ok, bus: bus_name}
+    end
+
+    test "bus uses current partition process for subscription updates after restart", %{bus: bus} do
+      {:ok, subscription_id} = Bus.subscribe(bus, "test.signal")
+
+      {:ok, bus_pid} = Bus.whereis(bus)
+      bus_state = :sys.get_state(bus_pid)
+      partition_id = Partition.partition_for(subscription_id, bus_state.partition_count)
+      old_partition_pid = Enum.at(bus_state.partition_pids, partition_id)
+      assert is_pid(old_partition_pid)
+
+      Process.exit(old_partition_pid, :kill)
+      Process.sleep(50)
+
+      new_partition_pid = GenServer.whereis(Partition.via_tuple(bus, partition_id))
+      assert is_pid(new_partition_pid)
+      refute new_partition_pid == old_partition_pid
+
+      # Old subscription was managed by previous partition process.
+      # Unsubscribe should still succeed using current partition target resolution.
+      assert :ok = Bus.unsubscribe(bus, subscription_id)
+
+      # Re-subscribing should target the restarted partition process.
+      {:ok, _new_subscription_id} = Bus.subscribe(bus, "test.signal")
+
+      {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+      assert {:ok, _} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+    end
+  end
 end

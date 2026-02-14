@@ -6,29 +6,40 @@ defmodule Jido.Signal.Bus.Partition do
   Each partition manages its own set of subscriptions based on a hash of the subscription ID.
   """
   use GenServer
-  use TypedStruct
 
   alias Jido.Signal.Bus.MiddlewarePipeline
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
+  alias Jido.Signal.Telemetry
 
   require Logger
 
-  typedstruct do
-    field(:partition_id, non_neg_integer(), enforce: true)
-    field(:bus_name, atom(), enforce: true)
-    field(:bus_pid, pid(), enforce: true)
-    field(:subscriptions, %{String.t() => Subscriber.t()}, default: %{})
-    field(:middleware, [MiddlewarePipeline.middleware_config()], default: [])
-    field(:middleware_timeout_ms, pos_integer(), default: 100)
-    field(:journal_adapter, module())
-    field(:journal_pid, pid())
-    field(:rate_limit_per_sec, pos_integer(), default: 10_000)
-    field(:burst_size, pos_integer(), default: 1_000)
-    field(:tokens, float(), default: 1_000.0)
-    field(:last_refill, integer())
-  end
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              partition_id: Zoi.integer(),
+              bus_name: Zoi.atom(),
+              bus_pid: Zoi.any(),
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              task_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              rate_limit_per_sec: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
+              burst_size: Zoi.default(Zoi.integer(), 1_000) |> Zoi.optional(),
+              tokens: Zoi.default(Zoi.float(), 1_000.0) |> Zoi.optional(),
+              last_refill: Zoi.integer() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Partition"
+  def schema, do: @schema
 
   @doc """
   Starts a partition worker linked to the calling process.
@@ -47,15 +58,16 @@ defmodule Jido.Signal.Bus.Partition do
   def start_link(opts) do
     partition_id = Keyword.fetch!(opts, :partition_id)
     bus_name = Keyword.fetch!(opts, :bus_name)
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id))
+    GenServer.start_link(__MODULE__, opts, name: via_tuple(bus_name, partition_id, opts))
   end
 
   @doc """
   Returns a via tuple for looking up a partition by bus name and partition ID.
   """
-  @spec via_tuple(atom(), non_neg_integer()) :: {:via, Registry, {module(), tuple()}}
-  def via_tuple(bus_name, partition_id) do
-    {:via, Registry, {Jido.Signal.Registry, {:partition, bus_name, partition_id}}}
+  @spec via_tuple(atom(), non_neg_integer(), keyword()) :: {:via, Registry, {module(), tuple()}}
+  def via_tuple(bus_name, partition_id, opts \\ []) do
+    registry = Names.registry(opts)
+    {:via, Registry, {registry, {:partition, bus_name, partition_id}}}
   end
 
   @doc """
@@ -78,6 +90,7 @@ defmodule Jido.Signal.Bus.Partition do
       bus_pid: Keyword.fetch!(opts, :bus_pid),
       middleware: Keyword.get(opts, :middleware, []),
       middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
+      task_supervisor: Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor),
       journal_adapter: Keyword.get(opts, :journal_adapter),
       journal_pid: Keyword.get(opts, :journal_pid),
       rate_limit_per_sec: Keyword.get(opts, :rate_limit_per_sec, 10_000),
@@ -100,7 +113,7 @@ defmodule Jido.Signal.Bus.Partition do
         {:noreply, new_state}
 
       {:error, :rate_limited} ->
-        :telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :bus, :rate_limited],
           %{dropped_count: signal_count},
           %{
@@ -144,113 +157,196 @@ defmodule Jido.Signal.Bus.Partition do
 
   defp dispatch_to_subscriptions(state, signals, uuid_signal_pairs, context) do
     Enum.each(signals, fn signal ->
-      Enum.each(state.subscriptions, fn {subscription_id, subscription} ->
-        # Skip persistent subscriptions - they are handled by the main bus for backpressure
-        if not subscription.persistent? and Router.matches?(signal.type, subscription.path) do
-          :telemetry.execute(
-            [:jido, :signal, :bus, :before_dispatch],
-            %{timestamp: System.monotonic_time(:microsecond)},
-            %{
-              bus_name: state.bus_name,
-              signal_id: signal.id,
-              signal_type: signal.type,
-              subscription_id: subscription_id,
-              subscription_path: subscription.path,
-              signal: signal,
-              subscription: subscription,
-              partition_id: state.partition_id
-            }
-          )
-
-          case MiddlewarePipeline.before_dispatch(
-                 state.middleware,
-                 signal,
-                 subscription,
-                 context,
-                 state.middleware_timeout_ms
-               ) do
-            {:ok, processed_signal, _new_configs} ->
-              result =
-                dispatch_to_subscription(
-                  processed_signal,
-                  subscription,
-                  subscription_id,
-                  uuid_signal_pairs
-                )
-
-              :telemetry.execute(
-                [:jido, :signal, :bus, :after_dispatch],
-                %{timestamp: System.monotonic_time(:microsecond)},
-                %{
-                  bus_name: state.bus_name,
-                  signal_id: processed_signal.id,
-                  signal_type: processed_signal.type,
-                  subscription_id: subscription_id,
-                  subscription_path: subscription.path,
-                  dispatch_result: result,
-                  signal: processed_signal,
-                  subscription: subscription,
-                  partition_id: state.partition_id
-                }
-              )
-
-              MiddlewarePipeline.after_dispatch(
-                state.middleware,
-                processed_signal,
-                subscription,
-                result,
-                context,
-                state.middleware_timeout_ms
-              )
-
-            :skip ->
-              :telemetry.execute(
-                [:jido, :signal, :bus, :dispatch_skipped],
-                %{timestamp: System.monotonic_time(:microsecond)},
-                %{
-                  bus_name: state.bus_name,
-                  signal_id: signal.id,
-                  signal_type: signal.type,
-                  subscription_id: subscription_id,
-                  subscription_path: subscription.path,
-                  reason: :middleware_skip,
-                  signal: signal,
-                  subscription: subscription,
-                  partition_id: state.partition_id
-                }
-              )
-
-              :ok
-
-            {:error, reason} ->
-              :telemetry.execute(
-                [:jido, :signal, :bus, :dispatch_error],
-                %{timestamp: System.monotonic_time(:microsecond)},
-                %{
-                  bus_name: state.bus_name,
-                  signal_id: signal.id,
-                  signal_type: signal.type,
-                  subscription_id: subscription_id,
-                  subscription_path: subscription.path,
-                  error: reason,
-                  signal: signal,
-                  subscription: subscription,
-                  partition_id: state.partition_id
-                }
-              )
-
-              Logger.warning(
-                "Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}"
-              )
-
-              :ok
-          end
-        end
-      end)
+      dispatch_signal_to_matching_subscriptions(state, signal, uuid_signal_pairs, context)
     end)
   end
 
-  defp dispatch_to_subscription(signal, subscription, _subscription_id, uuid_signal_pairs) do
+  defp dispatch_signal_to_matching_subscriptions(state, signal, uuid_signal_pairs, context) do
+    Enum.each(state.subscriptions, fn {subscription_id, subscription} ->
+      maybe_dispatch_to_subscription(
+        state,
+        signal,
+        subscription,
+        subscription_id,
+        uuid_signal_pairs,
+        context
+      )
+    end)
+  end
+
+  defp maybe_dispatch_to_subscription(
+         state,
+         signal,
+         subscription,
+         subscription_id,
+         uuid_signal_pairs,
+         context
+       ) do
+    # Skip persistent subscriptions - they are handled by the main bus for backpressure
+    if not subscription.persistent? and Router.matches?(signal.type, subscription.path) do
+      dispatch_single_signal(
+        state,
+        signal,
+        subscription,
+        subscription_id,
+        uuid_signal_pairs,
+        context
+      )
+    end
+  end
+
+  defp dispatch_single_signal(
+         state,
+         signal,
+         subscription,
+         subscription_id,
+         uuid_signal_pairs,
+         context
+       ) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :before_dispatch],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: state.bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        signal: signal,
+        subscription: subscription,
+        partition_id: state.partition_id
+      }
+    )
+
+    middleware_result =
+      MiddlewarePipeline.before_dispatch(
+        state.middleware,
+        signal,
+        subscription,
+        context,
+        state.middleware_timeout_ms
+      )
+
+    handle_middleware_result(
+      middleware_result,
+      state,
+      signal,
+      subscription,
+      subscription_id,
+      uuid_signal_pairs,
+      context
+    )
+  end
+
+  defp handle_middleware_result(
+         {:ok, processed_signal, _new_configs},
+         state,
+         _signal,
+         subscription,
+         subscription_id,
+         uuid_signal_pairs,
+         context
+       ) do
+    result =
+      dispatch_to_subscription(
+        state,
+        processed_signal,
+        subscription,
+        subscription_id,
+        uuid_signal_pairs
+      )
+
+    Telemetry.execute(
+      [:jido, :signal, :bus, :after_dispatch],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: state.bus_name,
+        signal_id: processed_signal.id,
+        signal_type: processed_signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        dispatch_result: result,
+        signal: processed_signal,
+        subscription: subscription,
+        partition_id: state.partition_id
+      }
+    )
+
+    MiddlewarePipeline.after_dispatch(
+      state.middleware,
+      processed_signal,
+      subscription,
+      result,
+      context,
+      state.middleware_timeout_ms
+    )
+  end
+
+  defp handle_middleware_result(
+         :skip,
+         state,
+         signal,
+         subscription,
+         subscription_id,
+         _uuid_signal_pairs,
+         _context
+       ) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :dispatch_skipped],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: state.bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        reason: :middleware_skip,
+        signal: signal,
+        subscription: subscription,
+        partition_id: state.partition_id
+      }
+    )
+
+    :ok
+  end
+
+  defp handle_middleware_result(
+         {:error, reason},
+         state,
+         signal,
+         subscription,
+         subscription_id,
+         _uuid_signal_pairs,
+         _context
+       ) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :dispatch_error],
+      %{timestamp: System.monotonic_time(:microsecond)},
+      %{
+        bus_name: state.bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscription_id,
+        subscription_path: subscription.path,
+        error: reason,
+        signal: signal,
+        subscription: subscription,
+        partition_id: state.partition_id
+      }
+    )
+
+    Logger.warning("Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}")
+
+    :ok
+  end
+
+  defp dispatch_to_subscription(
+         state,
+         signal,
+         subscription,
+         _subscription_id,
+         uuid_signal_pairs
+       ) do
     if subscription.persistent? and subscription.persistence_pid do
       uuid = find_signal_uuid(signal, uuid_signal_pairs)
 
@@ -264,7 +360,7 @@ defmodule Jido.Signal.Bus.Partition do
           {:error, :timeout}
       end
     else
-      Dispatch.dispatch(signal, subscription.dispatch)
+      Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: state.task_supervisor)
     end
   end
 

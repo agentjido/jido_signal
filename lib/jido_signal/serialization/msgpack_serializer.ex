@@ -33,6 +33,7 @@ if Code.ensure_loaded?(Msgpax) do
     @behaviour Jido.Signal.Serialization.Serializer
 
     alias Jido.Signal.Serialization.CloudEventsTransform
+    alias Jido.Signal.Serialization.Config
     alias Jido.Signal.Serialization.TypeProvider
 
     @doc """
@@ -57,7 +58,7 @@ if Code.ensure_loaded?(Msgpax) do
     """
     @impl true
     def deserialize(binary, config \\ []) when is_binary(binary) do
-      max_size = Jido.Signal.Serialization.Config.max_payload_bytes()
+      max_size = Config.max_payload_bytes()
 
       if byte_size(binary) > max_size do
         {:error, {:payload_too_large, byte_size(binary), max_size}}
@@ -69,27 +70,7 @@ if Code.ensure_loaded?(Msgpax) do
     defp do_deserialize(binary, config) do
       case Msgpax.unpack(binary) do
         {:ok, unpacked} ->
-          unpacked = CloudEventsTransform.inflate_for_deserialization(unpacked)
-
-          result =
-            case Keyword.get(config, :type) do
-              nil ->
-                postprocess_from_msgpack(unpacked)
-
-              type_str ->
-                type_provider = Keyword.get(config, :type_provider, TypeProvider)
-                target_struct = type_provider.to_struct(type_str)
-
-                processed = postprocess_from_msgpack(unpacked)
-
-                if is_map(processed) and not is_struct(processed) do
-                  safe_build_struct(target_struct.__struct__, processed)
-                else
-                  processed
-                end
-            end
-
-          {:ok, result}
+          process_unpacked_data(unpacked, config)
 
         {:error, reason} ->
           {:error, {:msgpack_decode_failed, reason}}
@@ -100,6 +81,34 @@ if Code.ensure_loaded?(Msgpax) do
 
       e ->
         {:error, {:msgpack_deserialize_failed, Exception.message(e)}}
+    end
+
+    defp process_unpacked_data(unpacked, config) do
+      inflated = CloudEventsTransform.inflate_for_deserialization(unpacked)
+      result = deserialize_with_type(inflated, config)
+      {:ok, result}
+    end
+
+    defp deserialize_with_type(unpacked, config) do
+      case Keyword.get(config, :type) do
+        nil ->
+          postprocess_from_msgpack(unpacked)
+
+        type_str ->
+          deserialize_to_struct(unpacked, type_str, config)
+      end
+    end
+
+    defp deserialize_to_struct(unpacked, type_str, config) do
+      type_provider = Keyword.get(config, :type_provider, TypeProvider)
+      target_struct = type_provider.to_struct(type_str)
+      processed = postprocess_from_msgpack(unpacked)
+
+      if is_map(processed) and not is_struct(processed) do
+        safe_build_struct(target_struct.__struct__, processed)
+      else
+        processed
+      end
     end
 
     defp safe_build_struct(mod, data) do

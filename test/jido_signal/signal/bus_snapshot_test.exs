@@ -2,6 +2,7 @@ defmodule Jido.Signal.Bus.SnapshotTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
+  alias Jido.Signal.Bus
   alias Jido.Signal.Bus.Snapshot
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Router
@@ -124,6 +125,37 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       {:ok, snapshot_data} = Snapshot.read(new_state, snapshot_ref.id)
       assert map_size(snapshot_data.signals) == 1
       assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.3"
+    end
+
+    test "creates snapshot with correlation_id filter from correlation extension", %{state: state} do
+      correlation_id = "trace-123"
+      other_correlation_id = "trace-456"
+
+      correlated_signal = %{
+        state.log["uuid-1"]
+        | extensions: %{"correlation" => %{trace_id: correlation_id}}
+      }
+
+      other_signal = %{
+        state.log["uuid-2"]
+        | extensions: %{"correlation" => %{trace_id: other_correlation_id}}
+      }
+
+      traced_state = %{
+        state
+        | log: %{
+            "uuid-1" => correlated_signal,
+            "uuid-2" => other_signal
+          }
+      }
+
+      {:ok, snapshot_ref, new_state} =
+        Snapshot.create(traced_state, "**", correlation_id: correlation_id)
+
+      {:ok, snapshot_data} = Snapshot.read(new_state, snapshot_ref.id)
+
+      assert map_size(snapshot_data.signals) == 1
+      assert Map.values(snapshot_data.signals) |> hd() |> Map.get(:type) == "test.signal.1"
     end
   end
 
@@ -356,6 +388,20 @@ defmodule Jido.Signal.Bus.SnapshotTest do
       assert length(snapshot_refs) == 1
       assert hd(snapshot_refs).id == snapshot_ref2.id
       refute Map.has_key?(new_state.snapshots, snapshot_ref1.id)
+    end
+  end
+
+  describe "bus termination cleanup" do
+    test "bus terminate removes snapshot payloads from persistent_term" do
+      bus_name = :"test_bus_snapshot_cleanup_#{:erlang.unique_integer([:positive])}"
+
+      {:ok, bus_pid} = Bus.start_link(name: bus_name)
+      {:ok, snapshot_ref} = Bus.snapshot_create(bus_name, "**")
+      assert :persistent_term.get({Snapshot, snapshot_ref.id}, :missing) != :missing
+
+      GenServer.stop(bus_pid)
+
+      assert :persistent_term.get({Snapshot, snapshot_ref.id}, :missing) == :missing
     end
   end
 end

@@ -3,6 +3,7 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.ID
   alias Jido.Signal.Journal.Adapters.ETS, as: ETSAdapter
 
   @moduletag :capture_log
@@ -134,10 +135,260 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionCheckpointTest do
 
       highest_timestamp =
         signal_ids
-        |> Enum.map(&Jido.Signal.ID.extract_timestamp/1)
+        |> Enum.map(&ID.extract_timestamp/1)
         |> Enum.max()
 
       assert checkpoint == highest_timestamp
+    end
+
+    test "reconnect replays signals newer than millisecond checkpoint", %{bus: bus} do
+      parent = self()
+
+      start_client = fn tag ->
+        spawn(fn ->
+          receive_loop = fn receive_loop ->
+            receive do
+              {:signal, signal} ->
+                send(parent, {tag, signal})
+                receive_loop.(receive_loop)
+            end
+          end
+
+          receive_loop.(receive_loop)
+        end)
+      end
+
+      old_client = start_client.(:old_client_signal)
+      on_exit(fn -> if Process.alive?(old_client), do: Process.exit(old_client, :kill) end)
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal",
+          persistent?: true,
+          retry_interval: 1000,
+          dispatch: {:pid, target: old_client}
+        )
+
+      {:ok, signal1} = Signal.new("test.signal", %{value: 1}, source: "/test")
+      signal1_id = signal1.id
+      {:ok, [recorded1]} = Bus.publish(bus, [signal1])
+      assert_receive {:old_client_signal, %Signal{id: ^signal1_id}}
+      assert :ok = Bus.ack(bus, subscription_id, recorded1.id)
+
+      Process.exit(old_client, :kill)
+      Process.sleep(50)
+
+      {:ok, signal2} = Signal.new("test.signal", %{value: 2}, source: "/test")
+      signal2_id = signal2.id
+      {:ok, _} = Bus.publish(bus, [signal2])
+
+      new_client = start_client.(:new_client_signal)
+      on_exit(fn -> if Process.alive?(new_client), do: Process.exit(new_client, :kill) end)
+
+      assert {:ok, _checkpoint} = Bus.reconnect(bus, subscription_id, new_client)
+      assert_receive {:new_client_signal, %Signal{id: ^signal2_id}}, 1000
+      refute_receive {:new_client_signal, %Signal{id: ^signal1_id}}, 100
+    end
+
+    test "reconnect does not deadlock under concurrent bus activity", %{bus: bus} do
+      old_client =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      on_exit(fn -> if Process.alive?(old_client), do: Process.exit(old_client, :kill) end)
+
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.signal", persistent?: true, dispatch: {:pid, target: old_client})
+
+      {:ok, signal} = Signal.new("test.signal", %{value: 1}, source: "/test")
+      {:ok, _recorded} = Bus.publish(bus, [signal])
+
+      new_client =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      on_exit(fn -> if Process.alive?(new_client), do: Process.exit(new_client, :kill) end)
+
+      reconnect_task = Task.async(fn -> Bus.reconnect(bus, subscription_id, new_client) end)
+      snapshot_task = Task.async(fn -> Bus.snapshot_list(bus) end)
+
+      assert {:ok, _checkpoint} = Task.await(reconnect_task, 1_000)
+      assert is_list(Task.await(snapshot_task, 1_000))
+    end
+
+    test "reconnect replaces persistent client monitor reference", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      bus_state = Bus.whereis(bus) |> elem(1) |> :sys.get_state()
+      subscription = Map.get(bus_state.subscriptions, subscription_id)
+      persistent_pid = subscription.persistence_pid
+      initial_state = :sys.get_state(persistent_pid)
+      initial_monitor_ref = initial_state.client_monitor_ref
+
+      assert is_reference(initial_monitor_ref)
+      initial_monitors = Process.info(persistent_pid, :monitors) |> elem(1)
+      assert {:process, self()} in initial_monitors
+
+      new_client =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      assert {:ok, _checkpoint} = Bus.reconnect(bus, subscription_id, new_client)
+      Process.sleep(25)
+
+      reconnected_state = :sys.get_state(persistent_pid)
+      assert reconnected_state.client_pid == new_client
+      assert reconnected_state.client_monitor_ref != initial_monitor_ref
+
+      monitors = Process.info(persistent_pid, :monitors) |> elem(1)
+      assert {:process, new_client} in monitors
+      refute {:process, self()} in monitors
+
+      Process.exit(new_client, :kill)
+    end
+
+    test "unsubscribe terminates persistent subscription process", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      bus_state = Bus.whereis(bus) |> elem(1) |> :sys.get_state()
+      subscription = Map.get(bus_state.subscriptions, subscription_id)
+      persistent_pid = subscription.persistence_pid
+      assert Process.alive?(persistent_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id)
+
+      Process.sleep(25)
+      refute Process.alive?(persistent_pid)
+    end
+
+    test "unsubscribe keeps checkpoint and dlq when delete_persistence is false", %{
+      bus: bus,
+      journal_pid: journal_pid
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+
+      :ok = Process.sleep(25)
+
+      {:ok, _dlq_id} =
+        ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
+
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id, delete_persistence: false)
+
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+    end
+
+    test "unsubscribe removes checkpoint and dlq when delete_persistence is true", %{
+      bus: bus,
+      journal_pid: journal_pid
+    } do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 2}
+        })
+
+      {:ok, [recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+      :ok = Bus.ack(bus, subscription_id, recorded_signal.id)
+
+      :ok = Process.sleep(25)
+
+      {:ok, _dlq_id} =
+        ETSAdapter.put_dlq_entry(subscription_id, signal, :forced_test_failure, %{}, journal_pid)
+
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      assert {:ok, _checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, [_entry]} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+
+      assert :ok = Bus.unsubscribe(bus, subscription_id, delete_persistence: true)
+
+      assert {:error, :not_found} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+      assert {:ok, []} = ETSAdapter.get_dlq_entries(subscription_id, journal_pid)
+    end
+
+    test "bus ack returns error for invalid ack argument", %{bus: bus} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      {:ok, signal} =
+        Signal.new(%{
+          type: "test.signal",
+          source: "/test",
+          data: %{value: 1}
+        })
+
+      {:ok, [_recorded_signal]} = Bus.publish(bus, [signal])
+      assert_receive {:signal, %Signal{type: "test.signal"}}
+
+      assert {:error, :invalid_ack_argument} = Bus.ack(bus, subscription_id, :invalid)
+    end
+
+    test "bus ack supports list of signal ids", %{bus: bus, journal_pid: journal_pid} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.**", persistent?: true, dispatch: {:pid, target: self()})
+
+      signals =
+        for i <- 1..2 do
+          {:ok, signal} =
+            Signal.new(%{
+              type: "test.signal.#{i}",
+              source: "/test",
+              data: %{value: i}
+            })
+
+          signal
+        end
+
+      {:ok, recorded_signals} = Bus.publish(bus, signals)
+
+      for _ <- 1..2 do
+        assert_receive {:signal, %Signal{}}
+      end
+
+      signal_ids = Enum.map(recorded_signals, & &1.id)
+      assert :ok = Bus.ack(bus, subscription_id, signal_ids)
+
+      Process.sleep(25)
+      checkpoint_key = "#{bus}:#{subscription_id}"
+      {:ok, checkpoint} = ETSAdapter.get_checkpoint(checkpoint_key, journal_pid)
+
+      expected_checkpoint =
+        signal_ids
+        |> Enum.map(&ID.extract_timestamp/1)
+        |> Enum.max()
+
+      assert checkpoint == expected_checkpoint
     end
   end
 

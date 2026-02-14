@@ -137,8 +137,22 @@ config = {:pid, [target: dead_pid, delivery_mode: :async]}
 {:error, :process_not_alive} = Jido.Signal.Dispatch.dispatch(signal, config)
 ```
 
+## Instance Isolation
+
+For multi-tenant applications or isolated testing, start an isolated instance:
+
+```elixir
+# Start isolated instance
+{:ok, _} = Jido.Signal.Instance.start_link(name: MyApp.Jido)
+
+# Start bus scoped to the instance
+{:ok, _} = Jido.Signal.Bus.start_link(name: :my_bus, jido: MyApp.Jido)
+```
+
+See [Event Bus](event-bus.md#instance-isolation) for complete multi-tenant examples.
+
 ## Next Steps
 
 - [Signals and Dispatch](signals-and-dispatch.md) - Deep dive into signal structure, dispatch adapters, circuit breakers, and custom signal types
-- [Event Bus](event-bus.md) - Pub/sub messaging, persistent subscriptions, Dead Letter Queue, and horizontal scaling with partitions
+- [Event Bus](event-bus.md) - Pub/sub messaging, persistent subscriptions, Dead Letter Queue, instance isolation, and horizontal scaling
 - [Signal Journal](signal-journal.md) - Persistence adapters (ETS, Mnesia), checkpointing, and causality tracking

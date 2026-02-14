@@ -8,26 +8,77 @@ defmodule Jido.Signal.Bus.State do
   and querying this state.
   """
 
-  use TypedStruct
-
   alias Jido.Signal
+  alias Jido.Signal.ID
   alias Jido.Signal.Router
+  alias Jido.Signal.Telemetry
 
-  typedstruct do
-    field(:name, atom(), enforce: true)
-    field(:router, Router.Router.t(), default: Router.new!())
-    field(:log, %{String.t() => Signal.t()}, default: %{})
-    field(:snapshots, %{String.t() => Jido.Signal.Bus.Snapshot.SnapshotRef.t()}, default: %{})
-    field(:subscriptions, %{String.t() => Jido.Signal.Bus.Subscriber.t()}, default: %{})
-    field(:child_supervisor, pid())
-    field(:middleware, [Jido.Signal.Bus.MiddlewarePipeline.middleware_config()], default: [])
-    field(:middleware_timeout_ms, pos_integer(), default: 100)
-    field(:journal_adapter, module(), default: nil)
-    field(:journal_pid, pid(), default: nil)
-    field(:partition_count, pos_integer(), default: 1)
-    field(:partition_pids, [pid()], default: [])
-    field(:max_log_size, pos_integer(), default: 100_000)
-    field(:log_ttl_ms, pos_integer() | nil, default: nil)
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              name: Zoi.atom(),
+              jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              router: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              log: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              snapshots: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              child_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_owned?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
+              partition_count: Zoi.default(Zoi.integer(), 1) |> Zoi.optional(),
+              partition_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              partition_pids: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
+              max_log_size: Zoi.default(Zoi.integer(), 100_000) |> Zoi.optional(),
+              log_ttl_ms: Zoi.integer() |> Zoi.nullable() |> Zoi.optional(),
+              gc_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
+
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for State"
+  def schema, do: @schema
+
+  @doc """
+  Creates a new BusState with the given name and options.
+
+  Automatically initializes the router to `Router.new!()` if not provided.
+
+  ## Examples
+
+      iex> state = Jido.Signal.Bus.State.new(:my_bus)
+      iex> state.name
+      :my_bus
+  """
+  @spec new(atom(), keyword()) :: t()
+  def new(name, opts \\ []) do
+    router = Keyword.get_lazy(opts, :router, fn -> Router.new!() end)
+
+    %__MODULE__{
+      name: name,
+      router: router,
+      jido: Keyword.get(opts, :jido),
+      child_supervisor: Keyword.get(opts, :child_supervisor),
+      log: Keyword.get(opts, :log, %{}),
+      snapshots: Keyword.get(opts, :snapshots, %{}),
+      subscriptions: Keyword.get(opts, :subscriptions, %{}),
+      middleware: Keyword.get(opts, :middleware, []),
+      middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
+      journal_adapter: Keyword.get(opts, :journal_adapter),
+      journal_pid: Keyword.get(opts, :journal_pid),
+      journal_owned?: Keyword.get(opts, :journal_owned?, false),
+      partition_count: Keyword.get(opts, :partition_count, 1),
+      partition_supervisor: Keyword.get(opts, :partition_supervisor),
+      partition_pids: Keyword.get(opts, :partition_pids, []),
+      max_log_size: Keyword.get(opts, :max_log_size, 100_000),
+      log_ttl_ms: Keyword.get(opts, :log_ttl_ms),
+      gc_timer_ref: Keyword.get(opts, :gc_timer_ref)
+    }
   end
 
   @doc """
@@ -50,7 +101,7 @@ defmodule Jido.Signal.Bus.State do
       {:ok, state, []}
     else
       try do
-        {uuids, _timestamp} = Jido.Signal.ID.generate_batch(length(signals))
+        {uuids, _timestamp} = ID.generate_batch(length(signals))
 
         # Create list of {uuid, signal} tuples
         uuid_signal_pairs = Enum.zip(uuids, signals)
@@ -73,7 +124,7 @@ defmodule Jido.Signal.Bus.State do
 
         # Emit telemetry if truncation occurred
         if truncated_count > 0 do
-          :telemetry.execute(
+          Telemetry.execute(
             [:jido, :signal, :bus, :log_truncated],
             %{removed_count: truncated_count},
             %{bus_name: state.name, new_size: state.max_log_size}
@@ -101,7 +152,7 @@ defmodule Jido.Signal.Bus.State do
   end
 
   @doc """
-  Converts the signal log from a map to a sorted list.
+  Converts the signal log from a map to a list sorted by recorded log key.
 
   ## Parameters
 
@@ -109,7 +160,7 @@ defmodule Jido.Signal.Bus.State do
 
   ## Returns
 
-  A list of signals sorted by their IDs
+  A list of signals sorted by recorded log key chronology.
 
   ## Examples
 
@@ -122,9 +173,19 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec log_to_list(t()) :: list(Signal.t())
   def log_to_list(%__MODULE__{} = state) do
+    state
+    |> log_entries_to_list()
+    |> Enum.map(fn {_log_id, signal} -> signal end)
+  end
+
+  @doc """
+  Converts the signal log from a map to a list of `{log_id, signal}` tuples
+  sorted by recorded log key chronology.
+  """
+  @spec log_entries_to_list(t()) :: [{String.t(), Signal.t()}]
+  def log_entries_to_list(%__MODULE__{} = state) do
     state.log
-    |> Map.values()
-    |> Enum.sort_by(fn signal -> signal.id end)
+    |> Enum.sort_by(fn {log_id, _signal} -> log_id end)
   end
 
   @doc """
@@ -137,16 +198,12 @@ defmodule Jido.Signal.Bus.State do
       # No truncation needed
       {:ok, state}
     else
-      sorted_signals =
-        state.log
-        |> Enum.sort_by(fn {key, _signal} -> key end)
-        |> Enum.map(fn {_key, signal} -> signal end)
+      sorted_entries = log_entries_to_list(state)
 
       # Keep only the most recent max_size signals
-      to_keep = Enum.take(sorted_signals, -max_size)
+      to_keep = Enum.take(sorted_entries, -max_size)
 
-      # Convert back to map
-      truncated_log = Map.new(to_keep, fn signal -> {signal.id, signal} end)
+      truncated_log = Map.new(to_keep)
 
       {:ok, %{state | log: truncated_log}}
     end
@@ -296,7 +353,7 @@ defmodule Jido.Signal.Bus.State do
   - `state`: The current bus state
   - `subscription_id`: The ID of the subscription to remove
   - `opts`: Options including:
-    - `:delete_persistence` - Whether to delete persistence (default: true)
+    - `:delete_persistence` - Whether to delete persistence artifacts (default: false)
 
   ## Returns
 
@@ -305,9 +362,9 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec remove_subscription(t(), String.t(), keyword()) :: {:ok, t()} | {:error, atom()}
   def remove_subscription(%__MODULE__{} = state, subscription_id, opts \\ []) do
-    delete_persistence = Keyword.get(opts, :delete_persistence, true)
+    _delete_persistence = Keyword.get(opts, :delete_persistence, false)
 
-    if has_subscription?(state, subscription_id) && delete_persistence do
+    if has_subscription?(state, subscription_id) do
       {subscription, new_subscriptions} = Map.pop(state.subscriptions, subscription_id)
       new_state = %{state | subscriptions: new_subscriptions}
 

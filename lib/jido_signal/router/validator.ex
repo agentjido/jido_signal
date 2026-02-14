@@ -208,46 +208,63 @@ defmodule Jido.Signal.Router.Validator do
   - `{:ok, path}` if valid
   - `{:error, reason}` if invalid
   """
-  @spec validate_path(String.t()) :: {:ok, String.t()} | {:error, term()}
+  @spec validate_path(String.t() | term()) :: {:ok, String.t()} | {:error, term()}
   def validate_path(path) when is_binary(path) do
-    if String.contains?(path, "..") do
-      {:error, Error.routing_error("Path cannot contain consecutive dots")}
-    else
-      segments = String.split(path, ".")
-
-      # Check for consecutive ** segments first
-      consecutive_wildcards? =
-        segments
-        |> Enum.chunk_every(2, 1, :discard)
-        |> Enum.any?(fn [a, b] -> a == "**" and b == "**" end)
-
-      if consecutive_wildcards? do
-        {:error, Error.routing_error("Path cannot contain multiple wildcards")}
-      else
-        # Then validate each segment
-        case Enum.find(segments, &(not valid_segment?(&1))) do
-          nil ->
-            {:ok, path}
-
-          invalid ->
-            cond do
-              String.contains?(invalid, "**") ->
-                {:error, Error.routing_error("Path cannot contain '**' sequence")}
-
-              String.contains?(invalid, "*") ->
-                {:error, Error.routing_error("Path cannot contain '*' within a segment")}
-
-              true ->
-                {:error, Error.routing_error("Path contains invalid characters")}
-            end
-        end
-      end
+    with :ok <- check_consecutive_dots(path),
+         segments = String.split(path, "."),
+         :ok <- check_consecutive_wildcards(segments),
+         :ok <- check_segment_validity(segments) do
+      {:ok, path}
     end
   end
 
-  @spec validate_path(term()) :: {:error, term()}
   def validate_path(_invalid) do
     {:error, Error.routing_error("Path must be a string")}
+  end
+
+  # Checks for consecutive dots in path
+  defp check_consecutive_dots(path) do
+    if String.contains?(path, "..") do
+      {:error, Error.routing_error("Path cannot contain consecutive dots")}
+    else
+      :ok
+    end
+  end
+
+  # Checks for consecutive ** segments
+  defp check_consecutive_wildcards(segments) do
+    has_consecutive =
+      segments
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.any?(fn [a, b] -> a == "**" and b == "**" end)
+
+    if has_consecutive do
+      {:error, Error.routing_error("Path cannot contain multiple wildcards")}
+    else
+      :ok
+    end
+  end
+
+  # Validates each segment in the path
+  defp check_segment_validity(segments) do
+    case Enum.find(segments, &(not valid_segment?(&1))) do
+      nil -> :ok
+      invalid -> invalid_segment_error(invalid)
+    end
+  end
+
+  # Returns appropriate error for invalid segment
+  defp invalid_segment_error(invalid) do
+    cond do
+      String.contains?(invalid, "**") ->
+        {:error, Error.routing_error("Path cannot contain '**' sequence")}
+
+      String.contains?(invalid, "*") ->
+        {:error, Error.routing_error("Path cannot contain '*' within a segment")}
+
+      true ->
+        {:error, Error.routing_error("Path contains invalid characters")}
+    end
   end
 
   # A segment is valid if it's either:

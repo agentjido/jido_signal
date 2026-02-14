@@ -3,9 +3,9 @@ defmodule Jido.Signal.Serialization.PayloadLimitTest do
 
   alias Jido.Signal.Serialization.{
     Config,
+    ErlangTermSerializer,
     JsonSerializer,
-    MsgpackSerializer,
-    ErlangTermSerializer
+    MsgpackSerializer
   }
 
   setup do

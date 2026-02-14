@@ -6,6 +6,21 @@ defmodule Jido.Signal.Error do
   within the Jido Signal system. It uses the Splode library to enable error
   composition and classification.
 
+  ## Structure & Naming
+
+  This module has two kinds of submodules:
+
+  * **Error classes** (for Splode): `Invalid`, `Execution`, `Routing`, `Timeout`, `Internal`.
+    These are used internally by Splode for classification and aggregation.
+    You generally should not raise or pattern match on these modules directly.
+
+  * **Concrete exception structs** (ending in `Error`): `InvalidInputError`,
+    `ExecutionFailureError`, `RoutingError`, `TimeoutError`, `DispatchError`, `InternalError`.
+    These are the types you raise, rescue, and pattern match in application code.
+
+  For cross-package handling, use `Jido.Error.to_map/1` and match on the
+  normalized `:type` atom (e.g. `:timeout`, `:routing_error`, `:dispatch_error`).
+
   ## Error Classes
 
   Errors are organized into the following classes, in order of precedence:
@@ -43,32 +58,71 @@ defmodule Jido.Signal.Error do
     ],
     unknown_error: Jido.Signal.Error.Internal.UnknownError
 
+  # Error class modules for Splode - these are for classification/aggregation only.
+  # Use the concrete exception structs (ending in `Error`) for raising/matching.
+
   defmodule Invalid do
-    @moduledoc "Invalid input error class"
+    @moduledoc """
+    Invalid input error class for Splode.
+
+    This module is used by Splode to classify invalid-input errors when
+    aggregating or analyzing multiple errors. Do not raise or match on this
+    module directly — use `Jido.Signal.Error.InvalidInputError` and helpers like
+    `validation_error/2` instead.
+    """
     use Splode.ErrorClass, class: :invalid
   end
 
   defmodule Execution do
-    @moduledoc "Execution error class"
+    @moduledoc """
+    Execution error class for Splode.
+
+    This module is used by Splode to classify execution-related errors when
+    aggregating or analyzing multiple errors. Do not raise or match on this
+    module directly — use `Jido.Signal.Error.ExecutionFailureError` and helpers like
+    `execution_error/2` instead.
+    """
     use Splode.ErrorClass, class: :execution
   end
 
   defmodule Routing do
-    @moduledoc "Routing error class"
+    @moduledoc """
+    Routing error class for Splode.
+
+    This module is used by Splode to classify routing-related errors when
+    aggregating or analyzing multiple errors. Do not raise or match on this
+    module directly — use `Jido.Signal.Error.RoutingError` and helpers like
+    `routing_error/2` instead.
+    """
     use Splode.ErrorClass, class: :routing
   end
 
   defmodule Timeout do
-    @moduledoc "Timeout error class"
+    @moduledoc """
+    Timeout error class for Splode.
+
+    This module is used by Splode to classify timeout-related errors when
+    aggregating or analyzing multiple errors. Do not raise or match on this
+    module directly — use `Jido.Signal.Error.TimeoutError` and helpers like
+    `timeout_error/2` instead.
+    """
     use Splode.ErrorClass, class: :timeout
   end
 
   defmodule Internal do
-    @moduledoc "Internal error class"
+    @moduledoc """
+    Internal error class for Splode.
+
+    This module is used by Splode to classify internal/unexpected errors when
+    aggregating or analyzing multiple errors. Do not raise or match on this
+    module directly — use `Jido.Signal.Error.InternalError` and helpers like
+    `internal_error/2` instead.
+    """
     use Splode.ErrorClass, class: :internal
 
     defmodule UnknownError do
-      @moduledoc "Unknown internal error"
+      @moduledoc false
+      # This module exists only to satisfy Splode's unknown_error requirement.
       defexception [:message, :details]
 
       @impl true

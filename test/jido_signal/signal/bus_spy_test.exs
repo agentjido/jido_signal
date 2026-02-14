@@ -55,11 +55,11 @@ defmodule Jido.Signal.BusSpyTest do
 
     # Check that the spy captured the signal
     dispatched_signals = BusSpy.get_dispatched_signals(spy)
-    assert length(dispatched_signals) >= 1
+    assert dispatched_signals != []
 
     # Find our test event
     test_events = BusSpy.get_signals_by_type(spy, "test.event")
-    assert length(test_events) >= 1
+    assert test_events != []
 
     # Get the first event (before_dispatch)
     event = hd(test_events)
@@ -135,7 +135,7 @@ defmodule Jido.Signal.BusSpyTest do
     assert length(all_events) >= 4
 
     exact_match = BusSpy.get_signals_by_type(spy, "user.created")
-    assert length(exact_match) >= 1
+    assert exact_match != []
     assert hd(exact_match).signal.type == "user.created"
 
     BusSpy.stop_spy(spy)
@@ -144,7 +144,7 @@ defmodule Jido.Signal.BusSpyTest do
   test "spy captures dispatch results and errors", %{bus_name: bus_name} do
     spy = BusSpy.start_spy()
 
-    # Subscribe with a pid dispatch to self() 
+    # Subscribe with a pid dispatch to self()
     {:ok, _sub_id} =
       Bus.subscribe(bus_name, "result.*",
         dispatch: {:pid, [target: self(), delivery_mode: :async]}
@@ -166,7 +166,7 @@ defmodule Jido.Signal.BusSpyTest do
     dispatched_signals = BusSpy.get_dispatched_signals(spy)
     after_dispatch_events = Enum.filter(dispatched_signals, &(&1.event == :after_dispatch))
 
-    assert length(after_dispatch_events) >= 1
+    assert after_dispatch_events != []
     event = hd(after_dispatch_events)
     assert event.dispatch_result == :ok
 

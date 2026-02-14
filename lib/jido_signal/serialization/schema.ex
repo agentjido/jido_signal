@@ -28,7 +28,7 @@ defmodule Jido.Signal.Serialization.Schema do
         "extensions" => Zoi.optional(Zoi.map()),
         "jido_schema_version" => Zoi.optional(Zoi.integer())
       },
-      strict: false
+      unrecognized_keys: :strip
     )
   end
 

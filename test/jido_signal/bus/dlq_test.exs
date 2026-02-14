@@ -7,6 +7,19 @@ defmodule JidoTest.Signal.Bus.DLQTest do
 
   @moduletag :capture_log
 
+  defmodule SlowSuccessAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def validate_opts(opts), do: {:ok, opts}
+
+    @impl true
+    def deliver(_signal, opts) do
+      Process.sleep(Keyword.get(opts, :sleep_ms, 150))
+      :ok
+    end
+  end
+
   defp create_test_signal(type \\ "test.signal") do
     {:ok, signal} =
       Signal.new(%{
@@ -171,6 +184,25 @@ defmodule JidoTest.Signal.Bus.DLQTest do
       assert metadata.subscription_id == subscription_id
 
       :telemetry.detach("test-redrive-#{inspect(ref)}")
+    end
+
+    test "redrive does not block unrelated bus calls", %{bus: bus, journal_pid: journal_pid} do
+      {:ok, subscription_id} =
+        Bus.subscribe(bus, "test.*", dispatch: {SlowSuccessAdapter, [sleep_ms: 250]})
+
+      signal = create_test_signal("test.signal.slow")
+      {:ok, _entry_id} = ETS.put_dlq_entry(subscription_id, signal, :error, %{}, journal_pid)
+
+      redrive_task = Task.async(fn -> Bus.redrive_dlq(bus, subscription_id) end)
+
+      started_at = System.monotonic_time(:millisecond)
+      snapshots = Bus.snapshot_list(bus)
+      duration_ms = System.monotonic_time(:millisecond) - started_at
+
+      assert is_list(snapshots)
+      assert duration_ms < 200
+
+      assert {:ok, %{succeeded: 1, failed: 0}} = Task.await(redrive_task, 1_000)
     end
   end
 

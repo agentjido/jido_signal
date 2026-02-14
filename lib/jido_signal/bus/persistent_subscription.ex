@@ -7,38 +7,43 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   Each instance maps 1:1 to a bus subscriber and is managed as a child of the Bus's dynamic supervisor.
   """
   use GenServer
-  use TypedStruct
 
-  alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
+  alias Jido.Signal.Telemetry
 
   require Logger
 
-  typedstruct do
-    field(:id, String.t(), enforce: true)
-    field(:bus_pid, pid(), enforce: true)
-    field(:bus_subscription, Subscriber.t())
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              id: Zoi.string(),
+              bus_pid: Zoi.any(),
+              bus_subscription: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              client_pid: Zoi.any(),
+              checkpoint: Zoi.default(Zoi.integer(), 0) |> Zoi.optional(),
+              max_in_flight: Zoi.default(Zoi.integer(), 1000) |> Zoi.optional(),
+              max_pending: Zoi.default(Zoi.integer(), 10_000) |> Zoi.optional(),
+              in_flight_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              pending_signals: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              max_attempts: Zoi.default(Zoi.integer(), 5) |> Zoi.optional(),
+              attempts: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
+              retry_interval: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
+              retry_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              client_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              task_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+              journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              checkpoint_key: Zoi.string() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
 
-    # Persistent subscription state
-    field(:client_pid, pid(), enforce: true)
-    field(:checkpoint, non_neg_integer(), default: 0)
-    field(:max_in_flight, pos_integer(), default: 1000)
-    field(:max_pending, pos_integer(), default: 10_000)
-    field(:in_flight_signals, map(), default: %{})
-    field(:pending_signals, map(), default: %{})
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
 
-    # Retry and DLQ
-    field(:max_attempts, pos_integer(), default: 5)
-    field(:attempts, %{String.t() => non_neg_integer()}, default: %{})
-    field(:retry_interval, pos_integer(), default: 100)
-    field(:retry_timer_ref, reference() | nil, default: nil)
-
-    # Journal persistence
-    field(:journal_adapter, module(), default: nil)
-    field(:journal_pid, pid(), default: nil)
-    field(:checkpoint_key, String.t())
-  end
+  @doc "Returns the Zoi schema for PersistentSubscription"
+  def schema, do: @schema
 
   # Client API
 
@@ -56,7 +61,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   - dispatch_opts: Additional dispatch options for the subscription
   """
   def start_link(opts) do
-    id = Keyword.get(opts, :id) || Jido.Signal.ID.generate!()
+    id = Keyword.get(opts, :id) || ID.generate!()
     opts = Keyword.put(opts, :id, id)
 
     # Validate start_from value and set default if invalid
@@ -83,6 +88,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def init(opts) do
+    Process.flag(:trap_exit, true)
+
     # Extract the bus subscription
     bus_subscription = Keyword.fetch!(opts, :bus_subscription)
 
@@ -123,6 +130,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       max_pending: Keyword.get(opts, :max_pending, 10_000),
       max_attempts: Keyword.get(opts, :max_attempts, 5),
       retry_interval: Keyword.get(opts, :retry_interval, 100),
+      task_supervisor: Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor),
       in_flight_signals: %{},
       pending_signals: %{},
       attempts: %{},
@@ -131,10 +139,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       checkpoint_key: checkpoint_key
     }
 
-    # Monitor the client process if specified
-    if state.client_pid && Process.alive?(state.client_pid) do
-      Process.monitor(state.client_pid)
-    end
+    # Establish monitor without alive?/monitor race.
+    state = maybe_monitor_client(state, state.client_pid)
 
     {:ok, state}
   end
@@ -211,7 +217,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
       # Both full - reject with backpressure
       true ->
-        :telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :subscription, :backpressure],
           %{},
           %{
@@ -255,27 +261,23 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @impl GenServer
   def handle_cast({:reconnect, new_client_pid}, state) do
-    # Only proceed if the new client is alive
-    if Process.alive?(new_client_pid) do
-      # Monitor the new client process
-      Process.monitor(new_client_pid)
+    # Update the bus subscription to point to the new client PID.
+    updated_subscription = %{
+      state.bus_subscription
+      | dispatch: {:pid, target: new_client_pid, delivery_mode: :async}
+    }
 
-      # Update the bus subscription to point to the new client PID
-      updated_subscription = %{
-        state.bus_subscription
-        | dispatch: {:pid, target: new_client_pid, delivery_mode: :async}
-      }
+    # Replace stale monitor ref before monitoring new client.
+    new_state =
+      state
+      |> Map.put(:client_pid, new_client_pid)
+      |> Map.put(:bus_subscription, updated_subscription)
+      |> maybe_monitor_client(new_client_pid)
 
-      # Update state with new client PID and subscription
-      new_state = %{state | client_pid: new_client_pid, bus_subscription: updated_subscription}
+    # Replay any signals that were missed while disconnected.
+    new_state = replay_missed_signals(new_state)
 
-      # Replay any signals that were missed while disconnected
-      new_state = replay_missed_signals(new_state)
-
-      {:noreply, new_state}
-    else
-      {:noreply, state}
-    end
+    {:noreply, new_state}
   end
 
   @impl GenServer
@@ -293,7 +295,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
       # Both full - drop the signal with backpressure telemetry
       true ->
-        :telemetry.execute(
+        Telemetry.execute(
           [:jido, :signal, :subscription, :backpressure],
           %{},
           %{
@@ -336,48 +338,98 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp replay_missed_signals(state) do
     Logger.debug("Replaying missed signals for subscription #{state.id}")
 
-    # Get the bus state to access the log
-    bus_state = :sys.get_state(state.bus_pid)
+    missed_signals = fetch_signals_since_checkpoint(state)
 
-    missed_signals =
-      Enum.filter(bus_state.log, fn {_id, signal} ->
-        case DateTime.from_iso8601(signal.time) do
-          {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp) > state.checkpoint
-          _ -> false
-        end
-      end)
-
-    Enum.each(missed_signals, fn {_id, signal} ->
-      case DateTime.from_iso8601(signal.time) do
-        {:ok, timestamp, _offset} ->
-          if DateTime.to_unix(timestamp) > state.checkpoint do
-            case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
-              :ok ->
-                :ok
-
-              {:error, reason} ->
-                Logger.debug(
-                  "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
-                )
-            end
-          end
-
-        _ ->
-          :ok
-      end
+    Enum.each(missed_signals, fn {signal_log_id, signal} ->
+      replay_single_signal(signal_log_id, signal, state)
     end)
 
     state
   end
 
+  defp fetch_signals_since_checkpoint(state) do
+    try do
+      case GenServer.call(state.bus_pid, {:signals_since, state.checkpoint}) do
+        {:ok, signals} when is_list(signals) -> signals
+        _ -> []
+      end
+    catch
+      :exit, _reason -> []
+    end
+  end
+
+  defp signal_after_checkpoint?(signal_log_id, signal, checkpoint) do
+    signal_timestamp_ms(signal_log_id, signal) > checkpoint
+  end
+
+  defp replay_single_signal(signal_log_id, signal, state) do
+    if signal_after_checkpoint?(signal_log_id, signal, state.checkpoint) do
+      dispatch_replay_signal(signal, state)
+    end
+  end
+
+  defp signal_timestamp_ms(signal_log_id, signal) do
+    case safe_extract_timestamp(signal_log_id) do
+      {:ok, ts} ->
+        ts
+
+      :error ->
+        case DateTime.from_iso8601(signal.time) do
+          {:ok, timestamp, _offset} -> DateTime.to_unix(timestamp, :millisecond)
+          _ -> 0
+        end
+    end
+  end
+
+  defp safe_extract_timestamp(signal_log_id) when is_binary(signal_log_id) do
+    {:ok, ID.extract_timestamp(signal_log_id)}
+  rescue
+    _ -> :error
+  end
+
+  defp safe_extract_timestamp(_), do: :error
+
+  defp dispatch_replay_signal(signal, state) do
+    case Dispatch.dispatch(signal, state.bus_subscription.dispatch,
+           task_supervisor: state.task_supervisor
+         ) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.debug(
+          "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
+        )
+    end
+  end
+
   @impl GenServer
   def terminate(_reason, state) do
-    # Use state.id as the subscription_id since that's what we're using to identify the subscription
-    if state.bus_pid do
-      # Best effort to unsubscribe
-      Jido.Signal.Bus.unsubscribe(state.bus_pid, state.id)
-    end
+    maybe_cancel_retry_timer(state.retry_timer_ref)
+    maybe_demonitor_client(state.client_monitor_ref)
 
+    :ok
+  end
+
+  defp maybe_monitor_client(state, client_pid) when is_pid(client_pid) do
+    maybe_demonitor_client(state.client_monitor_ref)
+    monitor_ref = Process.monitor(client_pid)
+    %{state | client_monitor_ref: monitor_ref}
+  end
+
+  defp maybe_monitor_client(state, _client_pid), do: state
+
+  defp maybe_demonitor_client(nil), do: :ok
+
+  defp maybe_demonitor_client(monitor_ref) do
+    Process.demonitor(monitor_ref, [:flush])
+    :ok
+  end
+
+  defp maybe_cancel_retry_timer(nil), do: :ok
+
+  defp maybe_cancel_retry_timer(timer_ref) do
+    Process.cancel_timer(timer_ref)
     :ok
   end
 
@@ -466,39 +518,50 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   @spec dispatch_signal(t(), String.t(), term()) :: t()
   defp dispatch_signal(state, signal_log_id, signal) do
     if state.bus_subscription.dispatch do
-      case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
-        :ok ->
-          # Success - clear attempts for this signal and add to in-flight
-          new_attempts = Map.delete(state.attempts, signal_log_id)
-          new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
-          %{state | in_flight_signals: new_in_flight, attempts: new_attempts}
+      result =
+        Dispatch.dispatch(signal, state.bus_subscription.dispatch,
+          task_supervisor: state.task_supervisor
+        )
 
-        {:error, reason} ->
-          # Failure - increment attempts
-          current_attempts = Map.get(state.attempts, signal_log_id, 0) + 1
-
-          if current_attempts >= state.max_attempts do
-            # Move to DLQ
-            handle_dlq(state, signal_log_id, signal, reason, current_attempts)
-          else
-            # Keep for retry - add to pending for later retry, update attempts
-            :telemetry.execute(
-              [:jido, :signal, :subscription, :dispatch, :retry],
-              %{attempt: current_attempts},
-              %{subscription_id: state.id, signal_id: signal.id}
-            )
-
-            new_attempts = Map.put(state.attempts, signal_log_id, current_attempts)
-            new_pending = Map.put(state.pending_signals, signal_log_id, signal)
-            state = %{state | pending_signals: new_pending, attempts: new_attempts}
-            schedule_retry(state)
-          end
-      end
+      handle_dispatch_result(result, state, signal_log_id, signal)
     else
       # No dispatch configured - just add to in-flight
       new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
       %{state | in_flight_signals: new_in_flight}
     end
+  end
+
+  defp handle_dispatch_result(:ok, state, signal_log_id, signal) do
+    # Success - clear attempts for this signal and add to in-flight
+    new_attempts = Map.delete(state.attempts, signal_log_id)
+    new_in_flight = Map.put(state.in_flight_signals, signal_log_id, signal)
+    %{state | in_flight_signals: new_in_flight, attempts: new_attempts}
+  end
+
+  defp handle_dispatch_result({:error, reason}, state, signal_log_id, signal) do
+    # Failure - increment attempts
+    current_attempts = Map.get(state.attempts, signal_log_id, 0) + 1
+
+    if current_attempts >= state.max_attempts do
+      # Move to DLQ
+      handle_dlq(state, signal_log_id, signal, reason, current_attempts)
+    else
+      handle_dispatch_retry(state, signal_log_id, signal, current_attempts)
+    end
+  end
+
+  defp handle_dispatch_retry(state, signal_log_id, signal, current_attempts) do
+    # Keep for retry - add to pending for later retry, update attempts
+    Telemetry.execute(
+      [:jido, :signal, :subscription, :dispatch, :retry],
+      %{attempt: current_attempts},
+      %{subscription_id: state.id, signal_id: signal.id}
+    )
+
+    new_attempts = Map.put(state.attempts, signal_log_id, current_attempts)
+    new_pending = Map.put(state.pending_signals, signal_log_id, signal)
+    state = %{state | pending_signals: new_pending, attempts: new_attempts}
+    schedule_retry(state)
   end
 
   # Schedules a retry timer if one is not already scheduled
@@ -532,7 +595,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
              state.journal_pid
            ) do
         {:ok, dlq_id} ->
-          :telemetry.execute(
+          Telemetry.execute(
             [:jido, :signal, :subscription, :dlq],
             %{},
             %{

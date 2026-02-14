@@ -4,15 +4,23 @@ defmodule Jido.Signal.Journal do
   and conversation relationships. It provides a directed graph of signals that captures
   temporal ordering and causal relationships.
   """
-  use TypedStruct
-
   alias Jido.Signal
 
-  typedstruct do
-    @typedoc "The journal maintains the graph of signals and their relationships"
-    field(:adapter, module(), enforce: true)
-    field(:adapter_pid, pid())
-  end
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              adapter: Zoi.atom(),
+              adapter_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+            }
+          )
+
+  @typedoc "The journal maintains the graph of signals and their relationships"
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Journal"
+  def schema, do: @schema
 
   @type query_opts :: [
           type: String.t() | nil,
@@ -71,20 +79,26 @@ defmodule Jido.Signal.Journal do
   def get_conversation(%__MODULE__{} = journal, conversation_id) do
     case call_adapter(journal, :get_conversation, [conversation_id]) do
       {:ok, signal_ids} ->
-        signal_ids
-        |> MapSet.to_list()
-        |> Task.async_stream(fn id ->
-          case call_adapter(journal, :get_signal, [id]) do
-            {:ok, signal} -> signal
-            _ -> nil
-          end
-        end)
-        |> Stream.map(fn {:ok, signal} -> signal end)
-        |> Stream.reject(&is_nil/1)
-        |> Enum.sort_by(& &1.time, &sort_time_compare/2)
+        fetch_and_sort_signals(journal, signal_ids)
 
       _ ->
         []
+    end
+  end
+
+  defp fetch_and_sort_signals(journal, signal_ids) do
+    signal_ids
+    |> MapSet.to_list()
+    |> Task.async_stream(&fetch_signal(journal, &1))
+    |> Stream.map(fn {:ok, signal} -> signal end)
+    |> Stream.reject(&is_nil/1)
+    |> Enum.sort_by(& &1.time, &sort_time_compare/2)
+  end
+
+  defp fetch_signal(journal, id) do
+    case call_adapter(journal, :get_signal, [id]) do
+      {:ok, signal} -> signal
+      _ -> nil
     end
   end
 
@@ -101,17 +115,7 @@ defmodule Jido.Signal.Journal do
   def get_effects(%__MODULE__{} = journal, signal_id) do
     case call_adapter(journal, :get_effects, [signal_id]) do
       {:ok, effect_ids} ->
-        effect_ids
-        |> MapSet.to_list()
-        |> Task.async_stream(fn id ->
-          case call_adapter(journal, :get_signal, [id]) do
-            {:ok, signal} -> signal
-            _ -> nil
-          end
-        end)
-        |> Stream.map(fn {:ok, signal} -> signal end)
-        |> Stream.reject(&is_nil/1)
-        |> Enum.sort_by(& &1.time, &sort_time_compare/2)
+        fetch_and_sort_signals(journal, effect_ids)
 
       _ ->
         []

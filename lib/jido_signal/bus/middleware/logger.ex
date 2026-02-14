@@ -63,27 +63,38 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   @impl true
   def before_publish(signals, context, config) do
     if config.log_publish do
-      signal_count = length(signals)
-      signal_types = signals |> Enum.map(& &1.type) |> Enum.uniq()
-
-      Logger.log(
-        config.level,
-        "Bus #{context.bus_name}: Publishing #{signal_count} signal(s) of types: #{inspect(signal_types)} [#{context.timestamp}]"
-      )
-
-      if config.include_signal_data do
-        Enum.each(signals, fn signal ->
-          data_preview = format_signal_data(signal.data, config.max_data_length)
-
-          Logger.log(
-            config.level,
-            "Signal #{signal.id} (#{signal.type}) from #{signal.source}: #{data_preview}"
-          )
-        end)
-      end
+      log_publish_summary(signals, context, config)
+      maybe_log_signal_data(signals, config)
     end
 
     {:cont, signals, config}
+  end
+
+  defp log_publish_summary(signals, context, config) do
+    signal_count = length(signals)
+    signal_types = signals |> Enum.map(& &1.type) |> Enum.uniq()
+
+    Logger.log(
+      config.level,
+      "Bus #{context.bus_name}: Publishing #{signal_count} signal(s) of types: #{inspect(signal_types)} [#{context.timestamp}]"
+    )
+  end
+
+  defp maybe_log_signal_data(signals, config) do
+    if config.include_signal_data do
+      Enum.each(signals, fn signal ->
+        log_single_signal_data(signal, config)
+      end)
+    end
+  end
+
+  defp log_single_signal_data(signal, config) do
+    data_preview = format_signal_data(signal.data, config.max_data_length)
+
+    Logger.log(
+      config.level,
+      "Signal #{signal.id} (#{signal.type}) from #{signal.source}: #{data_preview}"
+    )
   end
 
   @impl true

@@ -1,7 +1,7 @@
 defmodule Jido.Signal.MixProject do
   use Mix.Project
 
-  @version "1.2.0"
+  @version "2.0.0-rc.4"
   @source_url "https://github.com/agentjido/jido_signal"
   @description "Agent Communication Envelope and Utilities"
 
@@ -198,31 +198,26 @@ defmodule Jido.Signal.MixProject do
       {:msgpax, "~> 2.3"},
       {:nimble_options, "~> 1.1"},
       {:phoenix_pubsub, "~> 2.1"},
-      {:private, "~> 0.1.2"},
       {:telemetry, "~> 1.3"},
-      {:telemetry_metrics, "~> 1.1"},
-      {:typed_struct, "~> 0.3.0"},
       {:uniq, "~> 0.6.1"},
-      {:splode, "~> 0.2.9"},
-      {:zoi, "~> 0.10"},
+      {:splode, "~> 0.3.0"},
+      {:zoi, "~> 0.16"},
       {:memento, "~> 0.5.0"},
       {:fuse, "~> 2.5"},
 
       # Development & Test Dependencies
       {:git_ops, "~> 2.9", only: :dev, runtime: false},
-      {:git_hooks, "~> 0.8", only: [:dev, :test], runtime: false},
+      {:git_hooks, "~> 0.8", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:doctor, "~> 0.21", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18.3", only: [:dev, :test]},
+      {:castore, "~> 1.0", only: [:dev, :test]},
       {:expublish, "~> 2.7", only: [:dev], runtime: false},
-      {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:mix_test_watch, "~> 1.4.0", only: :dev, runtime: false},
       {:mimic, "~> 2.0", only: :test},
-      {:quokka, "~> 2.10", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.0", only: [:dev, :test]},
-
-      # Optional
       {:igniter, "~> 0.7", optional: true}
     ]
   end

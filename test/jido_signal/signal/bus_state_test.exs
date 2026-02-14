@@ -8,7 +8,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "append_signals/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       {:ok, state: state}
     end
 
@@ -142,7 +142,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "log_to_list/1" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       signals = [
         Signal.new!(type: "test.signal", source: "test.source", data: "data1"),
@@ -153,29 +153,43 @@ defmodule JidoTest.Signal.Bus.StateTest do
       {:ok, state: state, signals: signals, returned_signals: returned_signals}
     end
 
-    test "returns signals in order by ID", %{state: state, signals: signals} do
+    test "returns signals in recorded log order", %{state: state, signals: signals} do
       list = State.log_to_list(state)
       assert length(list) == 2
 
-      # Verify signals are in order by ID
-      [first, second] = list
-      assert first.id <= second.id
-
-      # Verify all original signals are present by checking their data
-      original_data = Enum.map(signals, & &1.data) |> MapSet.new()
-      list_data = Enum.map(list, & &1.data) |> MapSet.new()
-      assert MapSet.equal?(original_data, list_data)
+      assert Enum.map(list, & &1.data) == Enum.map(signals, & &1.data)
     end
 
     test "handles empty log", %{state: state} do
       empty_state = %{state | log: %{}}
       assert State.log_to_list(empty_state) == []
     end
+
+    test "uses log key chronology when signal IDs are non-chronological", %{state: state} do
+      {log_ids, _batch_timestamp} = ID.generate_batch(2)
+      [first_log_id, second_log_id] = log_ids
+
+      first_signal =
+        Signal.new!(id: "signal-z", type: "test.signal", source: "test.source", data: "first")
+
+      second_signal =
+        Signal.new!(id: "signal-a", type: "test.signal", source: "test.source", data: "second")
+
+      custom_id_state = %{
+        state
+        | log: %{first_log_id => first_signal, second_log_id => second_signal}
+      }
+
+      ordered_signals = State.log_to_list(custom_id_state)
+
+      assert Enum.map(ordered_signals, & &1.id) == ["signal-z", "signal-a"]
+      assert Enum.map(ordered_signals, & &1.data) == ["first", "second"]
+    end
   end
 
   describe "truncate_log/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       signals =
         for i <- 1..5 do
@@ -251,7 +265,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "clear_log/1" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       signals = [
         Signal.new!(type: "test.signal", source: "test.source", data: "data1"),
@@ -292,7 +306,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "add_route/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       route = %Router.Route{path: "test.*", target: {:pid, target: self()}, priority: 0}
       {:ok, state: state, route: route}
     end
@@ -312,7 +326,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "remove_route/2" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       route = %Router.Route{path: "test.*", target: {:pid, target: self()}, priority: 0}
       {:ok, state} = State.add_route(state, route)
       {:ok, state: state, route: route}
@@ -332,7 +346,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "subscription management" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
 
       subscription = %Jido.Signal.Bus.Subscriber{
         id: "sub1",
@@ -392,7 +406,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "auto truncation on append" do
     setup do
-      state = %State{name: :test_bus, max_log_size: 10}
+      state = State.new(:test_bus, max_log_size: 10)
       {:ok, state: state}
     end
 
@@ -473,7 +487,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
     test "respects max_log_size from state config" do
       # Create state with custom max_log_size
-      state = %State{name: :test_bus, max_log_size: 3}
+      state = State.new(:test_bus, max_log_size: 3)
 
       signals =
         for i <- 1..10 do
@@ -488,7 +502,7 @@ defmodule JidoTest.Signal.Bus.StateTest do
 
   describe "signal log integration" do
     setup do
-      state = %State{name: :test_bus}
+      state = State.new(:test_bus)
       {:ok, state: state}
     end
 

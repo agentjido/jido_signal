@@ -70,14 +70,42 @@ defmodule Jido.Signal.Ext.Registry do
   require Logger
 
   @registry_name __MODULE__
+  @pending_key {__MODULE__, :pending_registrations}
+  @pending_lock_key {__MODULE__, :pending_lock}
 
   # Client API
+
+  @doc """
+  Returns a child_spec for starting the registry under a supervisor.
+
+  ## Options
+
+    * `:name` - The name to register the process under (default: #{@registry_name})
+
+  """
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    name = Keyword.get(opts, :name, @registry_name)
+
+    %{
+      id: name,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :permanent,
+      shutdown: 5000
+    }
+  end
 
   @doc """
   Starts the extension registry.
 
   This is typically called by the application supervision tree
   and doesn't need to be called manually.
+
+  ## Options
+
+    * `:name` - The name to register the process under (default: #{@registry_name})
+
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, :ok, Keyword.put_new(opts, :name, @registry_name))
@@ -107,18 +135,20 @@ defmodule Jido.Signal.Ext.Registry do
   """
   @spec register(module()) :: :ok
   def register(module) when is_atom(module) do
-    namespace = apply(module, :namespace, [])
+    namespace = module.namespace()
 
     # Handle the case where the registry process is not started (e.g., during compilation)
     try do
       GenServer.call(@registry_name, {:register, namespace, module})
     catch
       :exit, {:noproc, _} ->
-        Logger.debug("Extension registry not started, skipping registration of #{module}")
+        enqueue_pending_registration(module)
+        Logger.debug("Extension registry not started, queued registration of #{module}")
         :ok
 
       :exit, {:timeout, _} ->
-        Logger.debug("Extension registry timeout, skipping registration of #{module}")
+        enqueue_pending_registration(module)
+        Logger.debug("Extension registry timeout, queued registration of #{module}")
         :ok
     end
   end
@@ -235,28 +265,12 @@ defmodule Jido.Signal.Ext.Registry do
 
   @impl GenServer
   def init(:ok) do
-    {:ok, %{}}
+    {:ok, drain_pending_registrations(%{})}
   end
 
   @impl GenServer
   def handle_call({:register, namespace, module}, _from, state) do
-    case Map.get(state, namespace) do
-      nil ->
-        new_state = Map.put(state, namespace, module)
-        {:reply, :ok, new_state}
-
-      existing_module when existing_module == module ->
-        # Same module re-registering (e.g., during hot reload)
-        {:reply, :ok, state}
-
-      existing_module ->
-        # Different module trying to register same namespace
-        Logger.warning(
-          "Extension namespace '#{namespace}' already registered by #{existing_module}, ignoring registration of #{module}"
-        )
-
-        {:reply, :ok, state}
-    end
+    {:reply, :ok, put_extension(state, namespace, module)}
   end
 
   @impl GenServer
@@ -283,5 +297,40 @@ defmodule Jido.Signal.Ext.Registry do
   def handle_call(request, from, state) do
     Logger.warning("Unhandled registry call: #{inspect(request)} from #{inspect(from)}")
     {:reply, {:error, :unknown_request}, state}
+  end
+
+  defp put_extension(state, namespace, module) do
+    case Map.get(state, namespace) do
+      nil ->
+        Map.put(state, namespace, module)
+
+      existing_module when existing_module == module ->
+        # Same module re-registering (e.g., during hot reload).
+        state
+
+      existing_module ->
+        # Different module trying to register same namespace.
+        Logger.warning(
+          "Extension namespace '#{namespace}' already registered by #{existing_module}, ignoring registration of #{module}"
+        )
+
+        state
+    end
+  end
+
+  defp enqueue_pending_registration(module) do
+    :global.trans(@pending_lock_key, fn ->
+      pending = :persistent_term.get(@pending_key, MapSet.new())
+      :persistent_term.put(@pending_key, MapSet.put(pending, module))
+    end)
+  end
+
+  defp drain_pending_registrations(state) do
+    pending_modules = :persistent_term.get(@pending_key, MapSet.new())
+    :persistent_term.erase(@pending_key)
+
+    Enum.reduce(pending_modules, state, fn module, acc ->
+      put_extension(acc, module.namespace(), module)
+    end)
   end
 end

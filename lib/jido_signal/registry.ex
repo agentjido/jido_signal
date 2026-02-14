@@ -5,26 +5,49 @@ defmodule Jido.Signal.Registry do
   Provides functionality to register, unregister, and manage subscriptions
   to signal paths with associated dispatch configurations.
   """
-  use TypedStruct
+  alias Jido.Signal.Router
 
-  typedstruct module: Subscription do
+  defmodule Subscription do
     @moduledoc """
     Represents a subscription to signal patterns in the registry.
 
     A subscription maps a signal path pattern to a dispatch configuration,
     allowing signals matching the pattern to be routed to the specified target.
     """
+
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                id: Zoi.string(),
+                path: Zoi.string(),
+                dispatch: Zoi.any(),
+                created_at: Zoi.any() |> Zoi.nullable() |> Zoi.optional()
+              }
+            )
+
     @typedoc "A single subscription mapping a path to dispatch configuration"
-    field(:id, String.t(), enforce: true)
-    field(:path, String.t(), enforce: true)
-    field(:dispatch, term(), enforce: true)
-    field(:created_at, DateTime.t())
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @doc "Returns the Zoi schema for Subscription"
+    def schema, do: @schema
   end
 
-  typedstruct do
-    @typedoc "Registry containing a unique mapping of subscription IDs to subscriptions"
-    field(:subscriptions, %{String.t() => Subscription.t()}, default: %{})
-  end
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional()
+            }
+          )
+
+  @typedoc "Registry containing a unique mapping of subscription IDs to subscriptions"
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for Registry"
+  def schema, do: @schema
 
   @doc """
   Creates a new empty registry.
@@ -119,7 +142,7 @@ defmodule Jido.Signal.Registry do
     registry.subscriptions
     |> Map.values()
     |> Enum.filter(fn subscription ->
-      Jido.Signal.Router.matches?(path, subscription.path)
+      Router.matches?(path, subscription.path)
     end)
   end
 

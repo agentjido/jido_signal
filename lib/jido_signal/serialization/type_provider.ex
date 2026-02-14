@@ -7,6 +7,8 @@ defmodule Jido.Signal.Serialization.TypeProvider do
   Specification to convert between an Elixir struct and a corresponding string type.
   """
 
+  alias Jido.Signal.Serialization.Config
+
   @type t :: module
   @type type :: String.t()
 
@@ -33,6 +35,6 @@ defmodule Jido.Signal.Serialization.TypeProvider do
   """
   @spec type_provider() :: module()
   def type_provider do
-    Jido.Signal.Serialization.Config.default_type_provider()
+    Config.default_type_provider()
   end
 end

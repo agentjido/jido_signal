@@ -61,6 +61,7 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - Middleware pipeline for cross-cutting concerns with timeout protection
 - Complete signal history with replay capabilities
 - Partitioned dispatch with rate limiting for horizontal scaling
+- Instance isolation for multi-tenant deployments
 
 ### **Advanced Routing Engine**
 - Trie-based pattern matching for optimal performance
@@ -289,7 +290,7 @@ Track signal acknowledgments for reliable processing:
 ```elixir
 # Create persistent subscription with full options
 {:ok, sub_id} = Bus.subscribe(:my_app_bus, "payment.*",
-  persistent: true,
+  persistent?: true, # `persistent: true` is also supported (backward compatible)
   dispatch: {:pid, target: self()},
   max_in_flight: 100,      # Max unacknowledged signals
   max_pending: 5_000,      # Max queued signals before backpressure
@@ -394,6 +395,29 @@ Create point-in-time views of your signal log:
 
 # Export or analyze the signals
 Enum.each(signals, &analyze_order_signal/1)
+```
+
+### Instance Isolation
+
+For multi-tenant applications or testing, create isolated signal infrastructure:
+
+```elixir
+# Start an isolated instance with its own Registry, TaskSupervisor, etc.
+{:ok, _} = Jido.Signal.Instance.start_link(name: MyApp.Jido)
+
+# Start buses scoped to the instance
+{:ok, _} = Jido.Signal.Bus.start_link(name: :tenant_bus, jido: MyApp.Jido)
+
+# Lookup uses the correct instance registry
+{:ok, bus_pid} = Jido.Signal.Bus.whereis(:tenant_bus, jido: MyApp.Jido)
+
+# Multiple instances are completely isolated
+{:ok, _} = Jido.Signal.Instance.start_link(name: TenantA.Jido)
+{:ok, _} = Jido.Signal.Instance.start_link(name: TenantB.Jido)
+
+# Same bus name, different instances = different processes
+{:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantA.Jido)
+{:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantB.Jido)
 ```
 
 ## Use Cases
