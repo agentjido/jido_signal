@@ -702,6 +702,54 @@ defmodule JidoTest.Signal.Bus do
     end
   end
 
+  describe "publish call responsiveness" do
+    defmodule BlockingPublishMiddleware do
+      use Jido.Signal.Bus.Middleware
+
+      @impl true
+      def init(opts) do
+        {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
+      end
+
+      @impl true
+      def before_publish(signals, _context, state) do
+        send(state.test_pid, {:before_publish_started, self()})
+
+        receive do
+          :allow_publish -> {:cont, signals, state}
+        after
+          1_000 -> {:cont, signals, state}
+        end
+      end
+    end
+
+    test "snapshot operations are not blocked while publish is waiting in middleware" do
+      bus_name = "test-publish-nonblocking-#{:erlang.unique_integer([:positive])}"
+
+      start_supervised!(
+        {Bus,
+         name: bus_name,
+         middleware: [{BlockingPublishMiddleware, test_pid: self()}],
+         middleware_timeout_ms: 2_000}
+      )
+
+      {:ok, signal} = Signal.new(%{type: "test.signal", source: "/test", data: %{value: 1}})
+      publish_task = Task.async(fn -> Bus.publish(bus_name, [signal]) end)
+
+      assert_receive {:before_publish_started, middleware_pid}, 500
+
+      snapshot_task = Task.async(fn -> Bus.snapshot_list(bus_name) end)
+
+      snapshot_result =
+        Task.yield(snapshot_task, 200) || Task.shutdown(snapshot_task, :brutal_kill)
+
+      assert {:ok, []} = snapshot_result
+
+      send(middleware_pid, :allow_publish)
+      assert {:ok, [_recorded_signal]} = Task.await(publish_task, 1_500)
+    end
+  end
+
   describe "backpressure" do
     test "returns error when persistent subscription queue is full", %{bus: bus} do
       # Subscribe with persistent subscription with very small queues

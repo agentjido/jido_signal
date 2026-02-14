@@ -216,7 +216,9 @@ defmodule Jido.Signal.Bus do
       partition_pids: partition_pids,
       max_log_size: max_log_size,
       log_ttl_ms: log_ttl_ms,
-      gc_timer_ref: gc_timer_ref
+      gc_timer_ref: gc_timer_ref,
+      publish_inflight: nil,
+      publish_queue: []
     }
 
     {:ok, state}
@@ -563,38 +565,8 @@ defmodule Jido.Signal.Bus do
     end
   end
 
-  def handle_call({:publish, signals}, _from, state) do
-    context = %{
-      bus_name: state.name,
-      timestamp: DateTime.utc_now(),
-      metadata: %{}
-    }
-
-    result =
-      with {:ok, processed_signals, updated_middleware} <-
-             MiddlewarePipeline.before_publish(
-               state.middleware,
-               signals,
-               context,
-               state.middleware_timeout_ms
-             ),
-           state_with_middleware = %{state | middleware: updated_middleware},
-           {:ok, new_state, uuid_signal_pairs} <-
-             publish_with_middleware(
-               state_with_middleware,
-               processed_signals,
-               context,
-               state.middleware_timeout_ms
-             ) do
-        final_state = finalize_publish(new_state, processed_signals, context)
-        recorded_signals = build_recorded_signals(uuid_signal_pairs)
-        {:ok, recorded_signals, final_state}
-      end
-
-    case result do
-      {:ok, recorded_signals, final_state} -> {:reply, {:ok, recorded_signals}, final_state}
-      {:error, error} -> {:reply, {:error, error}, state}
-    end
+  def handle_call({:publish, signals}, from, state) do
+    enqueue_publish_request(state, from, signals)
   end
 
   def handle_call({:replay, path, start_timestamp, opts}, _from, state) do
@@ -741,6 +713,119 @@ defmodule Jido.Signal.Bus do
     partition_target = partition_target(state, partition_id)
 
     safe_partition_call(partition_target, {:add_subscription, subscription_id, subscription})
+  end
+
+  defp enqueue_publish_request(%{publish_inflight: nil} = state, from, signals) do
+    case start_publish_request(state, from, signals) do
+      {:ok, new_state} -> {:noreply, new_state}
+      {:error, reply} -> {:reply, reply, state}
+    end
+  end
+
+  defp enqueue_publish_request(state, from, signals) do
+    queued_requests = state.publish_queue ++ [{from, signals}]
+    {:noreply, %{state | publish_queue: queued_requests}}
+  end
+
+  defp start_publish_request(state, from, signals) do
+    parent = self()
+    publish_ref = make_ref()
+    task_supervisor = Names.task_supervisor(jido: state.jido)
+    task_state = %{state | publish_inflight: nil, publish_queue: []}
+
+    case Task.Supervisor.start_child(task_supervisor, fn ->
+           result = execute_publish_request(task_state, signals)
+           send(parent, {:publish_result, publish_ref, result})
+         end) do
+      {:ok, task_pid} ->
+        monitor_ref = Process.monitor(task_pid)
+
+        inflight = %{
+          ref: publish_ref,
+          from: from,
+          task_pid: task_pid,
+          monitor_ref: monitor_ref
+        }
+
+        {:ok, %{state | publish_inflight: inflight}}
+
+      {:error, reason} ->
+        {:error,
+         {:error,
+          Error.execution_error("Failed to start publish task", %{reason: inspect(reason)})}}
+    end
+  end
+
+  defp execute_publish_request(state, signals) do
+    context = %{
+      bus_name: state.name,
+      timestamp: DateTime.utc_now(),
+      metadata: %{}
+    }
+
+    try do
+      with {:ok, processed_signals, updated_middleware} <-
+             MiddlewarePipeline.before_publish(
+               state.middleware,
+               signals,
+               context,
+               state.middleware_timeout_ms
+             ),
+           state_with_middleware = %{state | middleware: updated_middleware},
+           {:ok, publish_state, uuid_signal_pairs} <-
+             publish_with_middleware(
+               state_with_middleware,
+               processed_signals,
+               context,
+               state.middleware_timeout_ms
+             ),
+           final_state = finalize_publish(publish_state, processed_signals, context) do
+        {:ok,
+         %{
+           recorded_signals: build_recorded_signals(uuid_signal_pairs),
+           uuid_signal_pairs: uuid_signal_pairs,
+           middleware: final_state.middleware
+         }}
+      end
+    rescue
+      error ->
+        {:error,
+         Error.execution_error("Publish task failed", %{reason: Exception.message(error)})}
+    catch
+      :exit, reason ->
+        {:error, Error.execution_error("Publish task exited", %{reason: inspect(reason)})}
+    end
+  end
+
+  defp process_publish_result(
+         {:ok,
+          %{recorded_signals: recorded_signals, uuid_signal_pairs: uuid_signal_pairs} = result},
+         state
+       ) do
+    case BusState.append_uuid_signal_pairs(state, uuid_signal_pairs) do
+      {:ok, new_state} ->
+        {{:ok, recorded_signals}, %{new_state | middleware: result.middleware}}
+
+      {:error, reason} ->
+        {{:error, reason}, state}
+    end
+  end
+
+  defp process_publish_result({:error, error}, state), do: {{:error, error}, state}
+
+  defp start_next_publish_request(%{publish_queue: []} = state), do: state
+
+  defp start_next_publish_request(%{publish_queue: [{from, signals} | rest]} = state) do
+    state = %{state | publish_queue: rest}
+
+    case start_publish_request(state, from, signals) do
+      {:ok, new_state} ->
+        new_state
+
+      {:error, reply} ->
+        GenServer.reply(from, reply)
+        start_next_publish_request(state)
+    end
   end
 
   defp finalize_publish(new_state, processed_signals, context) do
@@ -1203,6 +1288,50 @@ defmodule Jido.Signal.Bus do
   end
 
   @impl GenServer
+  def handle_info(
+        {:publish_result, publish_ref, result},
+        %{publish_inflight: %{ref: publish_ref} = inflight} = state
+      ) do
+    Process.demonitor(inflight.monitor_ref, [:flush])
+
+    {reply, updated_state} = process_publish_result(result, state)
+    GenServer.reply(inflight.from, reply)
+
+    next_state =
+      updated_state
+      |> Map.put(:publish_inflight, nil)
+      |> start_next_publish_request()
+
+    {:noreply, next_state}
+  end
+
+  def handle_info({:publish_result, _publish_ref, _result}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:DOWN, monitor_ref, :process, _pid, reason},
+        %{publish_inflight: %{monitor_ref: monitor_ref} = inflight} = state
+      ) do
+    error =
+      case reason do
+        :normal ->
+          Error.execution_error("Publish task exited before replying", %{reason: reason})
+
+        _ ->
+          Error.execution_error("Publish task crashed", %{reason: inspect(reason)})
+      end
+
+    GenServer.reply(inflight.from, {:error, error})
+
+    next_state =
+      state
+      |> Map.put(:publish_inflight, nil)
+      |> start_next_publish_request()
+
+    {:noreply, next_state}
+  end
+
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
     # Bus no longer tracks subscriber pids via monitor refs.
     # Ignore stray :DOWN messages to avoid crashing on stale state fields.
