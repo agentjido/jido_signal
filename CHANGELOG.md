@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!-- changelog -->
+
 ## [2.0.0-rc.4] - 2026-02-06
 
 ### Changed
@@ -83,31 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation with guides and examples
 - OTP supervision tree architecture
 
-[Unreleased]: https://github.com/agentjido/jido_signal/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.4...HEAD
+[2.0.0-rc.4]: https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.3...v2.0.0-rc.4
+[2.0.0-rc.3]: https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.2...v2.0.0-rc.3
+[2.0.0-rc.2]: https://github.com/agentjido/jido_signal/compare/v1.1.0...v2.0.0-rc.2
 [1.1.0]: https://github.com/agentjido/jido_signal/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/agentjido/jido_signal/releases/tag/v1.0.0
-
-<!-- changelog -->
-
-## [v1.2.0](https://github.com/agentjido/jido_signal/compare/v1.1.0...v1.2.0) (2025-12-23)
-
-
-
-
-### Features:
-
-* comprehensive bus improvements and remove PLT files from git by mikehostetler
-
-* router: add telemetry for routing operations by mikehostetler
-
-* router: add optional persistent_term caching for high-throughput routing by mikehostetler
-
-### Bug Fixes:
-
-* resolve flaky tests caused by cross-test telemetry interference by mikehostetler
-
-* update memento to 0.5.0 to fix deprecation warnings by mikehostetler
-
-### Refactoring:
-
-* improve test readability by formatting test parameters by mikehostetler
