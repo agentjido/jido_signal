@@ -9,6 +9,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+## [v2.0.0-rc.5](https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.4...v2.0.0-rc.5) (2026-02-16)
+
+
+
+
+### Bug Fixes:
+
+* format bus_subscriber conditional by mikehostetler
+
+* relocate changelog marker for correct git_ops insertion by mikehostetler
+
+* bus: async publish handling to avoid call-path blocking (#114) by mikehostetler
+
+* bus: batch persistent fanout calls during publish (#115) by mikehostetler
+
+* bus: batch persistent fanout calls during publish (#115) by mikehostetler
+
+* bus: async publish handling to avoid call-path blocking (#114) by mikehostetler
+
+* bus: validate persistent ack identifiers (#110) by mikehostetler
+
+* ci: align bus_subscriber formatting with CI toolchain by mikehostetler
+
+* bus: make dlq redrive non-blocking (#98) by mikehostetler
+
+* ext: drain pending extension registrations on startup (#97) by mikehostetler
+
+* ets: remove dynamic atom table naming (#96) by mikehostetler
+
+* bus: resolve partition targets by name at runtime (#95) by mikehostetler
+
+* bus: harden API calls against process races (#94) by mikehostetler
+
+* middleware: isolate callback failures from callers (#93) by mikehostetler
+
+* bus: remove replay dependence on :sys.get_state (#92) by mikehostetler
+
+* bus: clean up owned resources on terminate (#90) by mikehostetler
+
+* bus: fail fast on linked runtime child exits (#89) by mikehostetler
+
+* bus: harden persistent subscription lifecycle (#91) by mikehostetler
+
+* bus: harden persistent subscription lifecycle by mikehostetler
+
+* signal: generate valid ids in map_to_signal_data (#88) by mikehostetler
+
+* bus: order replay by recorded log keys (#87) by mikehostetler
+
+* bus: harden :DOWN handling against stale subscriber state (#86) by mikehostetler
+
+* bus: ignore stray down messages safely by mikehostetler
+
+* stream: read correlation_id from extension metadata (#85) by mikehostetler
+
+* bus: use millisecond checkpoints in reconnect replay (#84) by mikehostetler
+
+* bus: propagate persistent ack errors to callers (#83) by mikehostetler
+
+* bus: propagate persistent ack errors by mikehostetler
+
+* bus: enforce unsubscribe delete_persistence semantics (#82) by mikehostetler
+
+* bus: enforce delete_persistence unsubscribe semantics by mikehostetler
+
+* bus: support persistent option alias in subscribe (#81) by mikehostetler
+
+* dispatch: instance-scoped task supervisor selection (#80) by mikehostetler
+
+* dispatch: support instance-scoped task supervisors by mikehostetler
+
+* bus: scope partition registry by instance (#79) by mikehostetler
+
+### Refactoring:
+
+* bus: share dispatch middleware flow across Bus and Partition (#116) by mikehostetler
+
+* bus: extract shared dispatch middleware flow by mikehostetler
+
+* bus: extract shared dispatch middleware flow by mikehostetler
+
 ## [2.0.0-rc.4] - 2026-02-06
 
 ### Changed
