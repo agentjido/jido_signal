@@ -11,7 +11,7 @@ defmodule Jido.Signal.Dispatch do
   The following adapters are provided out of the box:
 
   * `:pid` - Direct delivery to a specific process (see `Jido.Signal.Dispatch.PidAdapter`)
-  * `:bus` - Delivery to an event bus (**UNSUPPORTED** - implementation pending)
+  * `:bus` - Delivery to a signal bus via `Jido.Signal.Bus`
   * `:named` - Delivery to a named process (see `Jido.Signal.Dispatch.Named`)
   * `:pubsub` - Delivery via PubSub mechanism (see `Jido.Signal.Dispatch.PubSub`)
   * `:logger` - Log signals using Logger (see `Jido.Signal.Dispatch.LoggerAdapter`)
@@ -151,6 +151,7 @@ defmodule Jido.Signal.Dispatch do
     pid: Jido.Signal.Dispatch.PidAdapter,
     named: Jido.Signal.Dispatch.Named,
     pubsub: Jido.Signal.Dispatch.PubSub,
+    bus: Jido.Signal.Dispatch.Bus,
     logger: Jido.Signal.Dispatch.LoggerAdapter,
     console: Jido.Signal.Dispatch.ConsoleAdapter,
     noop: Jido.Signal.Dispatch.NoopAdapter,
@@ -666,7 +667,7 @@ defmodule Jido.Signal.Dispatch do
           {:ok, adapter}
         else
           {:error,
-           "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, :pubsub, :logger, :console, :noop, :http, :webhook or a module implementing deliver/2"}
+           "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, :pubsub, :bus, :logger, :console, :noop, :http, :webhook or a module implementing deliver/2"}
         end
     end
   end
