@@ -1,126 +1,136 @@
-# defmodule Jido.Signal.Dispatch.Bus do
-#   @moduledoc """
-#   An adapter for dispatching signals through the Jido event bus system.
+defmodule Jido.Signal.Dispatch.Bus do
+  @moduledoc """
+  An adapter for dispatching signals through the Jido signal bus system.
 
-#   This adapter implements the `Jido.Signal.Dispatch.Adapter` behaviour and provides
-#   functionality to publish signals to named event buses. It integrates with the
-#   `Jido.Bus` system for event distribution.
+  This adapter implements the `Jido.Signal.Dispatch.Adapter` behaviour and provides
+  functionality to publish signals to named signal buses. It integrates with the
+  `Jido.Signal.Bus` system for signal distribution.
 
-#   ## Configuration Options
+  ## Configuration Options
 
-#   * `:target` - (required) The atom name of the target bus
-#   * `:stream` - (optional) The stream name to publish to, defaults to "default"
+  * `:target` - (required) The atom name of the target bus
+  * `:jido` - (optional) The instance module for instance-scoped bus lookup
 
-#   ## Event Bus Integration
+  ## Signal Bus Integration
 
-#   The adapter uses `Jido.Bus` to:
-#   * Locate the target bus process using `Jido.Bus.whereis/1`
-#   * Publish signals to the specified stream using `Jido.Bus.publish/4`
+  The adapter uses `Jido.Signal.Bus` to:
+  * Locate the target bus process using `Jido.Signal.Bus.whereis/2`
+  * Publish signals using `Jido.Signal.Bus.publish/2`
 
-#   ## Examples
+  ## Examples
 
-#       # Basic usage with default stream
-#       config = {:bus, [
-#         target: :my_bus
-#       ]}
+      # Basic usage
+      config = {:bus, [
+        target: :my_bus
+      ]}
 
-#       # Specify custom stream
-#       config = {:bus, [
-#         target: :my_bus,
-#         stream: "custom_events"
-#       ]}
+      # Instance-scoped bus lookup
+      config = {:bus, [
+        target: :my_bus,
+        jido: MyApp.Jido
+      ]}
 
-#   ## Error Handling
+  ## Error Handling
 
-#   The adapter handles these error conditions:
+  The adapter handles these error conditions:
 
-#   * `:bus_not_found` - The target bus is not registered
-#   * Other errors from the bus system
-#   """
+  * `:bus_not_found` - The target bus is not registered
+  * Other errors from the bus system
+  """
 
-#   @behaviour Jido.Signal.Dispatch.Adapter
+  @behaviour Jido.Signal.Dispatch.Adapter
 
-#   require Logger
+  require Logger
 
-#   @type delivery_target :: atom()
-#   @type delivery_opts :: [
-#           target: delivery_target(),
-#           stream: String.t()
-#         ]
-#   @type delivery_error ::
-#           :bus_not_found
-#           | term()
+  @type delivery_target :: atom()
+  @type delivery_opts :: [
+          target: delivery_target(),
+          jido: module() | nil
+        ]
+  @type delivery_error ::
+          :bus_not_found
+          | term()
 
-#   @impl Jido.Signal.Dispatch.Adapter
-#   @doc """
-#   Validates the bus adapter configuration options.
+  @impl Jido.Signal.Dispatch.Adapter
+  @doc """
+  Validates the bus adapter configuration options.
 
-#   ## Parameters
+  ## Parameters
 
-#   * `opts` - Keyword list of options to validate
+  * `opts` - Keyword list of options to validate
 
-#   ## Options
+  ## Options
 
-#   * `:target` - Must be an atom representing the bus name
-#   * `:stream` - Must be a string, defaults to "default"
+  * `:target` - Must be an atom representing the bus name
+  * `:jido` - Must be an atom representing the instance module, or nil
 
-#   ## Returns
+  ## Returns
 
-#   * `{:ok, validated_opts}` - Options are valid
-#   * `{:error, reason}` - Options are invalid with string reason
-#   """
-#   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
-#   def validate_opts(opts) do
-#     with {:ok, target} <- validate_target(Keyword.get(opts, :target)),
-#          {:ok, stream} <- validate_stream(Keyword.get(opts, :stream, "default")) do
-#       {:ok,
-#        opts
-#        |> Keyword.put(:target, target)
-#        |> Keyword.put(:stream, stream)}
-#     end
-#   end
+  * `{:ok, validated_opts}` - Options are valid
+  * `{:error, reason}` - Options are invalid with string reason
+  """
+  @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
+  def validate_opts(opts) do
+    with {:ok, target} <- validate_target(Keyword.get(opts, :target)),
+         {:ok, jido} <- validate_jido(Keyword.get(opts, :jido)) do
+      {:ok,
+       opts
+       |> Keyword.put(:target, target)
+       |> Keyword.put(:jido, jido)}
+    end
+  end
 
-#   @impl Jido.Signal.Dispatch.Adapter
-#   @doc """
-#   Delivers a signal to the specified event bus.
+  @impl Jido.Signal.Dispatch.Adapter
+  @doc """
+  Delivers a signal to the specified signal bus.
 
-#   ## Parameters
+  ## Parameters
 
-#   * `signal` - The signal to deliver
-#   * `opts` - Validated options from `validate_opts/1`
+  * `signal` - The signal to deliver
+  * `opts` - Validated options from `validate_opts/1`
 
-#   ## Options
+  ## Options
 
-#   * `:target` - (required) The atom name of the target bus
-#   * `:stream` - (required) The stream name to publish to
+  * `:target` - (required) The atom name of the target bus
+  * `:jido` - (optional) The instance module for scoped lookup
 
-#   ## Returns
+  ## Returns
 
-#   * `:ok` - Signal published successfully
-#   * `{:error, :bus_not_found}` - Target bus not found
-#   * `{:error, reason}` - Other delivery failure
-#   """
-#   @spec deliver(Jido.Signal.t(), delivery_opts()) ::
-#           :ok | {:error, delivery_error()}
-#   def deliver(signal, opts) do
-#     bus_name = Keyword.fetch!(opts, :target)
-#     stream = Keyword.fetch!(opts, :stream)
+  * `:ok` - Signal published successfully
+  * `{:error, :bus_not_found}` - Target bus not found
+  * `{:error, reason}` - Other delivery failure
+  """
+  @spec deliver(Jido.Signal.t(), delivery_opts()) ::
+          :ok | {:error, delivery_error()}
+  def deliver(signal, opts) do
+    bus_name = Keyword.fetch!(opts, :target)
+    jido = Keyword.get(opts, :jido)
 
-#     case Jido.Bus.whereis(bus_name) do
-#       {:ok, pid} ->
-#         Jido.Bus.publish(pid, stream, :any_version, [signal])
+    lookup_opts = if jido, do: [jido: jido], else: []
 
-#       {:error, :not_found} ->
-#         Logger.error("Bus not found: #{bus_name}")
-#         {:error, :bus_not_found}
-#     end
-#   end
+    try do
+      case Jido.Signal.Bus.whereis(bus_name, lookup_opts) do
+        {:ok, pid} ->
+          case Jido.Signal.Bus.publish(pid, [signal]) do
+            {:ok, _recorded} -> :ok
+            {:error, reason} -> {:error, reason}
+          end
 
-#   # Private helper to validate the target bus name
-#   defp validate_target(name) when is_atom(name), do: {:ok, name}
-#   defp validate_target(_), do: {:error, "target must be a bus name atom"}
+        {:error, :not_found} ->
+          Logger.error("Bus not found: #{bus_name}")
+          {:error, :bus_not_found}
+      end
+    rescue
+      ArgumentError ->
+        Logger.error("Bus not found: #{bus_name}")
+        {:error, :bus_not_found}
+    end
+  end
 
-#   # Private helper to validate the stream name
-#   defp validate_stream(stream) when is_binary(stream), do: {:ok, stream}
-#   defp validate_stream(_), do: {:error, "stream must be a string"}
-# end
+  defp validate_target(name) when is_atom(name) and not is_nil(name), do: {:ok, name}
+  defp validate_target(_), do: {:error, "target must be a bus name atom"}
+
+  defp validate_jido(nil), do: {:ok, nil}
+  defp validate_jido(jido) when is_atom(jido), do: {:ok, jido}
+  defp validate_jido(_), do: {:error, "jido must be an atom or nil"}
+end
