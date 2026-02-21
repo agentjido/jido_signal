@@ -9,7 +9,7 @@ Add to your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:jido_signal, "~> 1.0"}
+    {:jido_signal, "~> 2.0"}
   ]
 end
 ```

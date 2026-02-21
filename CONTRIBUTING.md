@@ -48,7 +48,9 @@ Welcome to the Jido Signal contributor's guide! We're excited that you're intere
 │   │   ├── bus/           # Event bus implementations
 │   │   ├── dispatch/      # Signal dispatching logic
 │   │   ├── router/        # Signal routing
-│   │   └── adapters/      # Backend adapters
+│   │   ├── journal/       # Signal journal + persistence adapters
+│   │   ├── serialization/ # Signal serializers and schema helpers
+│   │   └── ext/           # Signal extension helpers
 │   └── jido_signal.ex     # Main entry point
 ├── test/
 │   ├── jido_signal/
@@ -62,7 +64,7 @@ Welcome to the Jido Signal contributor's guide! We're excited that you're intere
 - **Bus**: Event bus for publish/subscribe patterns
 - **Dispatch**: Signal dispatching and delivery
 - **Router**: Signal routing based on topics and patterns
-- **Adapters**: Backend implementations (Phoenix.PubSub, etc.)
+- **Dispatch Adapters**: Delivery targets like PID, PubSub, HTTP, and webhooks
 
 ## Development Guidelines
 
@@ -124,7 +126,7 @@ Welcome to the Jido Signal contributor's guide! We're excited that you're intere
    mix test --cover
 
    # Run specific test file
-   mix test test/jido_signal/bus_test.exs
+   mix test test/jido_signal/signal/bus_test.exs
    ```
 
 ### Error Handling
