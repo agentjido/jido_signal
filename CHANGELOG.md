@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+## [2.0.0] - 2026-02-22
+
+### Changed
+- Promote the 2.0.0 release candidate line to stable 2.0.0
+- Require Elixir `~> 1.18` and document OTP `27+` prerequisites
+- Refresh package metadata/docs for the final 2.0 release
+
+### Fixed
+- Tighten bus persistence cleanup guard handling in `Bus.Subscriber`
+- Remove stale commented skipped-test block from persistence coverage tests
+
 ## [v2.0.0-rc.5](https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.4...v2.0.0-rc.5) (2026-02-16)
 
 
@@ -166,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation with guides and examples
 - OTP supervision tree architecture
 
-[Unreleased]: https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.4...HEAD
+[Unreleased]: https://github.com/agentjido/jido_signal/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.5...v2.0.0
 [2.0.0-rc.4]: https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.3...v2.0.0-rc.4
 [2.0.0-rc.3]: https://github.com/agentjido/jido_signal/compare/v2.0.0-rc.2...v2.0.0-rc.3
 [2.0.0-rc.2]: https://github.com/agentjido/jido_signal/compare/v1.1.0...v2.0.0-rc.2

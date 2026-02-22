@@ -1,72 +1,45 @@
-# Jido Signal - Agent Guide
+# AGENTS.md - Jido.Signal Guide
 
-## Build/Test/Lint Commands
-- `mix deps.get` - fetch dependencies
-- `mix test` - run full test suite (excludes flaky tests)
-- `mix test test/path/to/file_test.exs` - run single test file
-- `mix test test/path/to/file_test.exs:42` - run single test at line 42
-- `mix test --exclude flaky` bypassed by running plain `mix test` for debugging
-- `mix q` or `mix quality` - format, compile with warnings-as-errors, dialyzer, credo
-- `mix format` - format code, `mix compile --warnings-as-errors` - strict compilation
-- `mix coveralls.html` - test coverage report
+## Intent
+Model domain events as validated signals and route them predictably through bus/dispatch layers.
 
-## Architecture
-- OTP application with supervision tree: `Jido.Signal.Supervisor` → Registry + Task.Supervisor
-- Main modules: `Jido.Signal` (struct), `Jido.Signal.Bus` (GenServer pub/sub), `Jido.Signal.Router` (trie-based routing)
-- Dispatch adapters: `:pid`, `:pubsub`, `:http`, `:bus`, `:named`, `:console`, `:logger`, `:noop`
-- In-memory persistence via ETS or maps, no external DB dependency
-- Middleware pipeline for cross-cutting concerns
-- **Instance isolation**: `Jido.Signal.Instance` for multi-tenant/isolated infrastructure via `jido:` option
+## Runtime Baseline
+- Elixir `~> 1.18`
+- OTP `27+` (release QA baseline)
 
-## Router System
-- **Trie-based routing**: Efficient prefix tree for path matching with O(k) complexity (k = segments)
-- **Pattern matching**: Exact (`"user.created"`), single wildcard (`"user.*"`), multi-level (`"audit.**"`)
-- **Handler ordering**: By complexity (exact > wildcard) → priority (-100 to 100) → registration FIFO
-- **Performance optimizations**: Direct segment matching (no trie build per match), efficient wildcard traversal
-- **Route definition formats**:
-  - `{path, target}` - Simple route with default priority 0
-  - `{path, target, priority}` - Route with priority (-100 to 100)
-  - `{path, match_fn, target, priority}` - Route with pattern matching function
-  - `{path, [targets]}` - Route with multiple dispatch targets
-- **Dynamic management**: `Router.add/2`, `Router.remove/2`, `Router.has_route?/2`
-- **Pattern utilities**: `Router.matches?/2`, `Router.filter/2` for signal filtering
-- **Internal structure**: Router.Engine (trie ops), Router.Validator (path validation), Router.Route (definition)
+## Commands
+- `mix test` (default alias excludes `:flaky`)
+- `mix test --include flaky` (full suite)
+- `mix q` or `mix quality` (`format --check-formatted`, `compile --warnings-as-errors`, `credo`, `dialyzer`)
+- `mix coveralls.html` (coverage report)
+- `mix docs` (local docs)
 
-## Code Style
-- snake_case functions, PascalCase modules under `Jido.Signal.*`
-- TypedStruct for struct definitions with enforced keys & types
-- Extensive `@moduledoc`/`@doc` with parameters, returns, examples
-- Error handling: `{:error, Jido.Signal.Error.t()}` or atoms
-- `with...do` pipelines for public API functions
-- Pattern matching guards, early validation with NimbleOptions
-- Tests use ExUnit, Mimic for mocking, tags `:capture_log`, `:flaky`, `:skip`
+## Architecture Snapshot
+- `Jido.Signal`: CloudEvents-style signal envelope + constructor/validation API
+- `Jido.Signal.Bus`: pub/sub bus with routing, middleware, and persistence hooks
+- `Jido.Signal.Router`: trie-based matcher (exact, `*`, `**`) with priority ordering
+- `Jido.Signal.Dispatch`: adapter layer (`:pid`, `:pubsub`, `:http`, `:bus`, `:logger`, etc.)
+- `Jido.Signal.Instance`: isolated multi-tenant signal infrastructure via `jido:` option
 
-## Git Commit Guidelines
+## Standards
+- Use clear dot-delimited signal types and validate boundaries aggressively
+- Use **Zoi-first** schema contracts for new signal definitions
+- Keep transport concerns in adapters/bus, not in signal model structs
+- Keep error returns structured (`{:error, Jido.Signal.Error.t()}` or documented atoms)
+- Prefer explicit routing and persistence behavior over implicit defaults
 
-Use **Conventional Commits** format for all commit messages:
+## Testing and QA
+- Cover route matching precedence (exact vs wildcard) and priority ordering
+- Cover subscriber lifecycle and persistence/checkpoint behavior explicitly
+- Treat skipped tests as temporary: include reason + follow-up issue in test metadata/comments
 
-```
-<type>[optional scope]: <description>
+## Release Hygiene
+- Keep semver ranges stable (`~> 2.0` for Jido ecosystem peers)
+- Use Conventional Commits
+- Update `CHANGELOG.md` and docs for behavior/API changes
 
-[optional body]
-
-[optional footer(s)]
-```
-
-**Types:**
-- `feat` - New feature
-- `fix` - Bug fix
-- `docs` - Documentation only
-- `style` - Formatting, no code change
-- `refactor` - Code change that neither fixes a bug nor adds a feature
-- `test` - Adding or updating tests
-- `chore` - Maintenance tasks, dependency updates
-
-**Examples:**
-```
-feat(router): add wildcard pattern matching
-fix(bus): handle subscriber exit during dispatch
-docs: update signal routing guide
-test(dispatch): add circuit breaker tests
-chore(deps): bump splode to 0.2.10
-```
+## References
+- `README.md`
+- `usage-rules.md`
+- `guides/`
+- https://hexdocs.pm/jido_signal

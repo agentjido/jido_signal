@@ -481,8 +481,8 @@ workflow_signals = [
 
 ### Prerequisites
 
-- Elixir 1.17+
-- Erlang/OTP 26+
+- Elixir 1.18+
+- Erlang/OTP 27+
 
 ### Setup
 
