@@ -116,7 +116,10 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
       # Use a bogus instance that has no bus registered
       assert {:error, :bus_not_found} =
-               BusAdapter.deliver(signal, target: :nonexistent_bus, jido: :"NoInstance_#{System.unique_integer([:positive])}")
+               BusAdapter.deliver(signal,
+                 target: :nonexistent_bus,
+                 jido: :"NoInstance_#{System.unique_integer([:positive])}"
+               )
     end
   end
 
