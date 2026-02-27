@@ -120,6 +120,7 @@ defmodule Jido.Signal.Dispatch do
 
   @type adapter ::
           :pid
+          | :bus
           | :named
           | :pubsub
           | :logger
@@ -179,14 +180,14 @@ defmodule Jido.Signal.Dispatch do
   ## Examples
 
       # Single config
-      iex> config = {:pid, [target: {:pid, self()}, delivery_mode: :async]}
+      iex> config = {:pid, [target: self(), delivery_mode: :async]}
       iex> Jido.Signal.Dispatch.validate_opts(config)
       {:ok, ^config}
 
       # Multiple configs
       iex> config = [
-      ...>   {:bus, [target: {:bus, :default}, stream: "events"]},
-      ...>   {:pubsub, [target: {:pubsub, :audit}, topic: "audit"]}
+      ...>   {:bus, [target: :default_bus]},
+      ...>   {:pubsub, [target: :audit_pubsub, topic: "audit"]}
       ...> ]
       iex> Jido.Signal.Dispatch.validate_opts(config)
       {:ok, ^config}
@@ -262,13 +263,13 @@ defmodule Jido.Signal.Dispatch do
   ## Examples
 
       # Single destination
-      iex> config = {:pid, [target: {:pid, pid}, delivery_mode: :async]}
+      iex> config = {:pid, [target: pid, delivery_mode: :async]}
       iex> Jido.Signal.Dispatch.dispatch(signal, config)
       :ok
 
       # Multiple destinations (executed in parallel)
       iex> config = [
-      ...>   {:bus, [target: {:bus, :default}, stream: "events"]},
+      ...>   {:bus, [target: :default_bus]},
       ...>   {:pubsub, [target: :audit, topic: "audit"]}
       ...> ]
       iex> Jido.Signal.Dispatch.dispatch(signal, config)
