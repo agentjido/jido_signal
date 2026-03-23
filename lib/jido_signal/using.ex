@@ -44,12 +44,14 @@ defmodule Jido.Signal.Using do
       def datacontenttype, do: @validated_opts[:datacontenttype]
       def dataschema, do: @validated_opts[:dataschema]
       def schema, do: @validated_opts[:schema]
+      def extension_policy, do: @validated_opts[:extension_policy]
 
       def to_json do
         %{
           datacontenttype: @validated_opts[:datacontenttype],
           dataschema: @validated_opts[:dataschema],
           default_source: @validated_opts[:default_source],
+          extension_policy: @validated_opts[:extension_policy],
           schema: @validated_opts[:schema],
           type: @validated_opts[:type]
         }
@@ -172,8 +174,11 @@ defmodule Jido.Signal.Using do
           |> maybe_add_datacontenttype()
           |> maybe_add_dataschema()
           |> apply_user_options(opts)
+          |> normalize_policy_extensions()
 
-        {:ok, attrs}
+        with :ok <- validate_extension_policy(attrs) do
+          {:ok, attrs}
+        end
       end
 
       defp build_base_attrs(validated_data, caller) do
@@ -202,6 +207,80 @@ defmodule Jido.Signal.Using do
         Enum.reduce(opts, attrs, fn {key, value}, acc ->
           Map.put(acc, to_string(key), value)
         end)
+      end
+
+      defp normalize_policy_extensions(attrs) do
+        case extension_policy() do
+          policy when map_size(policy) == 0 ->
+            attrs
+
+          policy ->
+            top_level_extensions = Map.take(attrs, Map.keys(policy))
+            explicit_extensions = normalize_explicit_extensions(Map.get(attrs, "extensions"))
+            merged_extensions = Map.merge(top_level_extensions, explicit_extensions)
+
+            attrs
+            |> Map.drop(Map.keys(policy))
+            |> put_normalized_extensions(merged_extensions)
+        end
+      end
+
+      defp put_normalized_extensions(attrs, extensions) when map_size(extensions) == 0 do
+        Map.delete(attrs, "extensions")
+      end
+
+      defp put_normalized_extensions(attrs, extensions) do
+        Map.put(attrs, "extensions", extensions)
+      end
+
+      defp normalize_explicit_extensions(extensions) when is_map(extensions) do
+        Map.new(extensions, fn {key, value} -> {to_string(key), value} end)
+      end
+
+      defp normalize_explicit_extensions(_), do: %{}
+
+      defp validate_extension_policy(attrs) do
+        policy = extension_policy()
+
+        if map_size(policy) == 0 do
+          :ok
+        else
+          effective_extensions =
+            attrs
+            |> Map.get("extensions", %{})
+            |> normalize_explicit_extensions()
+
+          with :ok <- validate_required_extensions(policy, effective_extensions),
+               :ok <- validate_forbidden_extensions(policy, effective_extensions) do
+            :ok
+          end
+        end
+      end
+
+      defp validate_required_extensions(policy, effective_extensions) do
+        case Enum.find(policy, fn {namespace, mode} ->
+               mode == :required and not Map.has_key?(effective_extensions, namespace)
+             end) do
+          {namespace, :required} ->
+            {:error,
+             "Signal #{inspect(__MODULE__)} requires extension namespace #{inspect(namespace)} during typed construction"}
+
+          nil ->
+            :ok
+        end
+      end
+
+      defp validate_forbidden_extensions(policy, effective_extensions) do
+        case Enum.find(policy, fn {namespace, mode} ->
+               mode == :forbidden and Map.has_key?(effective_extensions, namespace)
+             end) do
+          {namespace, :forbidden} ->
+            {:error,
+             "Signal #{inspect(__MODULE__)} forbids extension namespace #{inspect(namespace)} during typed construction"}
+
+          nil ->
+            :ok
+        end
       end
     end
   end

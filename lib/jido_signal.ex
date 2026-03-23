@@ -179,8 +179,16 @@ defmodule Jido.Signal do
                             default: [],
                             doc:
                               "A NimbleOptions schema for validating the Signal's data parameters"
+                          ],
+                          extension_policy: [
+                            type: :keyword_list,
+                            default: [],
+                            doc:
+                              "Typed-signal extension policy as `{ExtensionModule, :required | :optional | :forbidden}` entries"
                           ]
                         )
+
+  @extension_policy_modes [:required, :optional, :forbidden]
 
   # Zoi schema for Signal struct - testing new default pattern
   @signal_schema Zoi.struct(
@@ -245,6 +253,10 @@ defmodule Jido.Signal do
           schema: [
             user_id: [type: :string, required: true],
             message: [type: :string, required: true]
+          ],
+          extension_policy: [
+            {MyApp.Signal.Ext.Trace, :required},
+            {MyApp.Signal.Ext.Dispatch, :forbidden}
           ]
       end
 
@@ -262,13 +274,86 @@ defmodule Jido.Signal do
 
       case NimbleOptions.validate(unquote(opts), unquote(escaped_schema)) do
         {:ok, validated_opts} ->
-          @validated_opts validated_opts
-          Using.define_signal_functions()
+          case Signal.normalize_extension_policy(validated_opts[:extension_policy]) do
+            {:ok, extension_policy} ->
+              @validated_opts Keyword.put(validated_opts, :extension_policy, extension_policy)
+              Using.define_signal_functions()
+
+            {:error, error} ->
+              message = Error.format_nimble_config_error(error, "Signal", __MODULE__)
+              raise CompileError, description: message, file: __ENV__.file, line: __ENV__.line
+          end
 
         {:error, error} ->
           message = Error.format_nimble_config_error(error, "Signal", __MODULE__)
           raise CompileError, description: message, file: __ENV__.file, line: __ENV__.line
       end
+    end
+  end
+
+  @doc false
+  @spec normalize_extension_policy(keyword()) ::
+          {:ok, %{optional(String.t()) => :required | :optional | :forbidden}}
+          | {:error, String.t()}
+  def normalize_extension_policy(policy) when is_list(policy) do
+    Enum.reduce_while(policy, {:ok, %{}}, fn {extension_module, mode}, {:ok, acc} ->
+      with :ok <- validate_extension_policy_module(extension_module),
+           :ok <- validate_extension_policy_mode(extension_module, mode),
+           {:ok, namespace} <- fetch_extension_policy_namespace(extension_module),
+           :ok <- ensure_unique_extension_policy_namespace(namespace, acc) do
+        {:cont, {:ok, Map.put(acc, namespace, mode)}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp validate_extension_policy_module(extension_module) when is_atom(extension_module) do
+    case Code.ensure_compiled(extension_module) do
+      {:module, _module} ->
+        if function_exported?(extension_module, :namespace, 0) do
+          :ok
+        else
+          {:error,
+           "extension_policy keys must be compiled modules implementing namespace/0, got: #{inspect(extension_module)}"}
+        end
+
+      {:error, _reason} ->
+        {:error,
+         "extension_policy keys must be compiled modules implementing namespace/0, got: #{inspect(extension_module)}"}
+    end
+  end
+
+  defp validate_extension_policy_module(extension_module) do
+    {:error,
+     "extension_policy keys must be compiled modules implementing namespace/0, got: #{inspect(extension_module)}"}
+  end
+
+  defp validate_extension_policy_mode(_extension_module, mode)
+       when mode in @extension_policy_modes,
+       do: :ok
+
+  defp validate_extension_policy_mode(extension_module, mode) do
+    {:error,
+     "extension_policy for #{inspect(extension_module)} must be one of #{inspect(@extension_policy_modes)}, got: #{inspect(mode)}"}
+  end
+
+  defp fetch_extension_policy_namespace(extension_module) do
+    namespace = extension_module.namespace()
+
+    if is_binary(namespace) and byte_size(namespace) > 0 do
+      {:ok, namespace}
+    else
+      {:error,
+       "extension_policy module #{inspect(extension_module)} returned an invalid namespace: #{inspect(namespace)}"}
+    end
+  end
+
+  defp ensure_unique_extension_policy_namespace(namespace, acc) do
+    if Map.has_key?(acc, namespace) do
+      {:error, "extension_policy declares namespace #{inspect(namespace)} more than once"}
+    else
+      :ok
     end
   end
 

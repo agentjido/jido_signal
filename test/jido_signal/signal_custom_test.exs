@@ -33,6 +33,43 @@ defmodule Jido.Signal.CustomTest do
       ]
   end
 
+  defmodule RequiredPolicyExtension do
+    use Jido.Signal.Ext,
+      namespace: "requiredext",
+      schema: [
+        id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule OptionalPolicyExtension do
+    use Jido.Signal.Ext,
+      namespace: "optionalext",
+      schema: [
+        id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule ForbiddenPolicyExtension do
+    use Jido.Signal.Ext,
+      namespace: "forbiddenext",
+      schema: [
+        id: [type: :string, required: true]
+      ]
+  end
+
+  defmodule PolicySignal do
+    use Jido.Signal,
+      type: "policy.signal",
+      schema: [
+        message: [type: :string, required: true]
+      ],
+      extension_policy: [
+        {RequiredPolicyExtension, :required},
+        {OptionalPolicyExtension, :optional},
+        {ForbiddenPolicyExtension, :forbidden}
+      ]
+  end
+
   describe "TestSignal" do
     test "creates valid signal with required data" do
       data = %{user_id: "123", message: "Hello World"}
@@ -92,11 +129,13 @@ defmodule Jido.Signal.CustomTest do
       schema = TestSignal.schema()
       assert schema != nil
       assert TestSignal.default_source() == nil
+      assert TestSignal.extension_policy() == %{}
 
       metadata = TestSignal.to_json()
       assert metadata.type == "test.signal"
       # Schema in metadata is also the Zoi schema
       assert metadata.schema != nil
+      assert metadata.extension_policy == %{}
     end
 
     test "validates data with validate_data/1" do
@@ -165,6 +204,80 @@ defmodule Jido.Signal.CustomTest do
     end
   end
 
+  describe "PolicySignal" do
+    test "exposes normalized extension policy metadata" do
+      expected_policy = %{
+        "forbiddenext" => :forbidden,
+        "optionalext" => :optional,
+        "requiredext" => :required
+      }
+
+      assert PolicySignal.extension_policy() == expected_policy
+      assert PolicySignal.to_json().extension_policy == expected_policy
+      assert PolicySignal.__signal_metadata__().extension_policy == expected_policy
+    end
+
+    test "creates a signal when required extension is present via top-level namespace" do
+      assert {:ok, signal} =
+               PolicySignal.new(%{message: "hello"},
+                 requiredext: %{id: "required-123"}
+               )
+
+      assert signal.extensions["requiredext"] == %{id: "required-123"}
+    end
+
+    test "returns error when required extension is missing" do
+      assert {:error, error} = PolicySignal.new(%{message: "hello"})
+      assert error =~ "Signal #{inspect(PolicySignal)}"
+      assert error =~ "\"requiredext\""
+      assert error =~ "requires extension namespace"
+    end
+
+    test "returns error when forbidden extension is passed as top-level namespace" do
+      assert {:error, error} =
+               PolicySignal.new(%{message: "hello"},
+                 requiredext: %{id: "required-123"},
+                 forbiddenext: %{id: "forbidden-123"}
+               )
+
+      assert error =~ "Signal #{inspect(PolicySignal)}"
+      assert error =~ "\"forbiddenext\""
+      assert error =~ "forbids extension namespace"
+    end
+
+    test "returns error when forbidden extension is passed via extensions map" do
+      assert {:error, error} =
+               PolicySignal.new(%{message: "hello"},
+                 requiredext: %{id: "required-123"},
+                 extensions: %{"forbiddenext" => %{id: "forbidden-123"}}
+               )
+
+      assert error =~ "Signal #{inspect(PolicySignal)}"
+      assert error =~ "\"forbiddenext\""
+      assert error =~ "forbids extension namespace"
+    end
+
+    test "allows optional extension to be omitted" do
+      assert {:ok, signal} =
+               PolicySignal.new(%{message: "hello"},
+                 requiredext: %{id: "required-123"}
+               )
+
+      assert signal.extensions["requiredext"] == %{id: "required-123"}
+      refute Map.has_key?(signal.extensions, "optionalext")
+    end
+
+    test "prefers explicit extensions map over top-level namespace input" do
+      assert {:ok, signal} =
+               PolicySignal.new(%{message: "hello"},
+                 requiredext: %{id: "top-level"},
+                 extensions: %{"requiredext" => %{id: "explicit"}}
+               )
+
+      assert signal.extensions["requiredext"] == %{id: "explicit"}
+    end
+  end
+
   describe "Signal ID generation" do
     test "generates valid UUID7 IDs" do
       {:ok, signal} = TestSignal.new(%{user_id: "123", message: "test"})
@@ -219,6 +332,55 @@ defmodule Jido.Signal.CustomTest do
 
       assert {:error, error} = TestSignal.new(data)
       assert error =~ "expected string"
+    end
+
+    test "rejects invalid extension policy modes at compile time" do
+      assert_raise CompileError, ~r/extension_policy.*must be one of/, fn ->
+        defmodule InvalidPolicyModeSignal do
+          use Jido.Signal,
+            type: "invalid.policy.mode.signal",
+            extension_policy: [
+              {RequiredPolicyExtension, :sometimes}
+            ]
+        end
+      end
+    end
+
+    test "rejects non-module extension policy keys at compile time" do
+      assert_raise CompileError, ~r/extension_policy keys must be compiled modules/, fn ->
+        defmodule InvalidPolicyModuleSignal do
+          use Jido.Signal,
+            type: "invalid.policy.module.signal",
+            extension_policy: [
+              {:not_a_module, :required}
+            ]
+        end
+      end
+    end
+
+    test "rejects duplicate extension policy namespaces at compile time" do
+      defmodule DuplicatePolicyExtensionOne do
+        use Jido.Signal.Ext,
+          namespace: "duplicatepolicy"
+      end
+
+      defmodule DuplicatePolicyExtensionTwo do
+        use Jido.Signal.Ext,
+          namespace: "duplicatepolicy"
+      end
+
+      assert_raise CompileError,
+                   ~r/extension_policy declares namespace "duplicatepolicy" more than once/,
+                   fn ->
+                     defmodule DuplicatePolicySignal do
+                       use Jido.Signal,
+                         type: "duplicate.policy.signal",
+                         extension_policy: [
+                           {DuplicatePolicyExtensionOne, :required},
+                           {DuplicatePolicyExtensionTwo, :optional}
+                         ]
+                     end
+                   end
     end
   end
 end
