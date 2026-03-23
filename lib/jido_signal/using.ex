@@ -44,12 +44,14 @@ defmodule Jido.Signal.Using do
       def datacontenttype, do: @validated_opts[:datacontenttype]
       def dataschema, do: @validated_opts[:dataschema]
       def schema, do: @validated_opts[:schema]
+      def extension_policy, do: @validated_opts[:extension_policy]
 
       def to_json do
         %{
           datacontenttype: @validated_opts[:datacontenttype],
           dataschema: @validated_opts[:dataschema],
           default_source: @validated_opts[:default_source],
+          extension_policy: @validated_opts[:extension_policy],
           schema: @validated_opts[:schema],
           type: @validated_opts[:type]
         }
@@ -162,6 +164,7 @@ defmodule Jido.Signal.Using do
   @doc false
   defmacro define_signal_builder_functions do
     quote location: :keep do
+      alias Jido.Signal.Ext
       alias Jido.Signal.ID
 
       defp build_signal_attrs(validated_data, opts) do
@@ -173,7 +176,7 @@ defmodule Jido.Signal.Using do
           |> maybe_add_dataschema()
           |> apply_user_options(opts)
 
-        {:ok, attrs}
+        normalize_policy_extensions(attrs)
       end
 
       defp build_base_attrs(validated_data, caller) do
@@ -202,6 +205,99 @@ defmodule Jido.Signal.Using do
         Enum.reduce(opts, attrs, fn {key, value}, acc ->
           Map.put(acc, to_string(key), value)
         end)
+      end
+
+      defp normalize_policy_extensions(attrs) do
+        case extension_policy() do
+          policy when map_size(policy) == 0 ->
+            {:ok, attrs}
+
+          policy ->
+            top_level_extensions = Map.take(attrs, Map.keys(policy))
+            explicit_extensions = normalize_explicit_extensions(Map.get(attrs, "extensions"))
+            merged_extensions = Map.merge(top_level_extensions, explicit_extensions)
+
+            with :ok <- validate_required_extensions(policy, merged_extensions),
+                 :ok <- validate_forbidden_extensions(policy, merged_extensions),
+                 {:ok, validated_extensions} <-
+                   validate_policy_extension_data(merged_extensions) do
+              attrs =
+                attrs
+                |> Map.drop(Map.keys(policy))
+                |> put_normalized_extensions(validated_extensions)
+
+              {:ok, attrs}
+            end
+        end
+      end
+
+      defp put_normalized_extensions(attrs, extensions) when map_size(extensions) == 0 do
+        Map.delete(attrs, "extensions")
+      end
+
+      defp put_normalized_extensions(attrs, extensions) do
+        Map.put(attrs, "extensions", extensions)
+      end
+
+      defp normalize_explicit_extensions(extensions) when is_map(extensions) do
+        Map.new(extensions, fn {key, value} -> {to_string(key), value} end)
+      end
+
+      defp normalize_explicit_extensions(_), do: %{}
+
+      defp validate_required_extensions(policy, effective_extensions) do
+        case Enum.find(policy, fn {namespace, mode} ->
+               mode == :required and not Map.has_key?(effective_extensions, namespace)
+             end) do
+          {namespace, :required} ->
+            {:error,
+             "Signal #{inspect(__MODULE__)} requires extension namespace #{inspect(namespace)} during typed construction"}
+
+          nil ->
+            :ok
+        end
+      end
+
+      defp validate_forbidden_extensions(policy, effective_extensions) do
+        case Enum.find(policy, fn {namespace, mode} ->
+               mode == :forbidden and Map.has_key?(effective_extensions, namespace)
+             end) do
+          {namespace, :forbidden} ->
+            {:error,
+             "Signal #{inspect(__MODULE__)} forbids extension namespace #{inspect(namespace)} during typed construction"}
+
+          nil ->
+            :ok
+        end
+      end
+
+      defp validate_policy_extension_data(effective_extensions) do
+        Enum.reduce_while(effective_extensions, {:ok, %{}}, fn {namespace, data}, {:ok, acc} ->
+          case Map.fetch(extension_policy_modules(), namespace) do
+            {:ok, extension_module} ->
+              case Ext.safe_validate_data(extension_module, data) do
+                {:ok, {:ok, validated_data}} ->
+                  {:cont, {:ok, Map.put(acc, namespace, validated_data)}}
+
+                {:ok, {:error, reason}} ->
+                  {:halt,
+                   {:error,
+                    "Signal #{inspect(__MODULE__)} received invalid data for extension namespace #{inspect(namespace)}: #{reason}"}}
+
+                {:error, reason} ->
+                  {:halt,
+                   {:error,
+                    "Signal #{inspect(__MODULE__)} failed to validate extension namespace #{inspect(namespace)}: #{inspect(reason)}"}}
+              end
+
+            :error ->
+              {:cont, {:ok, Map.put(acc, namespace, data)}}
+          end
+        end)
+      end
+
+      defp extension_policy_modules do
+        @extension_policy_modules || %{}
       end
     end
   end

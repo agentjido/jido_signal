@@ -222,6 +222,28 @@ end
 # => {:error, "Invalid data for Signal: Required key :email not found"}
 ```
 
+Typed signals can also declare extension policy when you want constructor-time guarantees
+for known extensions without changing generic deserialization behavior:
+
+```elixir
+defmodule UserCreated do
+  use Jido.Signal,
+    type: "user.created.v1",
+    schema: [
+      user_id: [type: :string, required: true]
+    ],
+    extension_policy: [
+      {MyApp.Signal.Ext.Trace, :required},
+      {MyApp.Signal.Ext.Dispatch, :forbidden}
+    ]
+end
+
+{:ok, signal} =
+  UserCreated.new(%{user_id: "u_123"},
+    trace: %{trace_id: "trace-123", span_id: "span-456"}
+  )
+```
+
 ### The Router
 
 Powerful pattern matching for signal routing:
