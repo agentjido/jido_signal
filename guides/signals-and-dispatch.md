@@ -201,6 +201,27 @@ end
 Jido.Signal.Dispatch.dispatch(signal, {:pubsub, [target: :pubsub, topic: "user-events"]})
 ```
 
+Typed signals can also define constructor-time extension policy:
+
+```elixir
+defmodule UserCreatedSignal do
+  use Jido.Signal,
+    type: "user.created",
+    schema: [
+      user_id: [type: :string, required: true]
+    ],
+    extension_policy: [
+      {MyApp.Signal.Ext.Trace, :required},
+      {MyApp.Signal.Ext.Dispatch, :forbidden}
+    ]
+end
+
+{:ok, signal} =
+  UserCreatedSignal.new(%{user_id: "123"},
+    trace: %{trace_id: "trace-123", span_id: "span-456"}
+  )
+```
+
 ### Schema Validation
 
 Custom signals validate data against schema:

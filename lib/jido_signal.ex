@@ -278,13 +278,14 @@ defmodule Jido.Signal do
             {:ok, extension_policy} ->
               Module.put_attribute(
                 __MODULE__,
+                :extension_policy_modules,
+                Signal.build_extension_policy_modules(validated_opts[:extension_policy])
+              )
+
+              Module.put_attribute(
+                __MODULE__,
                 :validated_opts,
-                validated_opts
-                |> Keyword.put(:extension_policy, extension_policy)
-                |> Keyword.put(
-                  :__extension_policy_modules__,
-                  Signal.build_extension_policy_modules(validated_opts[:extension_policy])
-                )
+                Keyword.put(validated_opts, :extension_policy, extension_policy)
               )
 
               Using.define_signal_functions()

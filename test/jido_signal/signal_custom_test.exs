@@ -267,11 +267,11 @@ defmodule Jido.Signal.CustomTest do
       refute Map.has_key?(signal.extensions, "optionalext")
     end
 
-    test "prefers explicit extensions map over top-level namespace input" do
+    test "prefers explicit extensions map with atom keys over top-level namespace input" do
       assert {:ok, signal} =
                PolicySignal.new(%{message: "hello"},
                  requiredext: %{id: "top-level"},
-                 extensions: %{"requiredext" => %{id: "explicit"}}
+                 extensions: %{requiredext: %{id: "explicit"}}
                )
 
       assert signal.extensions["requiredext"] == %{id: "explicit"}
@@ -281,6 +281,18 @@ defmodule Jido.Signal.CustomTest do
       assert {:error, error} =
                PolicySignal.new(%{message: "hello"},
                  requiredext: %{}
+               )
+
+      assert error =~ "Signal #{inspect(PolicySignal)}"
+      assert error =~ "\"requiredext\""
+      assert error =~ "invalid data for extension namespace"
+      assert error =~ "required :id option not found"
+    end
+
+    test "returns error when explicit extensions map contains invalid required data" do
+      assert {:error, error} =
+               PolicySignal.new(%{message: "hello"},
+                 extensions: %{requiredext: %{}}
                )
 
       assert error =~ "Signal #{inspect(PolicySignal)}"

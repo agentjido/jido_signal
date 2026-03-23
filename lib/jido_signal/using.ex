@@ -297,7 +297,7 @@ defmodule Jido.Signal.Using do
       end
 
       defp extension_policy_modules do
-        @validated_opts[:__extension_policy_modules__] || %{}
+        @extension_policy_modules || %{}
       end
     end
   end
