@@ -164,6 +164,7 @@ defmodule Jido.Signal.Using do
   @doc false
   defmacro define_signal_builder_functions do
     quote location: :keep do
+      alias Jido.Signal.Ext
       alias Jido.Signal.ID
 
       defp build_signal_attrs(validated_data, opts) do
@@ -174,11 +175,8 @@ defmodule Jido.Signal.Using do
           |> maybe_add_datacontenttype()
           |> maybe_add_dataschema()
           |> apply_user_options(opts)
-          |> normalize_policy_extensions()
 
-        with :ok <- validate_extension_policy(attrs) do
-          {:ok, attrs}
-        end
+        normalize_policy_extensions(attrs)
       end
 
       defp build_base_attrs(validated_data, caller) do
@@ -212,16 +210,24 @@ defmodule Jido.Signal.Using do
       defp normalize_policy_extensions(attrs) do
         case extension_policy() do
           policy when map_size(policy) == 0 ->
-            attrs
+            {:ok, attrs}
 
           policy ->
             top_level_extensions = Map.take(attrs, Map.keys(policy))
             explicit_extensions = normalize_explicit_extensions(Map.get(attrs, "extensions"))
             merged_extensions = Map.merge(top_level_extensions, explicit_extensions)
 
-            attrs
-            |> Map.drop(Map.keys(policy))
-            |> put_normalized_extensions(merged_extensions)
+            with :ok <- validate_required_extensions(policy, merged_extensions),
+                 :ok <- validate_forbidden_extensions(policy, merged_extensions),
+                 {:ok, validated_extensions} <-
+                   validate_policy_extension_data(merged_extensions) do
+              attrs =
+                attrs
+                |> Map.drop(Map.keys(policy))
+                |> put_normalized_extensions(validated_extensions)
+
+              {:ok, attrs}
+            end
         end
       end
 
@@ -238,24 +244,6 @@ defmodule Jido.Signal.Using do
       end
 
       defp normalize_explicit_extensions(_), do: %{}
-
-      defp validate_extension_policy(attrs) do
-        policy = extension_policy()
-
-        if map_size(policy) == 0 do
-          :ok
-        else
-          effective_extensions =
-            attrs
-            |> Map.get("extensions", %{})
-            |> normalize_explicit_extensions()
-
-          with :ok <- validate_required_extensions(policy, effective_extensions),
-               :ok <- validate_forbidden_extensions(policy, effective_extensions) do
-            :ok
-          end
-        end
-      end
 
       defp validate_required_extensions(policy, effective_extensions) do
         case Enum.find(policy, fn {namespace, mode} ->
@@ -281,6 +269,35 @@ defmodule Jido.Signal.Using do
           nil ->
             :ok
         end
+      end
+
+      defp validate_policy_extension_data(effective_extensions) do
+        Enum.reduce_while(effective_extensions, {:ok, %{}}, fn {namespace, data}, {:ok, acc} ->
+          case Map.fetch(extension_policy_modules(), namespace) do
+            {:ok, extension_module} ->
+              case Ext.safe_validate_data(extension_module, data) do
+                {:ok, {:ok, validated_data}} ->
+                  {:cont, {:ok, Map.put(acc, namespace, validated_data)}}
+
+                {:ok, {:error, reason}} ->
+                  {:halt,
+                   {:error,
+                    "Signal #{inspect(__MODULE__)} received invalid data for extension namespace #{inspect(namespace)}: #{reason}"}}
+
+                {:error, reason} ->
+                  {:halt,
+                   {:error,
+                    "Signal #{inspect(__MODULE__)} failed to validate extension namespace #{inspect(namespace)}: #{inspect(reason)}"}}
+              end
+
+            :error ->
+              {:cont, {:ok, Map.put(acc, namespace, data)}}
+          end
+        end)
+      end
+
+      defp extension_policy_modules do
+        @validated_opts[:__extension_policy_modules__] || %{}
       end
     end
   end

@@ -276,6 +276,18 @@ defmodule Jido.Signal.CustomTest do
 
       assert signal.extensions["requiredext"] == %{id: "explicit"}
     end
+
+    test "returns error when effective required extension data is invalid" do
+      assert {:error, error} =
+               PolicySignal.new(%{message: "hello"},
+                 requiredext: %{}
+               )
+
+      assert error =~ "Signal #{inspect(PolicySignal)}"
+      assert error =~ "\"requiredext\""
+      assert error =~ "invalid data for extension namespace"
+      assert error =~ "required :id option not found"
+    end
   end
 
   describe "Signal ID generation" do

@@ -276,7 +276,17 @@ defmodule Jido.Signal do
         {:ok, validated_opts} ->
           case Signal.normalize_extension_policy(validated_opts[:extension_policy]) do
             {:ok, extension_policy} ->
-              @validated_opts Keyword.put(validated_opts, :extension_policy, extension_policy)
+              Module.put_attribute(
+                __MODULE__,
+                :validated_opts,
+                validated_opts
+                |> Keyword.put(:extension_policy, extension_policy)
+                |> Keyword.put(
+                  :__extension_policy_modules__,
+                  Signal.build_extension_policy_modules(validated_opts[:extension_policy])
+                )
+              )
+
               Using.define_signal_functions()
 
             {:error, error} ->
@@ -305,6 +315,14 @@ defmodule Jido.Signal do
       else
         {:error, reason} -> {:halt, {:error, reason}}
       end
+    end)
+  end
+
+  @doc false
+  @spec build_extension_policy_modules(keyword()) :: %{optional(String.t()) => module()}
+  def build_extension_policy_modules(policy) when is_list(policy) do
+    Enum.reduce(policy, %{}, fn {extension_module, _mode}, acc ->
+      Map.put(acc, extension_module.namespace(), extension_module)
     end)
   end
 
