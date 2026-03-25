@@ -395,11 +395,13 @@ defmodule Jido.Signal do
 
   ## Examples
 
-      iex> Jido.Signal.new!("user.created", %{user_id: "123"}, source: "/auth")
-      %Jido.Signal{type: "user.created", source: "/auth", data: %{user_id: "123"}, ...}
+      signal = Jido.Signal.new!("user.created", %{user_id: "123"}, source: "/auth")
+      {signal.type, signal.source, signal.data}
+      # => {"user.created", "/auth", %{user_id: "123"}}
 
-      iex> Jido.Signal.new!("user.created", %{user_id: "123"})
-      %Jido.Signal{type: "user.created", source: "...", data: %{user_id: "123"}, ...}
+      signal = Jido.Signal.new!("user.created", %{user_id: "123"})
+      signal.type
+      # => "user.created"
 
   """
   @spec new!(String.t(), term(), map() | keyword()) :: t() | no_return()
@@ -427,11 +429,13 @@ defmodule Jido.Signal do
 
   ## Examples
 
-      iex> Jido.Signal.new!(%{type: "example.event", source: "/example"})
-      %Jido.Signal{type: "example.event", source: "/example", ...}
+      signal = Jido.Signal.new!(%{type: "example.event", source: "/example"})
+      {signal.type, signal.source}
+      # => {"example.event", "/example"}
 
-      iex> Jido.Signal.new!(type: "example.event", source: "/example")
-      %Jido.Signal{type: "example.event", source: "/example", ...}
+      signal = Jido.Signal.new!(type: "example.event", source: "/example")
+      {signal.type, signal.source}
+      # => {"example.event", "/example"}
 
   """
   @spec new!(map() | keyword()) :: t() | no_return()
@@ -455,11 +459,13 @@ defmodule Jido.Signal do
 
   ## Examples
 
-      iex> Jido.Signal.new(%{type: "example.event", source: "/example", id: "123"})
-      {:ok, %Jido.Signal{type: "example.event", source: "/example", id: "123", ...}}
+      {:ok, signal} = Jido.Signal.new(%{type: "example.event", source: "/example", id: "123"})
+      {signal.type, signal.source, signal.id}
+      # => {"example.event", "/example", "123"}
 
-      iex> Jido.Signal.new(type: "example.event", source: "/example")
-      {:ok, %Jido.Signal{type: "example.event", source: "/example", ...}}
+      {:ok, signal} = Jido.Signal.new(type: "example.event", source: "/example")
+      {signal.type, signal.source}
+      # => {"example.event", "/example"}
 
   """
   @reserved_keys [:type, "type", :data, "data"]
@@ -548,8 +554,11 @@ defmodule Jido.Signal do
 
   ## Examples
 
-      iex> Jido.Signal.from_map(%{"type" => "example.event", "source" => "/example", "id" => "123"})
-      {:ok, %Jido.Signal{type: "example.event", source: "/example", id: "123", ...}}
+      {:ok, signal} =
+        Jido.Signal.from_map(%{"type" => "example.event", "source" => "/example", "id" => "123"})
+
+      {signal.type, signal.source, signal.id}
+      # => {"example.event", "/example", "123"}
 
   """
   @spec from_map(map()) :: {:ok, t()} | {:error, String.t()}
