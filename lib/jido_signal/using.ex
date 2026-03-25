@@ -78,10 +78,10 @@ defmodule Jido.Signal.Using do
 
       `{:ok, Signal.t()}` if the data is valid, `{:error, String.t()}` otherwise.
 
-      ## Examples
+      ## Example
 
-          iex> MySignal.new(%{user_id: "123", message: "Hello"})
-          {:ok, %Jido.Signal{type: "my.custom.signal", data: %{user_id: "123", message: "Hello"}, ...}}
+          MySignal.new(valid_data, source: "/custom")
+          # => {:ok, signal} where signal.type == MySignal.type()
 
       """
       @spec new(map(), keyword()) :: {:ok, Jido.Signal.t()} | {:error, String.t()}
@@ -108,10 +108,10 @@ defmodule Jido.Signal.Using do
 
       `RuntimeError` if the data is invalid.
 
-      ## Examples
+      ## Example
 
-          iex> MySignal.new!(%{user_id: "123", message: "Hello"})
-          %Jido.Signal{type: "my.custom.signal", data: %{user_id: "123", message: "Hello"}, ...}
+          MySignal.new!(valid_data, source: "/custom")
+          # => %Jido.Signal{} with type MySignal.type()
 
       """
       @spec new!(map(), keyword()) :: Jido.Signal.t() | no_return()
@@ -132,13 +132,10 @@ defmodule Jido.Signal.Using do
       @doc """
       Validates the data for the Signal according to its schema.
 
-      ## Examples
+      ## Example
 
-          iex> MySignal.validate_data(%{user_id: "123", message: "Hello"})
-          {:ok, %{user_id: "123", message: "Hello"}}
-
-          iex> MySignal.validate_data(%{})
-          {:error, "Invalid data for Signal: Required key :user_id not found"}
+          MySignal.validate_data(candidate_data)
+          # => {:ok, validated_data} | {:error, reason}
 
       """
       @spec validate_data(map()) :: {:ok, map()} | {:error, String.t()}
