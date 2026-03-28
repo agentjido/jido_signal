@@ -2,13 +2,14 @@
   "assignee": "Mike Hostetler",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-03-28T02:13:46Z",
   "created": "2026-03-28T02:09:26Z",
   "description": "Format the remaining unformatted mix.exs change on feat/specled-beadwork-migration so PR #128 passes CI and can merge.",
   "id": "jido_sig-mc0",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fix PR merge lint blocker",
   "type": "task",
-  "updated_at": "2026-03-28T02:09:30Z"
+  "updated_at": "2026-03-28T02:13:46Z"
 }
