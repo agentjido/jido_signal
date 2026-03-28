@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-03-28T01:13:42Z",
+  "description": "Break the broad bus/dispatch subject into transport-specific specs for pid, pubsub, bus, logger, console, HTTP, named, and webhook adapters.",
+  "id": "jido_sig-59n.3",
+  "labels": [],
+  "parent": "jido_sig-59n",
+  "priority": 2,
+  "status": "open",
+  "title": "Refine dispatch adapter coverage",
+  "type": "task",
+  "updated_at": "2026-03-28T01:13:42Z"
+}
