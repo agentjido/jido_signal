@@ -4,16 +4,18 @@ Current-truth contract for repository-level work management and spec checking.
 
 ## Intent
 
-Describe the root agent guidance and GitHub Actions entrypoints that keep the
-Spec Led workflow and Beadwork work management active in this repository.
+Describe the root agent guidance, contributor documentation, and GitHub Actions
+entrypoints that keep the Spec Led workflow and Beadwork work management active
+in this repository.
 
 ```spec-meta
 id: jido_signal.workflow
 kind: workflow
 status: active
-summary: Repository instructions tell agents to prime Beadwork before work, and CI provides a dedicated spec.check entrypoint for current-truth changes.
+summary: Repository instructions tell agents to prime Beadwork before work, CONTRIBUTING.md explains the Spec Led contributor loop, and CI provides a dedicated spec.check entrypoint for current-truth changes.
 surface:
   - AGENTS.md
+  - CONTRIBUTING.md
   - scripts/check_specs.sh
   - .github/workflows/specs.yml
 decisions:
@@ -25,6 +27,11 @@ decisions:
 ```spec-requirements
 - id: jido_signal.workflow.beadwork_guidance_present
   statement: The root AGENTS.md shall tell agents to use Beadwork work management and run bw prime before starting repository work.
+  priority: should
+  stability: evolving
+
+- id: jido_signal.workflow.contributor_spec_led_guidance
+  statement: CONTRIBUTING.md shall tell contributors how to use the Spec Led loop, including the `.spec/` workspace and the prime, next, check, and status commands.
   priority: should
   stability: evolving
 
@@ -46,6 +53,11 @@ decisions:
   target: AGENTS.md
   covers:
     - jido_signal.workflow.beadwork_guidance_present
+
+- kind: file
+  target: CONTRIBUTING.md
+  covers:
+    - jido_signal.workflow.contributor_spec_led_guidance
 
 - kind: file
   target: scripts/check_specs.sh

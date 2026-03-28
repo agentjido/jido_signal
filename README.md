@@ -8,7 +8,7 @@
 
 > **Agent Communication Envelope and Utilities**
 
-_`Jido.Signal` is part of the [Jido](https://github.com/agentjido/jido) project. Learn more about Jido at [agentjido.xyz](https://agentjido.xyz)._
+_`Jido.Signal` is part of the [Jido](https://github.com/agentjido/jido) project. Learn more about Jido at [jido.run](https://jido.run)._
 
 ## Overview
 
@@ -555,7 +555,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - [Hex Package](https://hex.pm/packages/jido_signal)
 - [Documentation](https://hexdocs.pm/jido_signal)
 - [GitHub Repository](https://github.com/agentjido/jido_signal)
-- [Agent Jido Website](https://agentjido.xyz)
+- [Jido Website](https://jido.run)
 - [CloudEvents Specification](https://cloudevents.io/)
 
 ---

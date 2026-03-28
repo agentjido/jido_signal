@@ -183,8 +183,8 @@ defmodule Jido.Signal.MixProject do
       links: %{
         "Documentation" => "https://hexdocs.pm/jido_signal",
         "GitHub" => @source_url,
-        "Website" => "https://agentjido.xyz",
-        "Discord" => "https://agentjido.xyz/discord",
+        "Website" => "https://jido.run",
+        "Discord" => "https://jido.run/discord",
         "Changelog" => "https://github.com/agentjido/jido_signal/blob/main/CHANGELOG.md"
       }
     ]
