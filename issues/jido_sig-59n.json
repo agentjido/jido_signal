@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-03-28T01:13:33Z",
+  "description": "Track the remaining brownfield conversion from starter specs to deeper subject coverage across serialization, persistence, adapters, guides, and CI.",
+  "id": "jido_sig-59n",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Complete Spec Led migration backlog",
+  "type": "task",
+  "updated_at": "2026-03-28T01:13:33Z"
+}
