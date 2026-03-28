@@ -1,4 +1,5 @@
 # Getting Started
+<!-- covers: jido_signal.guides.getting_started -->
 
 Quick setup and first signal dispatch for the Jido Signal library.
 

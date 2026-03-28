@@ -1,0 +1,61 @@
+name: Specs
+# covers: jido_signal.workflow.spec_check_ci
+
+on:
+  pull_request:
+    paths:
+      - ".spec/**"
+      - "AGENTS.md"
+      - "guides/**"
+      - "lib/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "scripts/**"
+      - ".github/workflows/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".spec/**"
+      - "AGENTS.md"
+      - "guides/**"
+      - "lib/**"
+      - "mix.exs"
+      - "mix.lock"
+      - "scripts/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check Specs
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup BEAM
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.3.1"
+
+      - name: Install Hex and Rebar
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Check specs
+        run: bash ./scripts/check_specs.sh

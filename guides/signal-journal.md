@@ -1,4 +1,5 @@
 # Signal Journal
+<!-- covers: jido_signal.guides.signal_journal -->
 
 The Signal Journal provides durable append-only storage for signals with powerful causality tracking and conversation management. It maintains relationships between signals, enabling complete audit trails and sophisticated signal analysis.
 

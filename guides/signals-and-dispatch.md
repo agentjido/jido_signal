@@ -1,4 +1,5 @@
 # Signals and Dispatch
+<!-- covers: jido_signal.guides.signals_and_dispatch -->
 
 ## Signal Structure
 

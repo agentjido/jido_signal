@@ -204,6 +204,8 @@ defmodule Jido.Signal.MixProject do
       {:zoi, "~> 0.17.1"},
       {:memento, "~> 0.5.0"},
       {:fuse, "~> 2.5"},
+      {:spec_led_ex,
+       github: "specleddev/specled_ex", only: [:dev, :test], runtime: false},
 
       # Development & Test Dependencies
       {:git_ops, "~> 2.9", only: :dev, runtime: false},
