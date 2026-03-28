@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Mike Hostetler",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-03-28T17:54:14Z",
@@ -7,8 +7,8 @@
   "id": "jido_sig-ib1",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Update contributing docs for Spec Led and jido.run",
   "type": "task",
-  "updated_at": "2026-03-28T17:54:14Z"
+  "updated_at": "2026-03-28T17:54:34Z"
 }
