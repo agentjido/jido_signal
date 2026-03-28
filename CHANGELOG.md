@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+## [v2.1.0](https://github.com/agentjido/jido_signal/compare/v2.0.0...v2.1.0) (2026-03-28)
+
+
+
+
+### Features:
+
+* add typed signal extension policy (#126) by mikehostetler
+
+* add typed signal extension policy by mikehostetler
+
+* dispatch: implement bus dispatch adapter (#117) by mikehostetler
+
+* dispatch: implement bus dispatch adapter by mikehostetler
+
+### Bug Fixes:
+
+* remove invalid doctest-style doc examples (#127) by mikehostetler
+
+* validate typed policy extension data by mikehostetler
+
+* dispatch: align adapter type and examples with bus support by mikehostetler
+
 ## [2.0.0] - 2026-02-22
 
 ### Changed
