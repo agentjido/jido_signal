@@ -2,13 +2,14 @@
   "assignee": "Mike Hostetler",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-03-28T01:48:59Z",
   "created": "2026-03-28T01:43:38Z",
   "description": "Cover the remaining uncovered source and test/support files by expanding current Spec Led subject surfaces and related verification mappings.",
   "id": "jido_sig-n6f",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Finish remaining Spec Led file coverage",
   "type": "task",
-  "updated_at": "2026-03-28T01:43:41Z"
+  "updated_at": "2026-03-28T01:48:59Z"
 }
