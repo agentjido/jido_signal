@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-03-28T01:13:42Z",
+  "description": "Cover journal adapters, checkpoint behavior, replay boundaries, DLQ flows, and persistent subscriptions with narrower current-truth subjects.",
+  "id": "jido_sig-59n.2",
+  "labels": [],
+  "parent": "jido_sig-59n",
+  "priority": 1,
+  "status": "open",
+  "title": "Author journal and persistence subject specs",
+  "type": "task",
+  "updated_at": "2026-03-28T01:13:42Z"
+}
