@@ -293,9 +293,7 @@ defmodule Jido.Signal.Using do
         end)
       end
 
-      defp extension_policy_modules do
-        @extension_policy_modules || %{}
-      end
+      defp extension_policy_modules, do: @extension_policy_modules
     end
   end
 
