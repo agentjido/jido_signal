@@ -2,13 +2,14 @@
   "assignee": "Mike Hostetler",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-03-28T17:59:07Z",
   "created": "2026-03-28T17:54:14Z",
   "description": "Refresh contributor guidance to include the repository's Spec Led workflow and replace default website references from agentjido.xyz to jido.run.",
   "id": "jido_sig-ib1",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Update contributing docs for Spec Led and jido.run",
   "type": "task",
-  "updated_at": "2026-03-28T17:54:34Z"
+  "updated_at": "2026-03-28T17:59:07Z"
 }
