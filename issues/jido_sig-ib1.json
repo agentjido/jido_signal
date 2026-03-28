@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-03-28T17:54:14Z",
+  "description": "Refresh contributor guidance to include the repository's Spec Led workflow and replace default website references from agentjido.xyz to jido.run.",
+  "id": "jido_sig-ib1",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Update contributing docs for Spec Led and jido.run",
+  "type": "task",
+  "updated_at": "2026-03-28T17:54:14Z"
+}
