@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-03-28T01:13:42Z",
+  "description": "Separate extension registry, trace context, and extension policy behavior into dedicated subjects once the starter signal-model coverage is in place.",
+  "id": "jido_sig-59n.4",
+  "labels": [],
+  "parent": "jido_sig-59n",
+  "priority": 2,
+  "status": "open",
+  "title": "Backfill extension and tracing specs",
+  "type": "task",
+  "updated_at": "2026-03-28T01:13:42Z"
+}
