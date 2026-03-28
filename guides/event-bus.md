@@ -1,4 +1,5 @@
 # Event Bus
+<!-- covers: jido_signal.guides.event_bus -->
 
 The Event Bus provides publish/subscribe messaging with middleware hooks, persistent subscriptions, and snapshot functionality.
 

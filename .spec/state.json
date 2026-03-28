@@ -1,0 +1,1703 @@
+{
+  "decisions": {
+    "items": [
+      {
+        "affects": [
+          "repo.governance",
+          "jido_signal.package",
+          "jido_signal.guides",
+          "jido_signal.workflow"
+        ],
+        "date": "2026-03-28",
+        "file": ".spec/decisions/jido_signal.decision.spec_led_repo_workflow.md",
+        "id": "jido_signal.decision.spec_led_repo_workflow",
+        "status": "accepted",
+        "title": "Adopt Spec Led And Beadwork Repo Workflow"
+      }
+    ]
+  },
+  "findings": [],
+  "index": {
+    "exceptions": [],
+    "requirements": [
+      {
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "id": "jido_signal.bus_dispatch.adapter_delivery",
+        "priority": "must",
+        "stability": "evolving",
+        "statement": "The dispatch layer shall normalize adapter options and deliver signals through supported adapters and bus-backed subscribers.",
+        "subject_id": "jido_signal.bus_dispatch"
+      },
+      {
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "id": "jido_signal.bus_dispatch.publish_and_replay",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The bus shall publish matching signals in recorded order, retain them in a replayable log, and surface invalid publish input as errors.",
+        "subject_id": "jido_signal.bus_dispatch"
+      },
+      {
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "id": "jido_signal.bus_dispatch.runtime_support",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The bus runtime shall start shared registry or task infrastructure, resolve instance-scoped names, and emit telemetry hooks that support observability and bus spy capture.",
+        "subject_id": "jido_signal.bus_dispatch"
+      },
+      {
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "id": "jido_signal.bus_dispatch.subscription_lifecycle",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The bus shall let callers subscribe and unsubscribe by path, including optional persistent subscription behavior and dispatch configuration.",
+        "subject_id": "jido_signal.bus_dispatch"
+      },
+      {
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "id": "jido_signal.dispatch_adapters.builtin_delivery",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Dispatch shall route signals through the supported built-in adapters and custom adapter modules that implement the adapter behaviour.",
+        "subject_id": "jido_signal.dispatch_adapters"
+      },
+      {
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "id": "jido_signal.dispatch_adapters.config_validation",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Dispatch shall validate single or multiple adapter configs and reject malformed or unsupported dispatch options before delivery.",
+        "subject_id": "jido_signal.dispatch_adapters"
+      },
+      {
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "id": "jido_signal.dispatch_adapters.error_normalization",
+        "priority": "must",
+        "stability": "evolving",
+        "statement": "Dispatch shall normalize adapter and aggregate delivery failures into structured error values that preserve actionable cause and target context.",
+        "subject_id": "jido_signal.dispatch_adapters"
+      },
+      {
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "id": "jido_signal.dispatch_adapters.parallel_and_batch",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "Dispatch shall support async, parallel multi-target, and batched delivery while preserving aggregate error reporting semantics.",
+        "subject_id": "jido_signal.dispatch_adapters"
+      },
+      {
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "id": "jido_signal.extensions_trace.extension_registration",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Extensions shall declare a valid namespace, auto-register in the extension registry, and expose the callbacks required by the extension behaviour.",
+        "subject_id": "jido_signal.extensions_trace"
+      },
+      {
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "id": "jido_signal.extensions_trace.safe_extension_handling",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Extension data shall validate against declared schemas, serialize and deserialize through extension callbacks, and safely ignore or report unsupported extension inputs.",
+        "subject_id": "jido_signal.extensions_trace"
+      },
+      {
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "id": "jido_signal.extensions_trace.trace_propagation",
+        "priority": "must",
+        "stability": "evolving",
+        "statement": "Trace helpers shall create and validate trace context, translate to and from W3C traceparent values, and propagate child context through signals or process-local trace state.",
+        "subject_id": "jido_signal.extensions_trace"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.advanced_usage",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The advanced usage guide shall document custom adapters, operational error handling patterns, reliable delivery strategies, and testing techniques.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.event_bus",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The event bus guide shall cover publish/subscribe usage, middleware, persistent subscriptions, replay or snapshots, and instance isolation.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.getting_started",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The getting started guide shall show installation, bus setup, basic signal creation, dispatch, and instance isolation entry points.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.serialization",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The serialization guide shall describe built-in serializers, runtime configuration, type providers, and custom serializer extension points.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.signal_extensions",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The signal extensions guide shall explain extension definition, namespace usage, serialization behavior, and multi-extension composition.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.signal_journal",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The signal journal guide shall explain journal purpose, adapters, causality tracking, checkpoints, and dead-letter usage.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.signal_router",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The signal router guide shall document route patterns, wildcard matching, priority behavior, and dynamic route management.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides.signals_and_dispatch",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The signals and dispatch guide shall explain signal structure, IDs, dispatch modes, and custom typed signal construction.",
+        "subject_id": "jido_signal.guides"
+      },
+      {
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "id": "jido_signal.journal_persistence.adapter_callbacks",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Persistence adapters shall implement checkpoint and dead-letter operations for subscriptions in addition to core signal storage callbacks.",
+        "subject_id": "jido_signal.journal_persistence"
+      },
+      {
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "id": "jido_signal.journal_persistence.causality_and_query",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The journal shall record signals, maintain conversation and cause/effect relationships, and query or trace stored signals in chronological order.",
+        "subject_id": "jido_signal.journal_persistence"
+      },
+      {
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "id": "jido_signal.journal_persistence.reliable_subscription_recovery",
+        "priority": "must",
+        "stability": "evolving",
+        "statement": "Persistent subscriptions shall bound in-flight and pending queues, persist checkpoints, retry failed deliveries, and move exhausted deliveries to the DLQ.",
+        "subject_id": "jido_signal.journal_persistence"
+      },
+      {
+        "file": ".spec/specs/package.spec.md",
+        "id": "jido_signal.package.installation_entrypoint",
+        "priority": "should",
+        "stability": "stable",
+        "statement": "The package shall expose a `mix jido_signal.install` task that guides adopters to the getting-started flow and fails clearly when Igniter support is unavailable.",
+        "subject_id": "jido_signal.package"
+      },
+      {
+        "file": ".spec/specs/package.spec.md",
+        "id": "jido_signal.package.routing_and_delivery",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The package shall let callers route signals by exact and wildcard paths and deliver them through bus subscriptions or direct dispatch adapters.",
+        "subject_id": "jido_signal.package"
+      },
+      {
+        "file": ".spec/specs/package.spec.md",
+        "id": "jido_signal.package.serialization_and_isolation",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The package shall let callers serialize signals and run signal infrastructure per named instance when isolation is required.",
+        "subject_id": "jido_signal.package"
+      },
+      {
+        "file": ".spec/specs/package.spec.md",
+        "id": "jido_signal.package.signal_model",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The package shall let callers construct CloudEvents-style signals directly or via typed signal modules with validation and extensions.",
+        "subject_id": "jido_signal.package"
+      },
+      {
+        "file": ".spec/specs/router.spec.md",
+        "id": "jido_signal.router.match_resolution",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The router shall match exact paths, single wildcards, multi-level wildcards, and predicate routes against signal types.",
+        "subject_id": "jido_signal.router"
+      },
+      {
+        "file": ".spec/specs/router.spec.md",
+        "id": "jido_signal.router.precedence_order",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "When multiple routes match, the router shall return handlers in deterministic precedence order based on specificity, priority, and registration order.",
+        "subject_id": "jido_signal.router"
+      },
+      {
+        "file": ".spec/specs/router.spec.md",
+        "id": "jido_signal.router.route_validation",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "`Jido.Signal.Router` shall reject invalid path patterns, malformed match functions, and out-of-range priorities when routes are built or normalized.",
+        "subject_id": "jido_signal.router"
+      },
+      {
+        "file": ".spec/specs/serialization.spec.md",
+        "id": "jido_signal.serialization.default_configuration",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Serialization configuration shall expose runtime defaults for serializer, type provider, and payload limits and validate that configured modules implement the expected behaviours.",
+        "subject_id": "jido_signal.serialization"
+      },
+      {
+        "file": ".spec/specs/serialization.spec.md",
+        "id": "jido_signal.serialization.defensive_decoding",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Deserialization shall reject invalid payloads, enforce schema and payload safety checks, and avoid unsafe type reconstruction.",
+        "subject_id": "jido_signal.serialization"
+      },
+      {
+        "file": ".spec/specs/serialization.spec.md",
+        "id": "jido_signal.serialization.round_trip_formats",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Signal and struct serialization shall round-trip through the supported JSON, MessagePack, and Erlang term serializers with type-provider-aware decoding where applicable.",
+        "subject_id": "jido_signal.serialization"
+      },
+      {
+        "file": ".spec/specs/signal_model.spec.md",
+        "id": "jido_signal.signal_model.constructor_defaults",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "`Jido.Signal.new/1`, `new/3`, and `from_map/1` shall populate or validate the required envelope fields and reject malformed input.",
+        "subject_id": "jido_signal.signal_model"
+      },
+      {
+        "file": ".spec/specs/signal_model.spec.md",
+        "id": "jido_signal.signal_model.extension_policy",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "Signal extensions shall be validated, stored, and reconstructed according to extension registry behavior and any typed-signal extension policy.",
+        "subject_id": "jido_signal.signal_model"
+      },
+      {
+        "file": ".spec/specs/signal_model.spec.md",
+        "id": "jido_signal.signal_model.signal_id_helpers",
+        "priority": "should",
+        "stability": "stable",
+        "statement": "Signal ID helpers shall generate valid UUID7 identifiers, preserve chronological ordering, and expose timestamp or sequence inspection utilities for recorded signal flows.",
+        "subject_id": "jido_signal.signal_model"
+      },
+      {
+        "file": ".spec/specs/signal_model.spec.md",
+        "id": "jido_signal.signal_model.typed_schema_validation",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "Modules that `use Jido.Signal` shall validate data against the declared schema and apply configured default metadata during typed construction.",
+        "subject_id": "jido_signal.signal_model"
+      },
+      {
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "id": "jido_signal.workflow.beadwork_guidance_present",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The root AGENTS.md shall tell agents to use Beadwork work management and run bw prime before starting repository work.",
+        "subject_id": "jido_signal.workflow"
+      },
+      {
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "id": "jido_signal.workflow.spec_check_ci",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The repository shall provide a GitHub Actions workflow that runs the spec check entrypoint when spec-relevant files change and on manual dispatch.",
+        "subject_id": "jido_signal.workflow"
+      },
+      {
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "id": "jido_signal.workflow.spec_check_entrypoint",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The repository shall provide a single script entrypoint that runs mix spec.check from the repo root for CI and local automation.",
+        "subject_id": "jido_signal.workflow"
+      },
+      {
+        "file": ".spec/specs/spec_system.spec.md",
+        "id": "spec.workspace.agent_prime_context",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The repository shall include a .spec/AGENTS.md that tells agents to start a session with mix spec.prime before editing current truth.",
+        "subject_id": "spec.system"
+      },
+      {
+        "file": ".spec/specs/spec_system.spec.md",
+        "id": "spec.workspace.agents_present",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The repository shall include a .spec/AGENTS.md that gives local operating guidance for agents working inside the .spec workspace.",
+        "subject_id": "spec.system"
+      },
+      {
+        "file": ".spec/specs/spec_system.spec.md",
+        "id": "spec.workspace.decisions_readme_present",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The repository shall include a .spec/decisions/README.md that explains when durable ADRs belong in the workspace.",
+        "subject_id": "spec.system"
+      },
+      {
+        "file": ".spec/specs/spec_system.spec.md",
+        "id": "spec.workspace.readme_present",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "The repository shall include a .spec/README.md that explains purpose, layout, and workflow.",
+        "subject_id": "spec.system"
+      },
+      {
+        "file": ".spec/specs/spec_system.spec.md",
+        "id": "spec.workspace.state_generated",
+        "priority": "must",
+        "stability": "stable",
+        "statement": "When indexing and validation run, the workspace shall generate .spec/state.json containing indexed subjects, indexed decisions, and verification state.",
+        "subject_id": "spec.system"
+      }
+    ],
+    "scenarios": [
+      {
+        "covers": [
+          "jido_signal.bus_dispatch.subscription_lifecycle",
+          "jido_signal.bus_dispatch.publish_and_replay",
+          "jido_signal.bus_dispatch.adapter_delivery",
+          "jido_signal.bus_dispatch.runtime_support"
+        ],
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "given": [
+          "a bus has a subscriber whose path matches a signal type"
+        ],
+        "id": "jido_signal.bus_dispatch.matching_subscriber_delivery",
+        "subject_id": "jido_signal.bus_dispatch",
+        "then": [
+          "the subscriber or configured adapter receives the recorded signal delivery"
+        ],
+        "when": [
+          "the signal is published"
+        ]
+      },
+      {
+        "covers": [
+          "jido_signal.dispatch_adapters.builtin_delivery",
+          "jido_signal.dispatch_adapters.parallel_and_batch",
+          "jido_signal.dispatch_adapters.error_normalization"
+        ],
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "given": [
+          "a signal is dispatched to multiple built-in adapters at once"
+        ],
+        "id": "jido_signal.dispatch_adapters.multi_target_delivery",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "then": [
+          "the dispatch result reflects the aggregate outcome instead of silently dropping adapter failures"
+        ],
+        "when": [
+          "one or more destinations fail"
+        ]
+      },
+      {
+        "covers": [
+          "jido_signal.extensions_trace.trace_propagation"
+        ],
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "given": [
+          "a signal is processed with an existing trace or traceparent context"
+        ],
+        "id": "jido_signal.extensions_trace.child_span_propagation",
+        "subject_id": "jido_signal.extensions_trace",
+        "then": [
+          "the child trace inherits the parent trace id and links causation through the parent span"
+        ],
+        "when": [
+          "downstream work creates a child signal or child span"
+        ]
+      },
+      {
+        "covers": [
+          "jido_signal.journal_persistence.adapter_callbacks",
+          "jido_signal.journal_persistence.reliable_subscription_recovery"
+        ],
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "given": [
+          "a persistent subscription uses a journal-backed adapter and delivery continues to fail"
+        ],
+        "id": "jido_signal.journal_persistence.retry_then_dlq",
+        "subject_id": "jido_signal.journal_persistence",
+        "then": [
+          "the failed delivery is preserved in the dead-letter queue and successful acknowledgements still advance checkpoints"
+        ],
+        "when": [
+          "the subscription exhausts its allowed retry attempts"
+        ]
+      },
+      {
+        "covers": [
+          "jido_signal.router.match_resolution",
+          "jido_signal.router.precedence_order"
+        ],
+        "file": ".spec/specs/router.spec.md",
+        "given": [
+          "the router contains both specific and wildcard routes that match a signal type"
+        ],
+        "id": "jido_signal.router.specific_before_wildcard",
+        "subject_id": "jido_signal.router",
+        "then": [
+          "the returned handler list preserves the router's specificity and priority ordering"
+        ],
+        "when": [
+          "the signal is routed"
+        ]
+      },
+      {
+        "covers": [
+          "jido_signal.serialization.round_trip_formats",
+          "jido_signal.serialization.defensive_decoding"
+        ],
+        "file": ".spec/specs/serialization.spec.md",
+        "given": [
+          "a signal or struct is serialized with type information and one of the built-in serializers"
+        ],
+        "id": "jido_signal.serialization.typed_round_trip",
+        "subject_id": "jido_signal.serialization",
+        "then": [
+          "the result preserves the intended data shape or returns a structured error when the payload is invalid"
+        ],
+        "when": [
+          "the payload is deserialized with the matching configuration"
+        ]
+      },
+      {
+        "covers": [
+          "jido_signal.signal_model.constructor_defaults",
+          "jido_signal.signal_model.typed_schema_validation"
+        ],
+        "file": ".spec/specs/signal_model.spec.md",
+        "given": [
+          "a typed signal module declares a signal type, default metadata, and a validation schema"
+        ],
+        "id": "jido_signal.signal_model.typed_construction_flow",
+        "subject_id": "jido_signal.signal_model",
+        "then": [
+          "the result is a signal envelope with validated payload data and required runtime metadata"
+        ],
+        "when": [
+          "the caller constructs a signal with valid data and allowed attrs"
+        ]
+      }
+    ],
+    "subjects": [
+      {
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "id": "jido_signal.bus_dispatch",
+        "meta": {
+          "decisions": null,
+          "id": "jido_signal.bus_dispatch",
+          "kind": "subsystem",
+          "status": "active",
+          "summary": "The bus manages subscriptions, ordered publish/replay, adapter-based delivery, and the runtime registry, telemetry, and instance-aware helpers those flows depend on.",
+          "surface": [
+            "lib/jido_signal/application.ex",
+            "lib/jido_signal/bus.ex",
+            "lib/jido_signal/bus",
+            "lib/jido_signal/bus_spy.ex",
+            "lib/jido_signal/dispatch.ex",
+            "lib/jido_signal/dispatch",
+            "lib/jido_signal/instance.ex",
+            "lib/jido_signal/names.ex",
+            "lib/jido_signal/registry.ex",
+            "lib/jido_signal/telemetry.ex",
+            "lib/jido_signal/util.ex",
+            "test/jido_signal/bus/bus_supervision_test.exs",
+            "test/jido_signal/bus/partition_test.exs",
+            "test/jido_signal/bus_instance_isolation_test.exs",
+            "test/jido_signal/signal/bus*.exs",
+            "test/jido_signal/signal/registry_test.exs"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Bus And Dispatch"
+      },
+      {
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "id": "jido_signal.dispatch_adapters",
+        "meta": {
+          "decisions": null,
+          "id": "jido_signal.dispatch_adapters",
+          "kind": "subsystem",
+          "status": "active",
+          "summary": "Dispatch validates configs, supports the built-in adapters, normalizes structured failures, and handles single, async, and parallel multi-target delivery paths.",
+          "surface": [
+            "lib/jido_signal/dispatch.ex",
+            "lib/jido_signal/dispatch/adapter.ex",
+            "lib/jido_signal/dispatch/pid.ex",
+            "lib/jido_signal/dispatch/bus.ex",
+            "lib/jido_signal/dispatch/named.ex",
+            "lib/jido_signal/dispatch/pubsub.ex",
+            "lib/jido_signal/dispatch/logger.ex",
+            "lib/jido_signal/dispatch/console.ex",
+            "lib/jido_signal/dispatch/noop.ex",
+            "lib/jido_signal/dispatch/http.ex",
+            "lib/jido_signal/dispatch/webhook.ex",
+            "lib/jido_signal/dispatch/circuit_breaker.ex",
+            "lib/jido_signal/error.ex",
+            "test/jido_signal/dispatch"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Dispatch Adapters"
+      },
+      {
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "id": "jido_signal.extensions_trace",
+        "meta": {
+          "decisions": null,
+          "id": "jido_signal.extensions_trace",
+          "kind": "subsystem",
+          "status": "active",
+          "summary": "Extensions register by namespace, validate and serialize safely, and tracing utilities propagate W3C-style context through signals and process-local state.",
+          "surface": [
+            "lib/jido_signal/ext.ex",
+            "lib/jido_signal/ext/registry.ex",
+            "lib/jido_signal/ext/trace.ex",
+            "lib/jido_signal/ext/dispatch.ex",
+            "lib/jido_signal/trace.ex",
+            "lib/jido_signal/trace_context.ex",
+            "lib/jido_signal/trace/context.ex",
+            "test/jido_signal/ext_test.exs",
+            "test/jido_signal/ext",
+            "test/jido_signal/trace_test.exs",
+            "test/jido_signal/trace_context_test.exs",
+            "test/jido_signal/trace"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Extensions And Tracing"
+      },
+      {
+        "file": ".spec/specs/guides.spec.md",
+        "id": "jido_signal.guides",
+        "meta": {
+          "decisions": [
+            "jido_signal.decision.spec_led_repo_workflow"
+          ],
+          "id": "jido_signal.guides",
+          "kind": "doc",
+          "status": "active",
+          "summary": "The repository keeps guide coverage for getting started, signal construction and dispatch, routing, event bus usage, serialization, extensions, journal usage, and advanced operational patterns.",
+          "surface": [
+            "guides/getting-started.md",
+            "guides/signals-and-dispatch.md",
+            "guides/signal-router.md",
+            "guides/event-bus.md",
+            "guides/serialization.md",
+            "guides/signal-extensions.md",
+            "guides/signal-journal.md",
+            "guides/advanced.md"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Guides"
+      },
+      {
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "id": "jido_signal.journal_persistence",
+        "meta": {
+          "decisions": null,
+          "id": "jido_signal.journal_persistence",
+          "kind": "subsystem",
+          "status": "active",
+          "summary": "The journal records signals plus causal relationships, and persistence adapters back checkpoints and DLQ behavior used by reliable subscriptions.",
+          "surface": [
+            "lib/jido_signal/journal.ex",
+            "lib/jido_signal/journal/persistence.ex",
+            "lib/jido_signal/journal/adapters/in_memory.ex",
+            "lib/jido_signal/journal/adapters/ets.ex",
+            "lib/jido_signal/journal/adapters/mnesia.ex",
+            "lib/jido_signal/journal/adapters/mnesia/tables.ex",
+            "lib/jido_signal/bus/persistent_subscription.ex",
+            "test/jido_signal/journal",
+            "test/jido_signal/signal/journal",
+            "test/jido_signal/signal/journal_test.exs",
+            "test/jido_signal/signal/bus_persistence_test.exs",
+            "test/jido_signal/bus/bus_journal_test.exs",
+            "test/jido_signal/bus/dlq_test.exs",
+            "test/jido_signal/bus/persistent_subscription_test.exs"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Journal And Persistence"
+      },
+      {
+        "file": ".spec/specs/package.spec.md",
+        "id": "jido_signal.package",
+        "meta": {
+          "decisions": [
+            "jido_signal.decision.spec_led_repo_workflow"
+          ],
+          "id": "jido_signal.package",
+          "kind": "package",
+          "status": "active",
+          "summary": "Jido.Signal provides validated signal envelopes plus routing, delivery, serialization, and instance-scoped infrastructure for event-driven Elixir systems.",
+          "surface": [
+            "README.md",
+            "mix.exs",
+            "lib/jido_signal.ex",
+            "lib/jido_signal/router.ex",
+            "lib/jido_signal/bus.ex",
+            "lib/jido_signal/dispatch.ex",
+            "lib/jido_signal/instance.ex",
+            "lib/mix/tasks/jido_signal.install.ex",
+            "test/jido_signal_test.exs",
+            "test/jido_signal/docs_examples_test.exs",
+            "test/mix/tasks/jido_signal.install_test.exs",
+            "test/support",
+            "test/test_helper.exs"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Jido.Signal Package"
+      },
+      {
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "id": "jido_signal.workflow",
+        "meta": {
+          "decisions": [
+            "jido_signal.decision.spec_led_repo_workflow"
+          ],
+          "id": "jido_signal.workflow",
+          "kind": "workflow",
+          "status": "active",
+          "summary": "Repository instructions tell agents to prime Beadwork before work, and CI provides a dedicated spec.check entrypoint for current-truth changes.",
+          "surface": [
+            "AGENTS.md",
+            "scripts/check_specs.sh",
+            ".github/workflows/specs.yml"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Repository Workflow"
+      },
+      {
+        "file": ".spec/specs/router.spec.md",
+        "id": "jido_signal.router",
+        "meta": {
+          "decisions": null,
+          "id": "jido_signal.router",
+          "kind": "module",
+          "status": "active",
+          "summary": "The router normalizes route specs, rejects invalid patterns, and resolves handlers by specificity, wildcard behavior, and priority.",
+          "surface": [
+            "lib/jido_signal/router.ex",
+            "lib/jido_signal/router/engine.ex",
+            "lib/jido_signal/router/validator.ex",
+            "lib/jido_signal/router/cache.ex",
+            "lib/jido_signal/router/inspect.ex",
+            "test/jido_signal/router"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Router"
+      },
+      {
+        "file": ".spec/specs/serialization.spec.md",
+        "id": "jido_signal.serialization",
+        "meta": {
+          "decisions": null,
+          "id": "jido_signal.serialization",
+          "kind": "subsystem",
+          "status": "active",
+          "summary": "Serialization supports configurable defaults, multiple formats, type-aware decoding, and bounded/safe deserialization.",
+          "surface": [
+            "lib/jido_signal/serialization/config.ex",
+            "lib/jido_signal/serialization/serializer.ex",
+            "lib/jido_signal/serialization/json_serializer.ex",
+            "lib/jido_signal/serialization/json_decoder.ex",
+            "lib/jido_signal/serialization/msgpack_serializer.ex",
+            "lib/jido_signal/serialization/erlang_term_serializer.ex",
+            "lib/jido_signal/serialization/schema.ex",
+            "lib/jido_signal/serialization/type_provider.ex",
+            "lib/jido_signal/serialization/module_name_type_provider.ex",
+            "lib/jido_signal/serialization/cloud_events_transform.ex",
+            "test/jido_signal/serialization_test.exs",
+            "test/jido_signal/serialization",
+            "test/jido_signal/signal/serialization",
+            "test/jido_signal/signal/*serialization*.exs"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Serialization"
+      },
+      {
+        "file": ".spec/specs/signal_model.spec.md",
+        "id": "jido_signal.signal_model",
+        "meta": {
+          "decisions": null,
+          "id": "jido_signal.signal_model",
+          "kind": "module",
+          "status": "active",
+          "summary": "Signal constructors populate required CloudEvents-style fields, validate typed signal data, issue sortable UUID7 signal ids, and preserve extension policy during construction and map conversion.",
+          "surface": [
+            "lib/jido_signal.ex",
+            "lib/jido_signal/id.ex",
+            "lib/jido_signal/using.ex",
+            "lib/jido_signal/ext.ex",
+            "lib/jido_signal/trace_context.ex",
+            "test/jido_signal/signal/signal_test.exs",
+            "test/jido_signal/signal_custom_test.exs",
+            "test/jido_signal/signal/id_test.exs"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Signal Model"
+      },
+      {
+        "file": ".spec/specs/spec_system.spec.md",
+        "id": "spec.system",
+        "meta": {
+          "decisions": null,
+          "id": "spec.system",
+          "kind": "policy",
+          "status": "active",
+          "summary": "Canonical workspace contract for authored specs and generated Spec Led state.",
+          "surface": [
+            ".spec/README.md",
+            ".spec/AGENTS.md",
+            ".spec/decisions/README.md",
+            ".spec/specs/*.spec.md",
+            ".spec/decisions/*.md"
+          ],
+          "verification_minimum_strength": null
+        },
+        "title": "Spec System"
+      }
+    ],
+    "verifications": [
+      {
+        "covers": [
+          "jido_signal.bus_dispatch.subscription_lifecycle",
+          "jido_signal.bus_dispatch.publish_and_replay",
+          "jido_signal.bus_dispatch.adapter_delivery",
+          "jido_signal.bus_dispatch.runtime_support",
+          "jido_signal.bus_dispatch.matching_subscriber_delivery"
+        ],
+        "execute": true,
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.bus_dispatch",
+        "target": "mix test test/jido_signal/bus test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/signal/journal_test.exs test/jido_signal/bus_instance_isolation_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.dispatch_adapters.config_validation",
+          "jido_signal.dispatch_adapters.builtin_delivery",
+          "jido_signal.dispatch_adapters.parallel_and_batch",
+          "jido_signal.dispatch_adapters.error_normalization",
+          "jido_signal.dispatch_adapters.multi_target_delivery"
+        ],
+        "execute": true,
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "target": "mix test test/jido_signal/dispatch test/jido_signal/dispatch/adapters"
+      },
+      {
+        "covers": [
+          "jido_signal.extensions_trace.extension_registration",
+          "jido_signal.extensions_trace.safe_extension_handling",
+          "jido_signal.extensions_trace.trace_propagation",
+          "jido_signal.extensions_trace.child_span_propagation"
+        ],
+        "execute": true,
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.extensions_trace",
+        "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_test.exs test/jido_signal/trace_context_test.exs test/jido_signal/trace"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.getting_started"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/getting-started.md"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.signals_and_dispatch"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signals-and-dispatch.md"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.signal_router"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signal-router.md"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.event_bus"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/event-bus.md"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.serialization"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/serialization.md"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.signal_extensions"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signal-extensions.md"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.signal_journal"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signal-journal.md"
+      },
+      {
+        "covers": [
+          "jido_signal.guides.advanced_usage"
+        ],
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/advanced.md"
+      },
+      {
+        "covers": [
+          "jido_signal.journal_persistence.causality_and_query",
+          "jido_signal.journal_persistence.adapter_callbacks",
+          "jido_signal.journal_persistence.reliable_subscription_recovery",
+          "jido_signal.journal_persistence.retry_then_dlq"
+        ],
+        "execute": true,
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.journal_persistence",
+        "target": "mix test test/jido_signal/signal/journal_test.exs test/jido_signal/journal test/jido_signal/signal/journal/adapters/ets_test.exs test/jido_signal/signal/journal/adapters/mnesia_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/bus/persistent_subscription_test.exs test/jido_signal/bus/bus_journal_test.exs test/jido_signal/bus/dlq_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.package.signal_model"
+        ],
+        "execute": true,
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/jido_signal/signal/signal_test.exs test/jido_signal/signal_custom_test.exs test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_context_test.exs test/jido_signal/trace"
+      },
+      {
+        "covers": [
+          "jido_signal.package.routing_and_delivery"
+        ],
+        "execute": true,
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/jido_signal/router test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.package.serialization_and_isolation"
+        ],
+        "execute": true,
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/jido_signal/serialization_test.exs test/jido_signal/signal/serialization test/jido_signal/instance_test.exs test/jido_signal/bus_instance_isolation_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.package.installation_entrypoint"
+        ],
+        "execute": true,
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/mix/tasks/jido_signal.install_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.router.route_validation",
+          "jido_signal.router.match_resolution",
+          "jido_signal.router.precedence_order",
+          "jido_signal.router.specific_before_wildcard"
+        ],
+        "execute": true,
+        "file": ".spec/specs/router.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.router",
+        "target": "mix test test/jido_signal/router"
+      },
+      {
+        "covers": [
+          "jido_signal.serialization.default_configuration",
+          "jido_signal.serialization.round_trip_formats",
+          "jido_signal.serialization.defensive_decoding",
+          "jido_signal.serialization.typed_round_trip"
+        ],
+        "execute": true,
+        "file": ".spec/specs/serialization.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.serialization",
+        "target": "mix test test/jido_signal/serialization_test.exs test/jido_signal/serialization test/jido_signal/signal/serialization test/jido_signal/signal/signal_serialization_test.exs test/jido_signal/signal/serialization_strategies_test.exs test/jido_signal/signal/recorded_signal_serialization_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.signal_model.constructor_defaults",
+          "jido_signal.signal_model.typed_schema_validation",
+          "jido_signal.signal_model.typed_construction_flow"
+        ],
+        "execute": true,
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/signal_test.exs test/jido_signal/signal_custom_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.signal_model.extension_policy"
+        ],
+        "execute": true,
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_context_test.exs test/jido_signal/trace"
+      },
+      {
+        "covers": [
+          "jido_signal.signal_model.signal_id_helpers"
+        ],
+        "execute": true,
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/id_test.exs"
+      },
+      {
+        "covers": [
+          "jido_signal.workflow.beadwork_guidance_present"
+        ],
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "file",
+        "subject_id": "jido_signal.workflow",
+        "target": "AGENTS.md"
+      },
+      {
+        "covers": [
+          "jido_signal.workflow.spec_check_entrypoint",
+          "jido_signal.workflow.spec_check_ci"
+        ],
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "file",
+        "subject_id": "jido_signal.workflow",
+        "target": "scripts/check_specs.sh"
+      },
+      {
+        "covers": [
+          "jido_signal.workflow.spec_check_ci"
+        ],
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "workflow_file",
+        "subject_id": "jido_signal.workflow",
+        "target": ".github/workflows/specs.yml"
+      },
+      {
+        "covers": [
+          "spec.workspace.readme_present"
+        ],
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "source_file",
+        "subject_id": "spec.system",
+        "target": ".spec/README.md"
+      },
+      {
+        "covers": [
+          "spec.workspace.agents_present",
+          "spec.workspace.agent_prime_context"
+        ],
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "source_file",
+        "subject_id": "spec.system",
+        "target": ".spec/AGENTS.md"
+      },
+      {
+        "covers": [
+          "spec.workspace.decisions_readme_present"
+        ],
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "source_file",
+        "subject_id": "spec.system",
+        "target": ".spec/decisions/README.md"
+      },
+      {
+        "covers": [
+          "spec.workspace.state_generated"
+        ],
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "command",
+        "subject_id": "spec.system",
+        "target": "mix spec.index"
+      },
+      {
+        "covers": [
+          "spec.workspace.state_generated"
+        ],
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "command",
+        "subject_id": "spec.system",
+        "target": "mix spec.validate"
+      }
+    ]
+  },
+  "specification_version": "1.0",
+  "summary": {
+    "decision_parse_errors": 0,
+    "decisions": 1,
+    "exceptions": 0,
+    "findings": 0,
+    "requirements": 44,
+    "scenarios": 7,
+    "subjects": 11,
+    "verifications": 29
+  },
+  "verification": {
+    "claims": [
+      {
+        "cover_id": "jido_signal.bus_dispatch.adapter_delivery",
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.bus_dispatch",
+        "target": "mix test test/jido_signal/bus test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/signal/journal_test.exs test/jido_signal/bus_instance_isolation_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.bus_dispatch.matching_subscriber_delivery",
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.bus_dispatch",
+        "target": "mix test test/jido_signal/bus test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/signal/journal_test.exs test/jido_signal/bus_instance_isolation_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.bus_dispatch.publish_and_replay",
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.bus_dispatch",
+        "target": "mix test test/jido_signal/bus test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/signal/journal_test.exs test/jido_signal/bus_instance_isolation_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.bus_dispatch.runtime_support",
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.bus_dispatch",
+        "target": "mix test test/jido_signal/bus test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/signal/journal_test.exs test/jido_signal/bus_instance_isolation_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.bus_dispatch.subscription_lifecycle",
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.bus_dispatch",
+        "target": "mix test test/jido_signal/bus test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/signal/journal_test.exs test/jido_signal/bus_instance_isolation_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.dispatch_adapters.builtin_delivery",
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "target": "mix test test/jido_signal/dispatch test/jido_signal/dispatch/adapters",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.dispatch_adapters.config_validation",
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "target": "mix test test/jido_signal/dispatch test/jido_signal/dispatch/adapters",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.dispatch_adapters.error_normalization",
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "target": "mix test test/jido_signal/dispatch test/jido_signal/dispatch/adapters",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.dispatch_adapters.multi_target_delivery",
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "target": "mix test test/jido_signal/dispatch test/jido_signal/dispatch/adapters",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.dispatch_adapters.parallel_and_batch",
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "target": "mix test test/jido_signal/dispatch test/jido_signal/dispatch/adapters",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.extensions_trace.child_span_propagation",
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.extensions_trace",
+        "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_test.exs test/jido_signal/trace_context_test.exs test/jido_signal/trace",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.extensions_trace.extension_registration",
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.extensions_trace",
+        "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_test.exs test/jido_signal/trace_context_test.exs test/jido_signal/trace",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.extensions_trace.safe_extension_handling",
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.extensions_trace",
+        "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_test.exs test/jido_signal/trace_context_test.exs test/jido_signal/trace",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.extensions_trace.trace_propagation",
+        "file": ".spec/specs/extensions_trace.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.extensions_trace",
+        "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_test.exs test/jido_signal/trace_context_test.exs test/jido_signal/trace",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.guides.getting_started",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/getting-started.md",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.guides.signals_and_dispatch",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signals-and-dispatch.md",
+        "verification_index": 1
+      },
+      {
+        "cover_id": "jido_signal.guides.signal_router",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signal-router.md",
+        "verification_index": 2
+      },
+      {
+        "cover_id": "jido_signal.guides.event_bus",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/event-bus.md",
+        "verification_index": 3
+      },
+      {
+        "cover_id": "jido_signal.guides.serialization",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/serialization.md",
+        "verification_index": 4
+      },
+      {
+        "cover_id": "jido_signal.guides.signal_extensions",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signal-extensions.md",
+        "verification_index": 5
+      },
+      {
+        "cover_id": "jido_signal.guides.signal_journal",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/signal-journal.md",
+        "verification_index": 6
+      },
+      {
+        "cover_id": "jido_signal.guides.advanced_usage",
+        "file": ".spec/specs/guides.spec.md",
+        "kind": "guide_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.guides",
+        "target": "guides/advanced.md",
+        "verification_index": 7
+      },
+      {
+        "cover_id": "jido_signal.journal_persistence.adapter_callbacks",
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.journal_persistence",
+        "target": "mix test test/jido_signal/signal/journal_test.exs test/jido_signal/journal test/jido_signal/signal/journal/adapters/ets_test.exs test/jido_signal/signal/journal/adapters/mnesia_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/bus/persistent_subscription_test.exs test/jido_signal/bus/bus_journal_test.exs test/jido_signal/bus/dlq_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.journal_persistence.causality_and_query",
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.journal_persistence",
+        "target": "mix test test/jido_signal/signal/journal_test.exs test/jido_signal/journal test/jido_signal/signal/journal/adapters/ets_test.exs test/jido_signal/signal/journal/adapters/mnesia_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/bus/persistent_subscription_test.exs test/jido_signal/bus/bus_journal_test.exs test/jido_signal/bus/dlq_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.journal_persistence.reliable_subscription_recovery",
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.journal_persistence",
+        "target": "mix test test/jido_signal/signal/journal_test.exs test/jido_signal/journal test/jido_signal/signal/journal/adapters/ets_test.exs test/jido_signal/signal/journal/adapters/mnesia_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/bus/persistent_subscription_test.exs test/jido_signal/bus/bus_journal_test.exs test/jido_signal/bus/dlq_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.journal_persistence.retry_then_dlq",
+        "file": ".spec/specs/journal_persistence.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.journal_persistence",
+        "target": "mix test test/jido_signal/signal/journal_test.exs test/jido_signal/journal test/jido_signal/signal/journal/adapters/ets_test.exs test/jido_signal/signal/journal/adapters/mnesia_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/bus/persistent_subscription_test.exs test/jido_signal/bus/bus_journal_test.exs test/jido_signal/bus/dlq_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.package.signal_model",
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/jido_signal/signal/signal_test.exs test/jido_signal/signal_custom_test.exs test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_context_test.exs test/jido_signal/trace",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.package.routing_and_delivery",
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/jido_signal/router test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs",
+        "verification_index": 1
+      },
+      {
+        "cover_id": "jido_signal.package.serialization_and_isolation",
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/jido_signal/serialization_test.exs test/jido_signal/signal/serialization test/jido_signal/instance_test.exs test/jido_signal/bus_instance_isolation_test.exs",
+        "verification_index": 2
+      },
+      {
+        "cover_id": "jido_signal.package.installation_entrypoint",
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/mix/tasks/jido_signal.install_test.exs",
+        "verification_index": 3
+      },
+      {
+        "cover_id": "jido_signal.router.match_resolution",
+        "file": ".spec/specs/router.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.router",
+        "target": "mix test test/jido_signal/router",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.router.precedence_order",
+        "file": ".spec/specs/router.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.router",
+        "target": "mix test test/jido_signal/router",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.router.route_validation",
+        "file": ".spec/specs/router.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.router",
+        "target": "mix test test/jido_signal/router",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.router.specific_before_wildcard",
+        "file": ".spec/specs/router.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.router",
+        "target": "mix test test/jido_signal/router",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.serialization.default_configuration",
+        "file": ".spec/specs/serialization.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.serialization",
+        "target": "mix test test/jido_signal/serialization_test.exs test/jido_signal/serialization test/jido_signal/signal/serialization test/jido_signal/signal/signal_serialization_test.exs test/jido_signal/signal/serialization_strategies_test.exs test/jido_signal/signal/recorded_signal_serialization_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.serialization.defensive_decoding",
+        "file": ".spec/specs/serialization.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.serialization",
+        "target": "mix test test/jido_signal/serialization_test.exs test/jido_signal/serialization test/jido_signal/signal/serialization test/jido_signal/signal/signal_serialization_test.exs test/jido_signal/signal/serialization_strategies_test.exs test/jido_signal/signal/recorded_signal_serialization_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.serialization.round_trip_formats",
+        "file": ".spec/specs/serialization.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.serialization",
+        "target": "mix test test/jido_signal/serialization_test.exs test/jido_signal/serialization test/jido_signal/signal/serialization test/jido_signal/signal/signal_serialization_test.exs test/jido_signal/signal/serialization_strategies_test.exs test/jido_signal/signal/recorded_signal_serialization_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.serialization.typed_round_trip",
+        "file": ".spec/specs/serialization.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.serialization",
+        "target": "mix test test/jido_signal/serialization_test.exs test/jido_signal/serialization test/jido_signal/signal/serialization test/jido_signal/signal/signal_serialization_test.exs test/jido_signal/signal/serialization_strategies_test.exs test/jido_signal/signal/recorded_signal_serialization_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.signal_model.constructor_defaults",
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/signal_test.exs test/jido_signal/signal_custom_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.signal_model.typed_construction_flow",
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/signal_test.exs test/jido_signal/signal_custom_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.signal_model.typed_schema_validation",
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/signal_test.exs test/jido_signal/signal_custom_test.exs",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.signal_model.extension_policy",
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_context_test.exs test/jido_signal/trace",
+        "verification_index": 1
+      },
+      {
+        "cover_id": "jido_signal.signal_model.signal_id_helpers",
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/id_test.exs",
+        "verification_index": 2
+      },
+      {
+        "cover_id": "jido_signal.workflow.beadwork_guidance_present",
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.workflow",
+        "target": "AGENTS.md",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.workflow.spec_check_ci",
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.workflow",
+        "target": "scripts/check_specs.sh",
+        "verification_index": 1
+      },
+      {
+        "cover_id": "jido_signal.workflow.spec_check_entrypoint",
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.workflow",
+        "target": "scripts/check_specs.sh",
+        "verification_index": 1
+      },
+      {
+        "cover_id": "jido_signal.workflow.spec_check_ci",
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "workflow_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.workflow",
+        "target": ".github/workflows/specs.yml",
+        "verification_index": 2
+      },
+      {
+        "cover_id": "spec.workspace.readme_present",
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "source_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "spec.system",
+        "target": ".spec/README.md",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "spec.workspace.agent_prime_context",
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "source_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "spec.system",
+        "target": ".spec/AGENTS.md",
+        "verification_index": 1
+      },
+      {
+        "cover_id": "spec.workspace.agents_present",
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "source_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "spec.system",
+        "target": ".spec/AGENTS.md",
+        "verification_index": 1
+      },
+      {
+        "cover_id": "spec.workspace.decisions_readme_present",
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "source_file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "spec.system",
+        "target": ".spec/decisions/README.md",
+        "verification_index": 2
+      },
+      {
+        "cover_id": "spec.workspace.state_generated",
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "claimed",
+        "subject_id": "spec.system",
+        "target": "mix spec.index",
+        "verification_index": 3
+      },
+      {
+        "cover_id": "spec.workspace.state_generated",
+        "file": ".spec/specs/spec_system.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "claimed",
+        "subject_id": "spec.system",
+        "target": "mix spec.validate",
+        "verification_index": 4
+      }
+    ],
+    "cli_minimum_strength": null,
+    "default_minimum_strength": "claimed",
+    "strength_summary": {
+      "claimed": 2,
+      "executed": 35,
+      "linked": 16
+    },
+    "threshold_failures": 0
+  },
+  "workspace": {
+    "decision_count": 1,
+    "spec_count": 11
+  }
+}

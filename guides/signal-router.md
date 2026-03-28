@@ -1,4 +1,5 @@
 # Signal Router
+<!-- covers: jido_signal.guides.signal_router -->
 
 High-performance trie-based signal routing with pattern matching and priority execution.
 

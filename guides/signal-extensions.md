@@ -1,4 +1,5 @@
 # Signal Extensions
+<!-- covers: jido_signal.guides.signal_extensions -->
 
 Signal extensions provide a way to add domain-specific metadata to Signals while maintaining CloudEvents v1.0.2 compliance. Extensions allow you to enrich Signals with custom functionality without modifying the core Signal structure.
 

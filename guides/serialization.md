@@ -1,4 +1,5 @@
 # Serialization
+<!-- covers: jido_signal.guides.serialization -->
 
 Comprehensive guide to signal serialization, including built-in serializers, custom implementations, and security considerations.
 

@@ -1,4 +1,5 @@
 # Advanced Usage
+<!-- covers: jido_signal.guides.advanced_usage -->
 
 ```elixir
 # Common aliases used in examples
