@@ -24,6 +24,10 @@ surface:
   - lib/jido_signal/serialization/type_provider.ex
   - lib/jido_signal/serialization/module_name_type_provider.ex
   - lib/jido_signal/serialization/cloud_events_transform.ex
+  - test/jido_signal/serialization_test.exs
+  - test/jido_signal/serialization
+  - test/jido_signal/signal/serialization
+  - test/jido_signal/signal/*serialization*.exs
 ```
 
 ## Requirements

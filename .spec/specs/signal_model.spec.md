@@ -11,12 +11,16 @@ macro that typed signal modules rely on.
 id: jido_signal.signal_model
 kind: module
 status: active
-summary: Signal constructors populate required CloudEvents-style fields, validate typed signal data, and preserve extension policy during construction and map conversion.
+summary: Signal constructors populate required CloudEvents-style fields, validate typed signal data, issue sortable UUID7 signal ids, and preserve extension policy during construction and map conversion.
 surface:
   - lib/jido_signal.ex
+  - lib/jido_signal/id.ex
   - lib/jido_signal/using.ex
   - lib/jido_signal/ext.ex
   - lib/jido_signal/trace_context.ex
+  - test/jido_signal/signal/signal_test.exs
+  - test/jido_signal/signal_custom_test.exs
+  - test/jido_signal/signal/id_test.exs
 ```
 
 ## Requirements
@@ -36,6 +40,11 @@ surface:
   statement: Signal extensions shall be validated, stored, and reconstructed according to extension registry behavior and any typed-signal extension policy.
   priority: should
   stability: evolving
+
+- id: jido_signal.signal_model.signal_id_helpers
+  statement: Signal ID helpers shall generate valid UUID7 identifiers, preserve chronological ordering, and expose timestamp or sequence inspection utilities for recorded signal flows.
+  priority: should
+  stability: stable
 ```
 
 ## Scenarios
@@ -73,4 +82,10 @@ surface:
   execute: true
   covers:
     - jido_signal.signal_model.extension_policy
+
+- kind: command
+  target: mix test test/jido_signal/signal/id_test.exs
+  execute: true
+  covers:
+    - jido_signal.signal_model.signal_id_helpers
 ```

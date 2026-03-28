@@ -38,6 +38,14 @@
       },
       {
         "file": ".spec/specs/bus_dispatch.spec.md",
+        "id": "jido_signal.bus_dispatch.runtime_support",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "The bus runtime shall start shared registry or task infrastructure, resolve instance-scoped names, and emit telemetry hooks that support observability and bus spy capture.",
+        "subject_id": "jido_signal.bus_dispatch"
+      },
+      {
+        "file": ".spec/specs/bus_dispatch.spec.md",
         "id": "jido_signal.bus_dispatch.subscription_lifecycle",
         "priority": "must",
         "stability": "stable",
@@ -58,6 +66,14 @@
         "priority": "must",
         "stability": "stable",
         "statement": "Dispatch shall validate single or multiple adapter configs and reject malformed or unsupported dispatch options before delivery.",
+        "subject_id": "jido_signal.dispatch_adapters"
+      },
+      {
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "id": "jido_signal.dispatch_adapters.error_normalization",
+        "priority": "must",
+        "stability": "evolving",
+        "statement": "Dispatch shall normalize adapter and aggregate delivery failures into structured error values that preserve actionable cause and target context.",
         "subject_id": "jido_signal.dispatch_adapters"
       },
       {
@@ -182,6 +198,14 @@
       },
       {
         "file": ".spec/specs/package.spec.md",
+        "id": "jido_signal.package.installation_entrypoint",
+        "priority": "should",
+        "stability": "stable",
+        "statement": "The package shall expose a `mix jido_signal.install` task that guides adopters to the getting-started flow and fails clearly when Igniter support is unavailable.",
+        "subject_id": "jido_signal.package"
+      },
+      {
+        "file": ".spec/specs/package.spec.md",
         "id": "jido_signal.package.routing_and_delivery",
         "priority": "must",
         "stability": "stable",
@@ -270,6 +294,14 @@
       },
       {
         "file": ".spec/specs/signal_model.spec.md",
+        "id": "jido_signal.signal_model.signal_id_helpers",
+        "priority": "should",
+        "stability": "stable",
+        "statement": "Signal ID helpers shall generate valid UUID7 identifiers, preserve chronological ordering, and expose timestamp or sequence inspection utilities for recorded signal flows.",
+        "subject_id": "jido_signal.signal_model"
+      },
+      {
+        "file": ".spec/specs/signal_model.spec.md",
         "id": "jido_signal.signal_model.typed_schema_validation",
         "priority": "must",
         "stability": "stable",
@@ -346,7 +378,8 @@
         "covers": [
           "jido_signal.bus_dispatch.subscription_lifecycle",
           "jido_signal.bus_dispatch.publish_and_replay",
-          "jido_signal.bus_dispatch.adapter_delivery"
+          "jido_signal.bus_dispatch.adapter_delivery",
+          "jido_signal.bus_dispatch.runtime_support"
         ],
         "file": ".spec/specs/bus_dispatch.spec.md",
         "given": [
@@ -364,7 +397,8 @@
       {
         "covers": [
           "jido_signal.dispatch_adapters.builtin_delivery",
-          "jido_signal.dispatch_adapters.parallel_and_batch"
+          "jido_signal.dispatch_adapters.parallel_and_batch",
+          "jido_signal.dispatch_adapters.error_normalization"
         ],
         "file": ".spec/specs/dispatch_adapters.spec.md",
         "given": [
@@ -478,13 +512,24 @@
           "id": "jido_signal.bus_dispatch",
           "kind": "subsystem",
           "status": "active",
-          "summary": "The bus manages subscriptions, ordered publish/replay, and adapter-based delivery with persistence and instance-aware infrastructure hooks.",
+          "summary": "The bus manages subscriptions, ordered publish/replay, adapter-based delivery, and the runtime registry, telemetry, and instance-aware helpers those flows depend on.",
           "surface": [
+            "lib/jido_signal/application.ex",
             "lib/jido_signal/bus.ex",
             "lib/jido_signal/bus",
+            "lib/jido_signal/bus_spy.ex",
             "lib/jido_signal/dispatch.ex",
             "lib/jido_signal/dispatch",
-            "lib/jido_signal/instance.ex"
+            "lib/jido_signal/instance.ex",
+            "lib/jido_signal/names.ex",
+            "lib/jido_signal/registry.ex",
+            "lib/jido_signal/telemetry.ex",
+            "lib/jido_signal/util.ex",
+            "test/jido_signal/bus/bus_supervision_test.exs",
+            "test/jido_signal/bus/partition_test.exs",
+            "test/jido_signal/bus_instance_isolation_test.exs",
+            "test/jido_signal/signal/bus*.exs",
+            "test/jido_signal/signal/registry_test.exs"
           ],
           "verification_minimum_strength": null
         },
@@ -498,7 +543,7 @@
           "id": "jido_signal.dispatch_adapters",
           "kind": "subsystem",
           "status": "active",
-          "summary": "Dispatch validates configs, supports the built-in adapters, and handles single, async, and parallel multi-target delivery paths.",
+          "summary": "Dispatch validates configs, supports the built-in adapters, normalizes structured failures, and handles single, async, and parallel multi-target delivery paths.",
           "surface": [
             "lib/jido_signal/dispatch.ex",
             "lib/jido_signal/dispatch/adapter.ex",
@@ -511,7 +556,9 @@
             "lib/jido_signal/dispatch/noop.ex",
             "lib/jido_signal/dispatch/http.ex",
             "lib/jido_signal/dispatch/webhook.ex",
-            "lib/jido_signal/dispatch/circuit_breaker.ex"
+            "lib/jido_signal/dispatch/circuit_breaker.ex",
+            "lib/jido_signal/error.ex",
+            "test/jido_signal/dispatch"
           ],
           "verification_minimum_strength": null
         },
@@ -533,7 +580,12 @@
             "lib/jido_signal/ext/dispatch.ex",
             "lib/jido_signal/trace.ex",
             "lib/jido_signal/trace_context.ex",
-            "lib/jido_signal/trace/context.ex"
+            "lib/jido_signal/trace/context.ex",
+            "test/jido_signal/ext_test.exs",
+            "test/jido_signal/ext",
+            "test/jido_signal/trace_test.exs",
+            "test/jido_signal/trace_context_test.exs",
+            "test/jido_signal/trace"
           ],
           "verification_minimum_strength": null
         },
@@ -580,7 +632,14 @@
             "lib/jido_signal/journal/adapters/ets.ex",
             "lib/jido_signal/journal/adapters/mnesia.ex",
             "lib/jido_signal/journal/adapters/mnesia/tables.ex",
-            "lib/jido_signal/bus/persistent_subscription.ex"
+            "lib/jido_signal/bus/persistent_subscription.ex",
+            "test/jido_signal/journal",
+            "test/jido_signal/signal/journal",
+            "test/jido_signal/signal/journal_test.exs",
+            "test/jido_signal/signal/bus_persistence_test.exs",
+            "test/jido_signal/bus/bus_journal_test.exs",
+            "test/jido_signal/bus/dlq_test.exs",
+            "test/jido_signal/bus/persistent_subscription_test.exs"
           ],
           "verification_minimum_strength": null
         },
@@ -604,7 +663,13 @@
             "lib/jido_signal/router.ex",
             "lib/jido_signal/bus.ex",
             "lib/jido_signal/dispatch.ex",
-            "lib/jido_signal/instance.ex"
+            "lib/jido_signal/instance.ex",
+            "lib/mix/tasks/jido_signal.install.ex",
+            "test/jido_signal_test.exs",
+            "test/jido_signal/docs_examples_test.exs",
+            "test/mix/tasks/jido_signal.install_test.exs",
+            "test/support",
+            "test/test_helper.exs"
           ],
           "verification_minimum_strength": null
         },
@@ -643,7 +708,9 @@
             "lib/jido_signal/router.ex",
             "lib/jido_signal/router/engine.ex",
             "lib/jido_signal/router/validator.ex",
-            "lib/jido_signal/router/cache.ex"
+            "lib/jido_signal/router/cache.ex",
+            "lib/jido_signal/router/inspect.ex",
+            "test/jido_signal/router"
           ],
           "verification_minimum_strength": null
         },
@@ -668,7 +735,11 @@
             "lib/jido_signal/serialization/schema.ex",
             "lib/jido_signal/serialization/type_provider.ex",
             "lib/jido_signal/serialization/module_name_type_provider.ex",
-            "lib/jido_signal/serialization/cloud_events_transform.ex"
+            "lib/jido_signal/serialization/cloud_events_transform.ex",
+            "test/jido_signal/serialization_test.exs",
+            "test/jido_signal/serialization",
+            "test/jido_signal/signal/serialization",
+            "test/jido_signal/signal/*serialization*.exs"
           ],
           "verification_minimum_strength": null
         },
@@ -682,12 +753,16 @@
           "id": "jido_signal.signal_model",
           "kind": "module",
           "status": "active",
-          "summary": "Signal constructors populate required CloudEvents-style fields, validate typed signal data, and preserve extension policy during construction and map conversion.",
+          "summary": "Signal constructors populate required CloudEvents-style fields, validate typed signal data, issue sortable UUID7 signal ids, and preserve extension policy during construction and map conversion.",
           "surface": [
             "lib/jido_signal.ex",
+            "lib/jido_signal/id.ex",
             "lib/jido_signal/using.ex",
             "lib/jido_signal/ext.ex",
-            "lib/jido_signal/trace_context.ex"
+            "lib/jido_signal/trace_context.ex",
+            "test/jido_signal/signal/signal_test.exs",
+            "test/jido_signal/signal_custom_test.exs",
+            "test/jido_signal/signal/id_test.exs"
           ],
           "verification_minimum_strength": null
         },
@@ -720,6 +795,7 @@
           "jido_signal.bus_dispatch.subscription_lifecycle",
           "jido_signal.bus_dispatch.publish_and_replay",
           "jido_signal.bus_dispatch.adapter_delivery",
+          "jido_signal.bus_dispatch.runtime_support",
           "jido_signal.bus_dispatch.matching_subscriber_delivery"
         ],
         "execute": true,
@@ -733,6 +809,7 @@
           "jido_signal.dispatch_adapters.config_validation",
           "jido_signal.dispatch_adapters.builtin_delivery",
           "jido_signal.dispatch_adapters.parallel_and_batch",
+          "jido_signal.dispatch_adapters.error_normalization",
           "jido_signal.dispatch_adapters.multi_target_delivery"
         ],
         "execute": true,
@@ -871,6 +948,16 @@
       },
       {
         "covers": [
+          "jido_signal.package.installation_entrypoint"
+        ],
+        "execute": true,
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/mix/tasks/jido_signal.install_test.exs"
+      },
+      {
+        "covers": [
           "jido_signal.router.route_validation",
           "jido_signal.router.match_resolution",
           "jido_signal.router.precedence_order",
@@ -916,6 +1003,16 @@
         "kind": "command",
         "subject_id": "jido_signal.signal_model",
         "target": "mix test test/jido_signal/ext_test.exs test/jido_signal/ext test/jido_signal/trace_context_test.exs test/jido_signal/trace"
+      },
+      {
+        "covers": [
+          "jido_signal.signal_model.signal_id_helpers"
+        ],
+        "execute": true,
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/id_test.exs"
       },
       {
         "covers": [
@@ -999,10 +1096,10 @@
     "decisions": 1,
     "exceptions": 0,
     "findings": 0,
-    "requirements": 40,
+    "requirements": 44,
     "scenarios": 7,
     "subjects": 11,
-    "verifications": 27
+    "verifications": 29
   },
   "verification": {
     "claims": [
@@ -1040,6 +1137,17 @@
         "verification_index": 0
       },
       {
+        "cover_id": "jido_signal.bus_dispatch.runtime_support",
+        "file": ".spec/specs/bus_dispatch.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.bus_dispatch",
+        "target": "mix test test/jido_signal/bus test/jido_signal/dispatch test/jido_signal/signal/bus_test.exs test/jido_signal/signal/bus_e2e_test.exs test/jido_signal/signal/bus_persistence_test.exs test/jido_signal/signal/journal_test.exs test/jido_signal/bus_instance_isolation_test.exs",
+        "verification_index": 0
+      },
+      {
         "cover_id": "jido_signal.bus_dispatch.subscription_lifecycle",
         "file": ".spec/specs/bus_dispatch.spec.md",
         "kind": "command",
@@ -1063,6 +1171,17 @@
       },
       {
         "cover_id": "jido_signal.dispatch_adapters.config_validation",
+        "file": ".spec/specs/dispatch_adapters.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.dispatch_adapters",
+        "target": "mix test test/jido_signal/dispatch test/jido_signal/dispatch/adapters",
+        "verification_index": 0
+      },
+      {
+        "cover_id": "jido_signal.dispatch_adapters.error_normalization",
         "file": ".spec/specs/dispatch_adapters.spec.md",
         "kind": "command",
         "meets_minimum": true,
@@ -1304,6 +1423,17 @@
         "verification_index": 2
       },
       {
+        "cover_id": "jido_signal.package.installation_entrypoint",
+        "file": ".spec/specs/package.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.package",
+        "target": "mix test test/mix/tasks/jido_signal.install_test.exs",
+        "verification_index": 3
+      },
+      {
         "cover_id": "jido_signal.router.match_resolution",
         "file": ".spec/specs/router.spec.md",
         "kind": "command",
@@ -1436,6 +1566,17 @@
         "verification_index": 1
       },
       {
+        "cover_id": "jido_signal.signal_model.signal_id_helpers",
+        "file": ".spec/specs/signal_model.spec.md",
+        "kind": "command",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "executed",
+        "subject_id": "jido_signal.signal_model",
+        "target": "mix test test/jido_signal/signal/id_test.exs",
+        "verification_index": 2
+      },
+      {
         "cover_id": "jido_signal.workflow.beadwork_guidance_present",
         "file": ".spec/specs/repo_workflow.spec.md",
         "kind": "file",
@@ -1550,7 +1691,7 @@
     "default_minimum_strength": "claimed",
     "strength_summary": {
       "claimed": 2,
-      "executed": 31,
+      "executed": 35,
       "linked": 16
     },
     "threshold_failures": 0

@@ -20,6 +20,12 @@ surface:
   - lib/jido_signal/bus.ex
   - lib/jido_signal/dispatch.ex
   - lib/jido_signal/instance.ex
+  - lib/mix/tasks/jido_signal.install.ex
+  - test/jido_signal_test.exs
+  - test/jido_signal/docs_examples_test.exs
+  - test/mix/tasks/jido_signal.install_test.exs
+  - test/support
+  - test/test_helper.exs
 decisions:
   - jido_signal.decision.spec_led_repo_workflow
 ```
@@ -41,6 +47,11 @@ decisions:
   statement: The package shall let callers serialize signals and run signal infrastructure per named instance when isolation is required.
   priority: should
   stability: evolving
+
+- id: jido_signal.package.installation_entrypoint
+  statement: The package shall expose a `mix jido_signal.install` task that guides adopters to the getting-started flow and fails clearly when Igniter support is unavailable.
+  priority: should
+  stability: stable
 ```
 
 ## Verification
@@ -70,4 +81,10 @@ decisions:
   execute: true
   covers:
     - jido_signal.package.serialization_and_isolation
+
+- kind: command
+  target: mix test test/mix/tasks/jido_signal.install_test.exs
+  execute: true
+  covers:
+    - jido_signal.package.installation_entrypoint
 ```

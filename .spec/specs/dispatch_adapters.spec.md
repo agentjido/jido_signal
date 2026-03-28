@@ -12,7 +12,7 @@ multiple destinations, and surfaces adapter-specific failures.
 id: jido_signal.dispatch_adapters
 kind: subsystem
 status: active
-summary: Dispatch validates configs, supports the built-in adapters, and handles single, async, and parallel multi-target delivery paths.
+summary: Dispatch validates configs, supports the built-in adapters, normalizes structured failures, and handles single, async, and parallel multi-target delivery paths.
 surface:
   - lib/jido_signal/dispatch.ex
   - lib/jido_signal/dispatch/adapter.ex
@@ -26,6 +26,8 @@ surface:
   - lib/jido_signal/dispatch/http.ex
   - lib/jido_signal/dispatch/webhook.ex
   - lib/jido_signal/dispatch/circuit_breaker.ex
+  - lib/jido_signal/error.ex
+  - test/jido_signal/dispatch
 ```
 
 ## Requirements
@@ -45,6 +47,11 @@ surface:
   statement: Dispatch shall support async, parallel multi-target, and batched delivery while preserving aggregate error reporting semantics.
   priority: should
   stability: evolving
+
+- id: jido_signal.dispatch_adapters.error_normalization
+  statement: Dispatch shall normalize adapter and aggregate delivery failures into structured error values that preserve actionable cause and target context.
+  priority: must
+  stability: evolving
 ```
 
 ## Scenarios
@@ -60,6 +67,7 @@ surface:
   covers:
     - jido_signal.dispatch_adapters.builtin_delivery
     - jido_signal.dispatch_adapters.parallel_and_batch
+    - jido_signal.dispatch_adapters.error_normalization
 ```
 
 ## Verification
@@ -73,5 +81,6 @@ surface:
     - jido_signal.dispatch_adapters.config_validation
     - jido_signal.dispatch_adapters.builtin_delivery
     - jido_signal.dispatch_adapters.parallel_and_batch
+    - jido_signal.dispatch_adapters.error_normalization
     - jido_signal.dispatch_adapters.multi_target_delivery
 ```

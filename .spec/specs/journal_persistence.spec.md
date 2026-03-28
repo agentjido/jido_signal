@@ -21,6 +21,13 @@ surface:
   - lib/jido_signal/journal/adapters/mnesia.ex
   - lib/jido_signal/journal/adapters/mnesia/tables.ex
   - lib/jido_signal/bus/persistent_subscription.ex
+  - test/jido_signal/journal
+  - test/jido_signal/signal/journal
+  - test/jido_signal/signal/journal_test.exs
+  - test/jido_signal/signal/bus_persistence_test.exs
+  - test/jido_signal/bus/bus_journal_test.exs
+  - test/jido_signal/bus/dlq_test.exs
+  - test/jido_signal/bus/persistent_subscription_test.exs
 ```
 
 ## Requirements

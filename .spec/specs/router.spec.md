@@ -17,6 +17,8 @@ surface:
   - lib/jido_signal/router/engine.ex
   - lib/jido_signal/router/validator.ex
   - lib/jido_signal/router/cache.ex
+  - lib/jido_signal/router/inspect.ex
+  - test/jido_signal/router
 ```
 
 ## Requirements

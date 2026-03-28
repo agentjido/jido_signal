@@ -21,6 +21,11 @@ surface:
   - lib/jido_signal/trace.ex
   - lib/jido_signal/trace_context.ex
   - lib/jido_signal/trace/context.ex
+  - test/jido_signal/ext_test.exs
+  - test/jido_signal/ext
+  - test/jido_signal/trace_test.exs
+  - test/jido_signal/trace_context_test.exs
+  - test/jido_signal/trace
 ```
 
 ## Requirements
