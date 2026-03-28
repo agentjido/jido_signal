@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-03-28T01:13:42Z",
+  "description": "Split serialization behavior into dedicated subjects for serializers, decoders, schema references, and type providers, backed by the existing serialization test surface.",
+  "id": "jido_sig-59n.1",
+  "labels": [],
+  "parent": "jido_sig-59n",
+  "priority": 1,
+  "status": "open",
+  "title": "Author serialization and schema subject specs",
+  "type": "task",
+  "updated_at": "2026-03-28T01:13:42Z"
+}
