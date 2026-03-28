@@ -7,7 +7,7 @@ Welcome to the Jido Signal contributor's guide! We're excited that you're intere
 ### Development Environment
 
 1. **Elixir Version Requirements**
-   - Jido Signal requires Elixir ~> 1.17
+   - Jido Signal requires Elixir ~> 1.18
    - We recommend using asdf or similar version manager
 
 2. **Initial Setup**
@@ -37,6 +37,29 @@ Welcome to the Jido Signal contributor's guide! We're excited that you're intere
    mix dialyzer                  # Type checking
    mix credo --strict            # Static analysis
    ```
+
+4. **Spec Led Workflow**
+   <!-- covers: jido_signal.workflow.contributor_spec_led_guidance -->
+   This repository uses [Spec Led](https://spedled.dev) to keep current truth close to the code.
+
+   ```bash
+   # Prime the workspace before editing current truth
+   mix spec.prime --base HEAD
+
+   # Reconcile authored specs after code, docs, or tests change
+   mix spec.next
+
+   # Check the branch against current truth before opening a PR
+   mix spec.check --base HEAD
+
+   # Optional: inspect coverage and uncovered frontier
+   mix spec.status
+   ```
+
+   Contributors should:
+   - Update the smallest relevant subject in `.spec/specs/` when runtime behavior, docs, or tests change current truth
+   - Use `.spec/decisions/` only for durable, cross-cutting ADRs
+   - Read `.spec/README.md` and `.spec/decisions/README.md` before editing authored current truth
 
 ## Code Organization
 
@@ -201,6 +224,7 @@ The hook will reject non-conforming commits, ensuring a clean changelog can be g
 1. **Before Submitting**
    - Run the full quality check suite: `mix quality`
    - Ensure all tests pass
+   - If your change affects current truth, run `mix spec.next` and `mix spec.check --base HEAD`
    - Update documentation if needed
    - Add tests for new functionality
 
@@ -208,6 +232,7 @@ The hook will reject non-conforming commits, ensuring a clean changelog can be g
    - Create a feature branch from `main`
    - Use descriptive commit messages following conventional commits
    - Reference any related issues
+   - Keep authored current truth in `.spec/` aligned with the change when behavior shifts
    - Keep changes focused and atomic
 
 3. **Review Process**

@@ -4,14 +4,15 @@ High-level contract for the Jido.Signal package.
 
 ## Intent
 
-Describe the package-level behavior that callers rely on before they drop into
-individual subjects such as signal construction, routing, or bus operations.
+Describe the package-level behavior and entrypoint metadata that callers rely
+on before they drop into individual subjects such as signal construction,
+routing, or bus operations.
 
 ```spec-meta
 id: jido_signal.package
 kind: package
 status: active
-summary: Jido.Signal provides validated signal envelopes plus routing, delivery, serialization, and instance-scoped infrastructure for event-driven Elixir systems.
+summary: Jido.Signal provides validated signal envelopes plus routing, delivery, serialization, instance-scoped infrastructure, and package metadata that points users to canonical docs and the default Jido website.
 surface:
   - README.md
   - mix.exs

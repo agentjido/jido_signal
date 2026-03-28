@@ -318,6 +318,14 @@
       },
       {
         "file": ".spec/specs/repo_workflow.spec.md",
+        "id": "jido_signal.workflow.contributor_spec_led_guidance",
+        "priority": "should",
+        "stability": "evolving",
+        "statement": "CONTRIBUTING.md shall tell contributors how to use the Spec Led loop, including the `.spec/` workspace and the prime, next, check, and status commands.",
+        "subject_id": "jido_signal.workflow"
+      },
+      {
+        "file": ".spec/specs/repo_workflow.spec.md",
         "id": "jido_signal.workflow.spec_check_ci",
         "priority": "must",
         "stability": "stable",
@@ -655,7 +663,7 @@
           "id": "jido_signal.package",
           "kind": "package",
           "status": "active",
-          "summary": "Jido.Signal provides validated signal envelopes plus routing, delivery, serialization, and instance-scoped infrastructure for event-driven Elixir systems.",
+          "summary": "Jido.Signal provides validated signal envelopes plus routing, delivery, serialization, instance-scoped infrastructure, and package metadata that points users to canonical docs and the default Jido website.",
           "surface": [
             "README.md",
             "mix.exs",
@@ -685,9 +693,10 @@
           "id": "jido_signal.workflow",
           "kind": "workflow",
           "status": "active",
-          "summary": "Repository instructions tell agents to prime Beadwork before work, and CI provides a dedicated spec.check entrypoint for current-truth changes.",
+          "summary": "Repository instructions tell agents to prime Beadwork before work, CONTRIBUTING.md explains the Spec Led contributor loop, and CI provides a dedicated spec.check entrypoint for current-truth changes.",
           "surface": [
             "AGENTS.md",
+            "CONTRIBUTING.md",
             "scripts/check_specs.sh",
             ".github/workflows/specs.yml"
           ],
@@ -1025,6 +1034,15 @@
       },
       {
         "covers": [
+          "jido_signal.workflow.contributor_spec_led_guidance"
+        ],
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "file",
+        "subject_id": "jido_signal.workflow",
+        "target": "CONTRIBUTING.md"
+      },
+      {
+        "covers": [
           "jido_signal.workflow.spec_check_entrypoint",
           "jido_signal.workflow.spec_check_ci"
         ],
@@ -1096,10 +1114,10 @@
     "decisions": 1,
     "exceptions": 0,
     "findings": 0,
-    "requirements": 44,
+    "requirements": 45,
     "scenarios": 7,
     "subjects": 11,
-    "verifications": 29
+    "verifications": 30
   },
   "verification": {
     "claims": [
@@ -1588,6 +1606,17 @@
         "verification_index": 0
       },
       {
+        "cover_id": "jido_signal.workflow.contributor_spec_led_guidance",
+        "file": ".spec/specs/repo_workflow.spec.md",
+        "kind": "file",
+        "meets_minimum": true,
+        "required_strength": "claimed",
+        "strength": "linked",
+        "subject_id": "jido_signal.workflow",
+        "target": "CONTRIBUTING.md",
+        "verification_index": 1
+      },
+      {
         "cover_id": "jido_signal.workflow.spec_check_ci",
         "file": ".spec/specs/repo_workflow.spec.md",
         "kind": "file",
@@ -1596,7 +1625,7 @@
         "strength": "linked",
         "subject_id": "jido_signal.workflow",
         "target": "scripts/check_specs.sh",
-        "verification_index": 1
+        "verification_index": 2
       },
       {
         "cover_id": "jido_signal.workflow.spec_check_entrypoint",
@@ -1607,7 +1636,7 @@
         "strength": "linked",
         "subject_id": "jido_signal.workflow",
         "target": "scripts/check_specs.sh",
-        "verification_index": 1
+        "verification_index": 2
       },
       {
         "cover_id": "jido_signal.workflow.spec_check_ci",
@@ -1618,7 +1647,7 @@
         "strength": "linked",
         "subject_id": "jido_signal.workflow",
         "target": ".github/workflows/specs.yml",
-        "verification_index": 2
+        "verification_index": 3
       },
       {
         "cover_id": "spec.workspace.readme_present",
@@ -1692,7 +1721,7 @@
     "strength_summary": {
       "claimed": 2,
       "executed": 35,
-      "linked": 16
+      "linked": 17
     },
     "threshold_failures": 0
   },
