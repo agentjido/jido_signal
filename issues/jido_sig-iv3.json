@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Mike Hostetler",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-03-30T23:06:45Z",
@@ -7,8 +7,8 @@
   "id": "jido_sig-iv3",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Consolidate dependency PRs onto main",
   "type": "task",
-  "updated_at": "2026-03-30T23:06:45Z"
+  "updated_at": "2026-03-30T23:07:03Z"
 }
