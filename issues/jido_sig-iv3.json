@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-03-30T23:06:45Z",
+  "description": "Apply the updates from Dependabot PRs #131, #132, #133, #134, and #135 directly to main as one validated dependency refresh.",
+  "id": "jido_sig-iv3",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Consolidate dependency PRs onto main",
+  "type": "task",
+  "updated_at": "2026-03-30T23:06:45Z"
+}
