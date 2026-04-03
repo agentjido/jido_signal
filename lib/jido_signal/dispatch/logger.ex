@@ -8,8 +8,9 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   ## Configuration Options
 
-  * `:level` - (optional) The log level to use, one of [:debug, :info, :warning, :error], defaults to `:debug`
+  * `:level` - (optional) The log level to use, one of [:debug, :info, :warning, :error], defaults to `:info`
   * `:structured` - (optional) Whether to use structured logging format, defaults to `false`
+  * `:data_mode` - (optional) `:raw` preserves legacy payload logging, `:preview` adds bounded safe-inspect previews
 
   ## Logging Formats
 
@@ -25,13 +26,14 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
     id: "signal_id",
     type: "signal_type",
     data: {...},
+    data_preview: "...",
     source: "source"
   }
   ```
 
   ## Examples
 
-      # Basic usage with default debug level
+      # Basic usage with default info level
       config = {:logger, []}
 
       # Custom log level
@@ -41,7 +43,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
       # Structured logging
       config = {:logger, [
-        level: :debug,
+        level: :info,
         structured: true
       ]}
 
@@ -57,7 +59,8 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   * Consider using structured logging when integrating with log aggregation systems
   * Log levels should be chosen based on the signal's importance
-  * High-volume signals should use `:debug` level to avoid log spam
+  * High-volume signals can opt into `level: :debug`
+  * Use `data_mode: :preview` to avoid dumping full payloads into logs
   """
 
   @behaviour Jido.Signal.Dispatch.Adapter
@@ -65,6 +68,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   alias Jido.Signal.Log
 
   @valid_levels [:debug, :info, :warning, :error]
+  @valid_data_modes [:raw, :preview]
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -76,8 +80,9 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   ## Options
 
-  * `:level` - (optional) One of #{inspect(@valid_levels)}, defaults to `:debug`
+  * `:level` - (optional) One of #{inspect(@valid_levels)}, defaults to `:info`
   * `:structured` - (optional) Boolean, defaults to `false`
+  * `:data_mode` - (optional) One of #{inspect(@valid_data_modes)}, defaults to `:raw`
 
   ## Returns
 
@@ -86,12 +91,19 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, String.t()}
   def validate_opts(opts) do
-    level = Keyword.get(opts, :level, :debug)
+    level = Keyword.get(opts, :level, :info)
+    data_mode = Keyword.get(opts, :data_mode, :raw)
 
-    if level in @valid_levels do
-      {:ok, opts}
-    else
-      {:error, "Invalid log level: #{inspect(level)}. Must be one of #{inspect(@valid_levels)}"}
+    cond do
+      level not in @valid_levels ->
+        {:error, "Invalid log level: #{inspect(level)}. Must be one of #{inspect(@valid_levels)}"}
+
+      data_mode not in @valid_data_modes ->
+        {:error,
+         "Invalid data_mode: #{inspect(data_mode)}. Must be one of #{inspect(@valid_data_modes)}"}
+
+      true ->
+        {:ok, opts}
     end
   end
 
@@ -106,8 +118,9 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   ## Options
 
-  * `:level` - (optional) The log level to use, defaults to `:debug`
+  * `:level` - (optional) The log level to use, defaults to `:info`
   * `:structured` - (optional) Whether to use structured format, defaults to `false`
+  * `:data_mode` - (optional) `:raw` preserves legacy payload logging, `:preview` adds bounded previews
 
   ## Returns
 
@@ -116,17 +129,17 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   ## Examples
 
       iex> signal = %Jido.Signal{type: "user:created", data: %{id: 123}}
-      iex> LoggerAdapter.deliver(signal, [level: :debug])
+      iex> LoggerAdapter.deliver(signal, [level: :info])
       :ok
       # Logs: "Signal dispatched: user:created from source with data=%{id: 123}"
 
-      iex> LoggerAdapter.deliver(signal, [level: :debug, structured: true])
+      iex> LoggerAdapter.deliver(signal, [level: :info, structured: true])
       :ok
       # Logs structured map with event details
   """
   @spec deliver(Jido.Signal.t(), Keyword.t()) :: :ok
   def deliver(signal, opts) do
-    level = Keyword.get(opts, :level, :debug)
+    level = Keyword.get(opts, :level, :info)
     Log.log(level, fn -> build_log_message(signal, opts) end, [])
 
     :ok
@@ -136,16 +149,29 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   @spec build_log_message(Jido.Signal.t(), Keyword.t()) :: map() | String.t()
   def build_log_message(signal, opts \\ []) do
     if Keyword.get(opts, :structured, false) do
-      %{
+      message = %{
         event: "signal_dispatched",
         id: signal.id,
         type: signal.type,
-        data: Log.safe_inspect(signal.data, limit: :infinity),
+        data: signal.data,
         source: signal.source
       }
+
+      case Keyword.get(opts, :data_mode, :raw) do
+        :preview ->
+          Map.put(message, :data_preview, Log.safe_inspect(signal.data, limit: :infinity))
+
+        :raw ->
+          message
+      end
     else
-      "SIGNAL: #{signal.type} from #{signal.source} with data=" <>
-        Log.safe_inspect(signal.data, limit: :infinity)
+      payload =
+        case Keyword.get(opts, :data_mode, :raw) do
+          :preview -> Log.safe_inspect(signal.data, limit: :infinity)
+          :raw -> inspect(signal.data)
+        end
+
+      "SIGNAL: #{signal.type} from #{signal.source} with data=" <> payload
     end
   end
 end
