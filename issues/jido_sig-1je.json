@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-04-03T19:00:01Z",
+  "description": "Add CI coverage and baseline tooling updates needed to validate Jido.Signal against Elixir 1.20, then open a PR for compatibility testing.",
+  "id": "jido_sig-1je",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Test Elixir 1.20 compatibility",
+  "type": "task",
+  "updated_at": "2026-04-03T19:00:01Z"
+}
