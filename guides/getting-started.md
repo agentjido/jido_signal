@@ -100,7 +100,7 @@ Multiple destinations:
 ```elixir
 configs = [
   {:pid, [target: pid1, delivery_mode: :async]},
-  {:logger, [level: :info]}
+  {:logger, [level: :info, data_mode: :preview]}
 ]
 :ok = Jido.Signal.Dispatch.dispatch(signal, configs)
 ```

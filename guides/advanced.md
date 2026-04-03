@@ -44,7 +44,7 @@ Jido.Signal.Dispatch.dispatch(signal, config)
 
 # Multiple destinations
 configs = [
-  {:logger, [level: :info]},
+  {:logger, [level: :info, data_mode: :preview]},
   {MyApp.CustomAdapter, [target: "tcp://localhost:9092", format: :protobuf]}
 ]
 Jido.Signal.Dispatch.dispatch(signal, configs)

@@ -60,7 +60,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   * Consider using structured logging when integrating with log aggregation systems
   * Log levels should be chosen based on the signal's importance
   * High-volume signals can opt into `level: :debug`
-  * Use `data_mode: :preview` to avoid dumping full payloads into logs
+  * Legacy compatibility keeps raw payload logging as the default; prefer `data_mode: :preview` in production to avoid dumping full payloads into logs
   """
 
   @behaviour Jido.Signal.Dispatch.Adapter
