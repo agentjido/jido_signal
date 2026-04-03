@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-04-03T19:04:48Z",
+  "description": "Rename the Elixir 1.20 preview PR branch from its ticket-style name to a conventional commit style ci/... branch and verify the open PR follows the renamed branch.",
+  "id": "jido_sig-e72",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Rename PR branch to conventional ci name",
+  "type": "task",
+  "updated_at": "2026-04-03T19:04:48Z"
+}
