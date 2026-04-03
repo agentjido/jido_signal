@@ -9,21 +9,35 @@ defmodule Jido.Signal.Log do
   @type metadata :: keyword()
   @type level :: Logger.level()
 
+  @doc false
   @spec debug(Logger.message(), metadata()) :: :ok
   def debug(message, metadata \\ []), do: Logger.debug(message, metadata)
 
+  @doc false
   @spec info(Logger.message(), metadata()) :: :ok
   def info(message, metadata \\ []), do: Logger.info(message, metadata)
 
+  @doc false
   @spec warning(Logger.message(), metadata()) :: :ok
   def warning(message, metadata \\ []), do: Logger.warning(message, metadata)
 
+  @doc false
   @spec error(Logger.message(), metadata()) :: :ok
   def error(message, metadata \\ []), do: Logger.error(message, metadata)
 
+  @doc false
   @spec log(level(), Logger.message(), metadata()) :: :ok
   def log(level, message, metadata \\ []), do: Logger.log(level, message, metadata)
 
+  @doc false
+  @spec levels() :: [level()]
+  def levels, do: Logger.levels()
+
+  @doc false
+  @spec compare_levels(level(), level()) :: :lt | :eq | :gt
+  def compare_levels(left, right), do: Logger.compare_levels(left, right)
+
+  @doc false
   @spec safe_inspect(term(), keyword()) :: String.t()
   def safe_inspect(term, opts \\ []) do
     max_length = Keyword.get(opts, :max_length, @default_max_length)
