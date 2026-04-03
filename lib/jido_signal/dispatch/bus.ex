@@ -42,8 +42,6 @@ defmodule Jido.Signal.Dispatch.Bus do
 
   alias Jido.Signal.Log
 
-  require Logger
-
   @type delivery_target :: atom()
   @type delivery_opts :: [
           target: delivery_target(),

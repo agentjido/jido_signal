@@ -33,8 +33,6 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
 
   alias Jido.Signal.Telemetry
 
-  require Logger
-
   @default_max_failures 5
   @default_window_ms 10_000
   @default_reset_ms 30_000

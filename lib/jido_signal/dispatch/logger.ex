@@ -8,7 +8,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   ## Configuration Options
 
-  * `:level` - (optional) The log level to use, one of [:debug, :info, :warning, :error], defaults to `:info`
+  * `:level` - (optional) The log level to use, one of [:debug, :info, :warning, :error], defaults to `:debug`
   * `:structured` - (optional) Whether to use structured logging format, defaults to `false`
 
   ## Logging Formats
@@ -31,7 +31,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   ## Examples
 
-      # Basic usage with default level
+      # Basic usage with default debug level
       config = {:logger, []}
 
       # Custom log level
@@ -41,7 +41,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
       # Structured logging
       config = {:logger, [
-        level: :info,
+        level: :debug,
         structured: true
       ]}
 
@@ -76,7 +76,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   ## Options
 
-  * `:level` - (optional) One of #{inspect(@valid_levels)}, defaults to `:info`
+  * `:level` - (optional) One of #{inspect(@valid_levels)}, defaults to `:debug`
   * `:structured` - (optional) Boolean, defaults to `false`
 
   ## Returns
@@ -86,7 +86,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, String.t()}
   def validate_opts(opts) do
-    level = Keyword.get(opts, :level, :info)
+    level = Keyword.get(opts, :level, :debug)
 
     if level in @valid_levels do
       {:ok, opts}
@@ -106,7 +106,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   ## Options
 
-  * `:level` - (optional) The log level to use, defaults to `:info`
+  * `:level` - (optional) The log level to use, defaults to `:debug`
   * `:structured` - (optional) Whether to use structured format, defaults to `false`
 
   ## Returns
@@ -116,44 +116,36 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   ## Examples
 
       iex> signal = %Jido.Signal{type: "user:created", data: %{id: 123}}
-      iex> LoggerAdapter.deliver(signal, [level: :info])
+      iex> LoggerAdapter.deliver(signal, [level: :debug])
       :ok
       # Logs: "Signal dispatched: user:created from source with data=%{id: 123}"
 
-      iex> LoggerAdapter.deliver(signal, [level: :info, structured: true])
+      iex> LoggerAdapter.deliver(signal, [level: :debug, structured: true])
       :ok
       # Logs structured map with event details
   """
   @spec deliver(Jido.Signal.t(), Keyword.t()) :: :ok
   def deliver(signal, opts) do
-    level = Keyword.get(opts, :level, :info)
-    structured = Keyword.get(opts, :structured, false)
-
-    if structured do
-      Log.log(
-        level,
-        fn ->
-          %{
-            event: "signal_dispatched",
-            id: signal.id,
-            type: signal.type,
-            data: signal.data,
-            source: signal.source
-          }
-        end,
-        []
-      )
-    else
-      Log.log(
-        level,
-        fn ->
-          "SIGNAL: #{signal.type} from #{signal.source} with data=" <>
-            Log.safe_inspect(signal.data, limit: :infinity)
-        end,
-        []
-      )
-    end
+    level = Keyword.get(opts, :level, :debug)
+    Log.log(level, fn -> build_log_message(signal, opts) end, [])
 
     :ok
+  end
+
+  @doc false
+  @spec build_log_message(Jido.Signal.t(), Keyword.t()) :: map() | String.t()
+  def build_log_message(signal, opts \\ []) do
+    if Keyword.get(opts, :structured, false) do
+      %{
+        event: "signal_dispatched",
+        id: signal.id,
+        type: signal.type,
+        data: Log.safe_inspect(signal.data, limit: :infinity),
+        source: signal.source
+      }
+    else
+      "SIGNAL: #{signal.type} from #{signal.source} with data=" <>
+        Log.safe_inspect(signal.data, limit: :infinity)
+    end
   end
 end
