@@ -266,28 +266,31 @@ defmodule Jido.Signal.Ext do
     {:ok, apply(mod, fun, args)}
   rescue
     e ->
-      Logger.warning(
+      Logger.warning(fn ->
         "Extension #{inspect(mod)}.#{fun}/#{length(args)} crashed: #{Exception.message(e)}"
-      )
+      end)
 
       {:error, e}
   catch
     :exit, reason ->
-      Logger.warning(
-        "Extension #{inspect(mod)}.#{fun}/#{length(args)} exited: #{inspect(reason)}"
-      )
+      Logger.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} exited: #{safe_inspect(reason)}"
+      end)
 
       {:error, reason}
 
     :throw, reason ->
-      Logger.warning("Extension #{inspect(mod)}.#{fun}/#{length(args)} threw: #{inspect(reason)}")
+      Logger.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} threw: #{safe_inspect(reason)}"
+      end)
 
       {:error, reason}
 
     kind, reason ->
-      Logger.warning(
-        "Extension #{inspect(mod)}.#{fun}/#{length(args)} failed with #{kind}: #{inspect(reason)}"
-      )
+      Logger.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} failed with #{kind}: " <>
+          safe_inspect(reason)
+      end)
 
       {:error, {kind, reason}}
   end
@@ -308,5 +311,30 @@ defmodule Jido.Signal.Ext do
   @spec safe_from_attrs(module(), term()) :: {:ok, term()} | {:error, any()}
   def safe_from_attrs(ext_mod, attrs) do
     safe_call(ext_mod, :from_attrs, [attrs])
+  end
+
+  defp safe_inspect(term, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+    max_length = Keyword.get(opts, :max_length, 200)
+
+    inspected =
+      try do
+        inspect(term,
+          limit: limit,
+          printable_limit: max_length,
+          width: max_length,
+          charlists: :as_lists
+        )
+      rescue
+        error -> "#inspect_error<#{Exception.message(error)}>"
+      catch
+        kind, _reason -> "#inspect_#{kind}<uninspectable>"
+      end
+
+    if String.length(inspected) > max_length do
+      String.slice(inspected, 0, max_length) <> "..."
+    else
+      inspected
+    end
   end
 end

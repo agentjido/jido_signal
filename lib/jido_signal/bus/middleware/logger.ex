@@ -43,6 +43,8 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
 
   require Logger
 
+  @default_safe_inspect_limit 10
+
   @type context :: Jido.Signal.Bus.Middleware.context()
   @type dispatch_result :: Jido.Signal.Bus.Middleware.dispatch_result()
 
@@ -74,10 +76,10 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
     signal_count = length(signals)
     signal_types = signals |> Enum.map(& &1.type) |> Enum.uniq()
 
-    Logger.log(
-      config.level,
-      "Bus #{context.bus_name}: Publishing #{signal_count} signal(s) of types: #{inspect(signal_types)} [#{context.timestamp}]"
-    )
+    Logger.log(config.level, fn ->
+      "Bus #{context.bus_name}: Publishing #{signal_count} signal(s) of types: " <>
+        "#{safe_inspect(signal_types, limit: :infinity, max_length: 200)} [#{context.timestamp}]"
+    end)
   end
 
   defp maybe_log_signal_data(signals, config) do
@@ -91,10 +93,9 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   defp log_single_signal_data(signal, config) do
     data_preview = format_signal_data(signal.data, config.max_data_length)
 
-    Logger.log(
-      config.level,
+    Logger.log(config.level, fn ->
       "Signal #{signal.id} (#{signal.type}) from #{signal.source}: #{data_preview}"
-    )
+    end)
   end
 
   @impl true
@@ -102,10 +103,9 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
     if config.log_publish do
       signal_count = length(signals)
 
-      Logger.log(
-        config.level,
+      Logger.log(config.level, fn ->
         "Bus #{context.bus_name}: Successfully published #{signal_count} signal(s) [#{context.timestamp}]"
-      )
+      end)
     end
 
     {:cont, signals, config}
@@ -116,10 +116,10 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
     if config.log_dispatch do
       dispatch_info = format_dispatch_info(subscriber.dispatch)
 
-      Logger.log(
-        config.level,
-        "Bus #{context.bus_name}: Dispatching signal #{signal.id} (#{signal.type}) to #{dispatch_info} via #{subscriber.path} [#{context.timestamp}]"
-      )
+      Logger.log(config.level, fn ->
+        "Bus #{context.bus_name}: Dispatching signal #{signal.id} (#{signal.type}) to #{dispatch_info} " <>
+          "via #{subscriber.path} [#{context.timestamp}]"
+      end)
     end
 
     {:cont, signal, config}
@@ -132,20 +132,21 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
         if config.log_dispatch do
           dispatch_info = format_dispatch_info(subscriber.dispatch)
 
-          Logger.log(
-            config.level,
-            "Bus #{context.bus_name}: Successfully dispatched signal #{signal.id} (#{signal.type}) to #{dispatch_info} via #{subscriber.path} [#{context.timestamp}]"
-          )
+          Logger.log(config.level, fn ->
+            "Bus #{context.bus_name}: Successfully dispatched signal #{signal.id} (#{signal.type}) " <>
+              "to #{dispatch_info} via #{subscriber.path} [#{context.timestamp}]"
+          end)
         end
 
       {:error, reason} ->
         if config.log_errors do
           dispatch_info = format_dispatch_info(subscriber.dispatch)
 
-          Logger.log(
-            :error,
-            "Bus #{context.bus_name}: Failed to dispatch signal #{signal.id} (#{signal.type}) to #{dispatch_info} via #{subscriber.path}: #{inspect(reason)} [#{context.timestamp}]"
-          )
+          Logger.log(:error, fn ->
+            "Bus #{context.bus_name}: Failed to dispatch signal #{signal.id} (#{signal.type}) " <>
+              "to #{dispatch_info} via #{subscriber.path}: " <>
+              "#{safe_inspect(reason, limit: :infinity, max_length: 200)} [#{context.timestamp}]"
+          end)
         end
     end
 
@@ -156,28 +157,14 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
 
   defp format_signal_data(nil, _max_length), do: "nil"
 
-  defp format_signal_data(data, max_length) when is_binary(data) do
-    if String.length(data) > max_length do
-      String.slice(data, 0, max_length) <> "..."
-    else
-      data
-    end
-  end
-
   defp format_signal_data(data, max_length) do
-    formatted = inspect(data, limit: :infinity, printable_limit: :infinity)
-
-    if String.length(formatted) > max_length do
-      String.slice(formatted, 0, max_length) <> "..."
-    else
-      formatted
-    end
+    safe_inspect(data, limit: :infinity, max_length: max_length)
   end
 
   defp format_dispatch_info({:pid, opts}) do
     target = Keyword.get(opts, :target, "unknown")
     mode = Keyword.get(opts, :delivery_mode, :async)
-    "pid(#{inspect(target)}, #{mode})"
+    "pid(#{safe_inspect(target, max_length: 120)}, #{mode})"
   end
 
   defp format_dispatch_info({:function, {module, function}}) do
@@ -189,6 +176,35 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   end
 
   defp format_dispatch_info(dispatch) do
-    inspect(dispatch)
+    safe_inspect(dispatch, limit: :infinity, max_length: 120)
+  end
+
+  defp safe_inspect(term, opts) do
+    limit = Keyword.get(opts, :limit, @default_safe_inspect_limit)
+    max_length = Keyword.get(opts, :max_length, 200)
+
+    inspected =
+      try do
+        inspect(term,
+          limit: limit,
+          printable_limit: max_length,
+          width: max_length,
+          charlists: :as_lists
+        )
+      rescue
+        error -> "#inspect_error<#{Exception.message(error)}>"
+      catch
+        kind, _reason -> "#inspect_#{kind}<uninspectable>"
+      end
+
+    truncate(inspected, max_length)
+  end
+
+  defp truncate(binary, max_length) when is_binary(binary) do
+    if String.length(binary) > max_length do
+      String.slice(binary, 0, max_length) <> "..."
+    else
+      binary
+    end
   end
 end

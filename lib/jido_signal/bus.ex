@@ -158,18 +158,19 @@ defmodule Jido.Signal.Bus do
         {journal_adapter, pid, true}
 
       {:error, reason} ->
-        Logger.warning(
-          "Failed to initialize journal adapter #{inspect(journal_adapter)}: #{inspect(reason)}"
-        )
+        Logger.warning(fn ->
+          "Failed to initialize journal adapter #{safe_inspect(journal_adapter)}: " <>
+            safe_inspect(reason)
+        end)
 
         {nil, nil, false}
     end
   end
 
   defp do_init_journal_adapter(name, _journal_adapter, _existing_pid) do
-    Logger.debug(
+    Logger.debug(fn ->
       "Bus #{name} started without journal adapter - checkpoints will be in-memory only"
-    )
+    end)
 
     {nil, nil, false}
   end
@@ -1211,10 +1212,10 @@ defmodule Jido.Signal.Bus do
 
   def handle_info({:EXIT, pid, reason}, state) do
     if linked_runtime_process?(pid, state) and reason != :normal do
-      Logger.error(
+      Logger.error(fn ->
         "Linked runtime process exited, stopping bus to avoid stale state: " <>
-          "pid=#{inspect(pid)} reason=#{inspect(reason)}"
-      )
+          "pid=#{safe_inspect(pid)} reason=#{safe_inspect(reason)}"
+      end)
 
       {:stop, {:linked_runtime_exit, pid, reason}, state}
     else
@@ -1231,7 +1232,7 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_info(msg, state) do
-    Logger.debug("Unexpected message in Bus: #{inspect(msg)}")
+    Logger.debug(fn -> "Unexpected message in Bus: #{safe_inspect(msg)}" end)
     {:noreply, state}
   end
 
@@ -1371,6 +1372,35 @@ defmodule Jido.Signal.Bus do
       end
     else
       :ok
+    end
+  end
+
+  defp safe_inspect(term, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+    max_length = Keyword.get(opts, :max_length, 200)
+
+    inspected =
+      try do
+        inspect(term,
+          limit: limit,
+          printable_limit: max_length,
+          width: max_length,
+          charlists: :as_lists
+        )
+      rescue
+        error -> "#inspect_error<#{Exception.message(error)}>"
+      catch
+        kind, _reason -> "#inspect_#{kind}<uninspectable>"
+      end
+
+    truncate(inspected, max_length)
+  end
+
+  defp truncate(binary, max_length) when is_binary(binary) do
+    if String.length(binary) > max_length do
+      String.slice(binary, 0, max_length) <> "..."
+    else
+      binary
     end
   end
 end
