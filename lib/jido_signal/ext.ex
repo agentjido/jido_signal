@@ -67,8 +67,7 @@ defmodule Jido.Signal.Ext do
   """
 
   alias Jido.Signal.Error
-
-  require Logger
+  alias Jido.Signal.Log
 
   @doc """
   Returns the namespace for this extension.
@@ -266,28 +265,31 @@ defmodule Jido.Signal.Ext do
     {:ok, apply(mod, fun, args)}
   rescue
     e ->
-      Logger.warning(
+      Log.warning(fn ->
         "Extension #{inspect(mod)}.#{fun}/#{length(args)} crashed: #{Exception.message(e)}"
-      )
+      end)
 
       {:error, e}
   catch
     :exit, reason ->
-      Logger.warning(
-        "Extension #{inspect(mod)}.#{fun}/#{length(args)} exited: #{inspect(reason)}"
-      )
+      Log.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} exited: #{Log.safe_inspect(reason)}"
+      end)
 
       {:error, reason}
 
     :throw, reason ->
-      Logger.warning("Extension #{inspect(mod)}.#{fun}/#{length(args)} threw: #{inspect(reason)}")
+      Log.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} threw: #{Log.safe_inspect(reason)}"
+      end)
 
       {:error, reason}
 
     kind, reason ->
-      Logger.warning(
-        "Extension #{inspect(mod)}.#{fun}/#{length(args)} failed with #{kind}: #{inspect(reason)}"
-      )
+      Log.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} failed with #{kind}: " <>
+          Log.safe_inspect(reason)
+      end)
 
       {:error, {kind, reason}}
   end

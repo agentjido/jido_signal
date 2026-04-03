@@ -10,9 +10,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
+  alias Jido.Signal.Log
   alias Jido.Signal.Telemetry
-
-  require Logger
 
   @schema Zoi.struct(
             __MODULE__,
@@ -112,7 +111,9 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
             0
 
           {:error, reason} ->
-            Logger.warning("Failed to load checkpoint for #{checkpoint_key}: #{inspect(reason)}")
+            Log.warning(fn ->
+              "Failed to load checkpoint for #{checkpoint_key}: #{Log.safe_inspect(reason)}"
+            end)
 
             0
         end
@@ -238,7 +239,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         {:noreply, new_state}
 
       {:error, :queue_full, new_state} ->
-        Logger.warning("Dropping signal #{signal_log_id} - subscription #{state.id} queue full")
+        Log.warning(fn ->
+          "Dropping signal #{signal_log_id} - subscription #{state.id} queue full"
+        end)
+
         {:noreply, new_state}
     end
   end
@@ -268,7 +272,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   # Helper function to replay missed signals
   defp replay_missed_signals(state) do
-    Logger.debug("Replaying missed signals for subscription #{state.id}")
+    Log.debug(fn -> "Replaying missed signals for subscription #{state.id}" end)
 
     missed_signals = fetch_signals_since_checkpoint(state)
 
@@ -372,9 +376,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         :ok
 
       {:error, reason} ->
-        Logger.debug(
-          "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
-        )
+        Log.debug(fn ->
+          "Dispatch failed during replay for signal #{signal.id} (#{signal.type}): " <>
+            Log.safe_inspect(reason)
+        end)
     end
   end
 
@@ -503,9 +508,9 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "Failed to persist checkpoint for #{state.checkpoint_key}: #{inspect(reason)}"
-        )
+        Log.warning(fn ->
+          "Failed to persist checkpoint for #{state.checkpoint_key}: #{Log.safe_inspect(reason)}"
+        end)
 
         :ok
     end
@@ -664,15 +669,17 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
             }
           )
 
-          Logger.debug("Signal #{signal.id} moved to DLQ after #{attempt_count} attempts")
+          Log.debug(fn -> "Signal #{signal.id} moved to DLQ after #{attempt_count} attempts" end)
 
         {:error, dlq_error} ->
-          Logger.error("Failed to write to DLQ for signal #{signal.id}: #{inspect(dlq_error)}")
+          Log.error(fn ->
+            "Failed to write to DLQ for signal #{signal.id}: #{Log.safe_inspect(dlq_error)}"
+          end)
       end
     else
-      Logger.warning(
+      Log.warning(fn ->
         "Signal #{signal.id} exhausted #{attempt_count} attempts but no DLQ configured"
-      )
+      end)
     end
 
     # Remove from tracking - signal is now in DLQ (or dropped if no DLQ)

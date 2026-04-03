@@ -12,9 +12,8 @@ defmodule Jido.Signal.Bus.Stream do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
+  alias Jido.Signal.Log
   alias Jido.Signal.Router
-
-  require Logger
 
   @doc """
   Filters signals from the bus state's log based on type pattern and timestamp.
@@ -96,12 +95,12 @@ defmodule Jido.Signal.Bus.Stream do
         {:ok, filtered_signals}
 
       {:error, reason} ->
-        Logger.error("Invalid pattern: #{inspect(reason)}")
+        Log.error(fn -> "Invalid pattern: #{Log.safe_inspect(reason)}" end)
         {:error, :invalid_pattern}
     end
   rescue
     error ->
-      Logger.error("Error filtering signals: #{inspect(error)}")
+      Log.error(fn -> "Error filtering signals: #{Log.safe_inspect(error)}" end)
       {:error, :filter_failed}
   end
 

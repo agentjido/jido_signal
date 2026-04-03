@@ -2,10 +2,9 @@ defmodule Jido.Signal.Bus.DispatchFlow do
   @moduledoc false
 
   alias Jido.Signal.Bus.MiddlewarePipeline
+  alias Jido.Signal.Log
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Telemetry
-
-  require Logger
 
   @type middleware_config :: {module(), term()}
   @type dispatch_fun :: (Jido.Signal.t(), Subscriber.t() -> term())
@@ -87,7 +86,10 @@ defmodule Jido.Signal.Bus.DispatchFlow do
           partition_id
         )
 
-        Logger.warning("Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}")
+        Log.warning(fn ->
+          "Middleware halted dispatch for signal #{signal.id}: #{Log.safe_inspect(reason)}"
+        end)
+
         {:skip, middleware}
     end
   end

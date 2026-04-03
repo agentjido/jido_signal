@@ -52,11 +52,10 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.ID
+  alias Jido.Signal.Log
   alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
-
-  require Logger
 
   @type start_option ::
           {:name, atom()}
@@ -158,18 +157,19 @@ defmodule Jido.Signal.Bus do
         {journal_adapter, pid, true}
 
       {:error, reason} ->
-        Logger.warning(
-          "Failed to initialize journal adapter #{inspect(journal_adapter)}: #{inspect(reason)}"
-        )
+        Log.warning(fn ->
+          "Failed to initialize journal adapter #{Log.safe_inspect(journal_adapter)}: " <>
+            Log.safe_inspect(reason)
+        end)
 
         {nil, nil, false}
     end
   end
 
   defp do_init_journal_adapter(name, _journal_adapter, _existing_pid) do
-    Logger.debug(
+    Log.debug(fn ->
       "Bus #{name} started without journal adapter - checkpoints will be in-memory only"
-    )
+    end)
 
     {nil, nil, false}
   end
@@ -1211,10 +1211,10 @@ defmodule Jido.Signal.Bus do
 
   def handle_info({:EXIT, pid, reason}, state) do
     if linked_runtime_process?(pid, state) and reason != :normal do
-      Logger.error(
+      Log.error(fn ->
         "Linked runtime process exited, stopping bus to avoid stale state: " <>
-          "pid=#{inspect(pid)} reason=#{inspect(reason)}"
-      )
+          "pid=#{Log.safe_inspect(pid)} reason=#{Log.safe_inspect(reason)}"
+      end)
 
       {:stop, {:linked_runtime_exit, pid, reason}, state}
     else
@@ -1231,7 +1231,7 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_info(msg, state) do
-    Logger.debug("Unexpected message in Bus: #{inspect(msg)}")
+    Log.debug(fn -> "Unexpected message in Bus: #{Log.safe_inspect(msg)}" end)
     {:noreply, state}
   end
 

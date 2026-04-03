@@ -21,9 +21,8 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
 
   alias Jido.Signal.ID
   alias Jido.Signal.Journal.Adapters.Mnesia.Tables
+  alias Jido.Signal.Log
   alias Jido.Signal.Telemetry
-
-  require Logger
 
   @tables [
     Tables.Signal,
@@ -50,7 +49,9 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
           :ok
 
         {:error, reason} ->
-          Logger.warning("Failed to create Mnesia table #{inspect(table)}: #{inspect(reason)}")
+          Log.warning(fn ->
+            "Failed to create Mnesia table #{Log.safe_inspect(table)}: #{Log.safe_inspect(reason)}"
+          end)
       end
     end)
 

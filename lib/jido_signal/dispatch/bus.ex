@@ -40,6 +40,8 @@ defmodule Jido.Signal.Dispatch.Bus do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Log
+
   require Logger
 
   @type delivery_target :: atom()
@@ -117,12 +119,12 @@ defmodule Jido.Signal.Dispatch.Bus do
           end
 
         {:error, :not_found} ->
-          Logger.error("Bus not found: #{bus_name}")
+          Log.error(fn -> "Bus not found: #{bus_name}" end)
           {:error, :bus_not_found}
       end
     rescue
       ArgumentError ->
-        Logger.error("Bus not found: #{bus_name}")
+        Log.error(fn -> "Bus not found: #{bus_name}" end)
         {:error, :bus_not_found}
     end
   end

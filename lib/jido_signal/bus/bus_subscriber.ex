@@ -8,12 +8,11 @@ defmodule Jido.Signal.Bus.Subscriber do
   """
 
   alias Jido.Signal.Bus.State, as: BusState
+  alias Jido.Signal.Log
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.Error
   alias Jido.Signal.Names
   alias Jido.Signal.Router
-
-  require Logger
 
   @schema Zoi.struct(
             __MODULE__,
@@ -214,7 +213,9 @@ defmodule Jido.Signal.Bus.Subscriber do
           :ok
 
         {:error, reason} ->
-          Logger.warning("Failed to delete checkpoint for #{checkpoint_key}: #{inspect(reason)}")
+          Log.warning(fn ->
+            "Failed to delete checkpoint for #{checkpoint_key}: #{Log.safe_inspect(reason)}"
+          end)
       end
 
       case state.journal_adapter.clear_dlq(subscription_id, state.journal_pid) do
@@ -222,9 +223,9 @@ defmodule Jido.Signal.Bus.Subscriber do
           :ok
 
         {:error, reason} ->
-          Logger.warning(
-            "Failed to clear DLQ for subscription #{subscription_id}: #{inspect(reason)}"
-          )
+          Log.warning(fn ->
+            "Failed to clear DLQ for subscription #{subscription_id}: #{Log.safe_inspect(reason)}"
+          end)
       end
     end
   end

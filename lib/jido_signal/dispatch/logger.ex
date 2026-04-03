@@ -62,7 +62,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  require Logger
+  alias Jido.Signal.Log
 
   @valid_levels [:debug, :info, :warning, :error]
 
@@ -130,7 +130,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
     structured = Keyword.get(opts, :structured, false)
 
     if structured do
-      Logger.log(
+      Log.log(
         level,
         fn ->
           %{
@@ -144,9 +144,12 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
         []
       )
     else
-      Logger.log(
+      Log.log(
         level,
-        "SIGNAL: #{signal.type} from #{signal.source} with data=#{inspect(signal.data)}",
+        fn ->
+          "SIGNAL: #{signal.type} from #{signal.source} with data=" <>
+            Log.safe_inspect(signal.data, limit: :infinity)
+        end,
         []
       )
     end

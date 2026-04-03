@@ -9,11 +9,10 @@ defmodule Jido.Signal.Bus.Partition do
 
   alias Jido.Signal.Bus.DispatchFlow
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Log
   alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
-
-  require Logger
 
   @schema Zoi.struct(
             __MODULE__,
@@ -124,10 +123,10 @@ defmodule Jido.Signal.Bus.Partition do
           }
         )
 
-        Logger.warning(
+        Log.warning(fn ->
           "Partition #{state.partition_id} rate limited: dropping #{signal_count} signals " <>
             "(available: #{Float.round(state.tokens, 1)}, limit: #{state.rate_limit_per_sec}/s)"
-        )
+        end)
 
         {:noreply, state}
     end

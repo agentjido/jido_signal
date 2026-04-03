@@ -142,11 +142,10 @@ defmodule Jido.Signal do
   alias Jido.Signal.Error
   alias Jido.Signal.Ext
   alias Jido.Signal.ID
+  alias Jido.Signal.Log
   alias Jido.Signal.Serialization.Serializer
   alias Jido.Signal.Serialization.TypeProvider
   alias Jido.Signal.Using
-
-  require Logger
 
   @core_attrs ~w[
     specversion id source type subject time
@@ -583,7 +582,10 @@ defmodule Jido.Signal do
             acc
 
           {:error, :not_found} ->
-            Logger.warning("Unknown extension '#{ns}' encountered - preserving as opaque data")
+            Log.warning(fn ->
+              "Unknown extension '#{ns}' encountered - preserving as opaque data"
+            end)
+
             Map.put(acc, ns, v)
         end
       end)
@@ -1074,7 +1076,10 @@ defmodule Jido.Signal do
         Map.merge(acc, Map.new(filtered_attrs))
 
       {:error, reason} ->
-        Logger.warning("Extension #{namespace} to_attrs failed: #{inspect(reason)} - skipping")
+        Log.warning(fn ->
+          "Extension #{namespace} to_attrs failed: #{Log.safe_inspect(reason)} - skipping"
+        end)
+
         acc
     end
   end
@@ -1131,7 +1136,10 @@ defmodule Jido.Signal do
         process_extension_data(namespace, extension_module, extension_data, ext_acc, attrs_acc)
 
       {:error, reason} ->
-        Logger.warning("Extension #{namespace} from_attrs failed: #{inspect(reason)} - skipping")
+        Log.warning(fn ->
+          "Extension #{namespace} from_attrs failed: #{Log.safe_inspect(reason)} - skipping"
+        end)
+
         {ext_acc, attrs_acc}
     end
   end
@@ -1202,9 +1210,9 @@ defmodule Jido.Signal do
         {ext_acc, attrs_acc}
 
       {:error, reason} ->
-        Logger.warning(
-          "Extension #{namespace} validate_data failed: #{inspect(reason)} - skipping"
-        )
+        Log.warning(fn ->
+          "Extension #{namespace} validate_data failed: #{Log.safe_inspect(reason)} - skipping"
+        end)
 
         {ext_acc, attrs_acc}
     end
@@ -1225,9 +1233,9 @@ defmodule Jido.Signal do
         {ext_acc, attrs_acc}
 
       {:error, reason} ->
-        Logger.warning(
-          "Extension #{namespace} validate_data failed: #{inspect(reason)} - skipping"
-        )
+        Log.warning(fn ->
+          "Extension #{namespace} validate_data failed: #{Log.safe_inspect(reason)} - skipping"
+        end)
 
         {ext_acc, attrs_acc}
     end
@@ -1246,7 +1254,10 @@ defmodule Jido.Signal do
         {Map.put(ext_acc, namespace, validated_data), updated_attrs}
 
       {:error, reason} ->
-        Logger.warning("Extension #{namespace} to_attrs failed: #{inspect(reason)} - skipping")
+        Log.warning(fn ->
+          "Extension #{namespace} to_attrs failed: #{Log.safe_inspect(reason)} - skipping"
+        end)
+
         {ext_acc, attrs_acc}
     end
   end
