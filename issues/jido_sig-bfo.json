@@ -1,0 +1,16 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-04-03T18:59:45Z",
+  "description": "bw 0.11.7 → 0.12.0 is available.\n\n## What's new\n\n## 0.12.0 — 2026-04-02\n\n- **Due dates** — new `--due` flag on `bw create` and `bw update` sets deadlines without changing issue status. `bw list --overdue` filters to past-due items. Overdue items float to the top within their priority band in `bw list` and `bw ready`, and show an `(OVERDUE since YYYY-MM-DD)` marker in `bw show`. Clear a due date with `bw update \u003cid\u003e --due \"\"`. Date-only values use end-of-day semantics: `due: \"2027-04-15\"` isn't overdue until April 16.\n\n- **Time-granular dates** — `bw defer` and the `--due`/`--defer` flags now accept time expressions: `in 15 minutes`, `tomorrow at 2pm`, `3pm`, `14:00`, or full RFC3339. Sub-day values are stored as RFC3339 with your local timezone offset. Date-only expressions (`2027-06-01`, `next monday`) continue to produce plain `YYYY-MM-DD`.\n\n- **Query-time deferral expiry** — deferred items whose `defer_until` has passed now reappear in `bw ready` and default `bw list` automatically — no poller or cron needed. On-disk status stays `deferred`; the expiry is evaluated at query time. `bw defer bw-abc \"in 15 minutes\"` just works. `bw prime` surfaces expired deferrals in a dedicated \"Reminders\" section. `bw list --deferred` still shows all deferred items regardless of expiry, and `bw undefer` still works for manual cleanup.\n\n- **Export/import pass-through** — `defer_until` and `due` fields pass through as-is in export/import. No more `T00:00:00Z` padding on export or time stripping on import. Old exports with padded values import without error.\n\n- **Sort order change** — issues now sort by priority ascending, then overdue-first within each priority band, then creation date ascending.\n\n- **Agent guidance** — `bw prime` now includes due-date/deferral guidance, a date expression reference, overdue count, and a reminders section for expired deferrals.\n\n- **Note**: Mixed-version usage (old binary reading new issue data) will silently drop the `due` field on write-back. Data is recoverable from git history.\n\n## 0.11.8 — 2026-04-01\n\n- **`-C \u003cdir\u003e` flag** — run `bw` as if started in `\u003cdir\u003e`, matching `git -C` semantics. The repo is discovered from the specified directory without changing the process working directory. Useful for scripting against a different repo or running `bw` from outside a checkout: `bw -C /path/to/repo list`.\n\n- **`bw onboard` pipe-friendly output** — when stdout is not a TTY (e.g. `bw onboard | pbcopy` or `bw onboard \u003e\u003e CLAUDE.md`), only the raw snippet text is emitted, without headings, code fences, or the \"How it works\" section. TTY output is unchanged.\n\n- Minor prime prompt wording adjustments.\n\n## To upgrade\n\nRun `bw upgrade --yes` or `bw upgrade` for interactive mode.\n",
+  "id": "jido_sig-bfo",
+  "labels": [
+    "beadwork-upgrade"
+  ],
+  "priority": 1,
+  "status": "open",
+  "title": "Upgrade bw to 0.12.0",
+  "type": "task",
+  "updated_at": "2026-04-03T18:59:45Z"
+}
