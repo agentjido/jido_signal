@@ -143,12 +143,10 @@ defmodule Jido.Signal.Ext.Registry do
     catch
       :exit, {:noproc, _} ->
         enqueue_pending_registration(module)
-        Logger.debug("Extension registry not started, queued registration of #{module}")
         :ok
 
       :exit, {:timeout, _} ->
         enqueue_pending_registration(module)
-        Logger.debug("Extension registry timeout, queued registration of #{module}")
         :ok
     end
   end
@@ -295,7 +293,10 @@ defmodule Jido.Signal.Ext.Registry do
 
   # Fallback for testing when the registry is not started
   def handle_call(request, from, state) do
-    Logger.warning("Unhandled registry call: #{inspect(request)} from #{inspect(from)}")
+    Logger.warning(fn ->
+      "Unhandled registry call: #{safe_inspect(request)} from #{safe_inspect(from)}"
+    end)
+
     {:reply, {:error, :unknown_request}, state}
   end
 
@@ -310,9 +311,10 @@ defmodule Jido.Signal.Ext.Registry do
 
       existing_module ->
         # Different module trying to register same namespace.
-        Logger.warning(
-          "Extension namespace '#{namespace}' already registered by #{existing_module}, ignoring registration of #{module}"
-        )
+        Logger.warning(fn ->
+          "Extension namespace '#{namespace}' already registered by #{existing_module}, " <>
+            "ignoring registration of #{module}"
+        end)
 
         state
     end
@@ -332,5 +334,30 @@ defmodule Jido.Signal.Ext.Registry do
     Enum.reduce(pending_modules, state, fn module, acc ->
       put_extension(acc, module.namespace(), module)
     end)
+  end
+
+  defp safe_inspect(term, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+    max_length = Keyword.get(opts, :max_length, 200)
+
+    inspected =
+      try do
+        inspect(term,
+          limit: limit,
+          printable_limit: max_length,
+          width: max_length,
+          charlists: :as_lists
+        )
+      rescue
+        error -> "#inspect_error<#{Exception.message(error)}>"
+      catch
+        kind, _reason -> "#inspect_#{kind}<uninspectable>"
+      end
+
+    if String.length(inspected) > max_length do
+      String.slice(inspected, 0, max_length) <> "..."
+    else
+      inspected
+    end
   end
 end

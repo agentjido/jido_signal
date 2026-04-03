@@ -289,8 +289,8 @@ dispatch_configs = [
   # HTTP webhook with signature
   {:webhook, url: "https://api.example.com/webhook", secret: "secret123"},
   
-  # Log structured data
-  {:logger, level: :info, structured: true},
+  # Log structured data with bounded previews
+  {:logger, level: :info, structured: true, data_mode: :preview},
   
   # Console output
   {:console, format: :pretty}

@@ -72,7 +72,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(level: :info, log_publish: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
@@ -85,7 +85,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(log_publish: false)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
@@ -100,7 +100,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
         LoggerMiddleware.init(level: :info, log_publish: true, include_signal_data: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
@@ -129,7 +129,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
         )
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
@@ -168,7 +168,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(level: :info, log_publish: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.after_publish(signals, context, config)
         end)
 
@@ -179,7 +179,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(log_publish: false)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.after_publish(signals, context, config)
         end)
 
@@ -221,7 +221,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(level: :info, log_dispatch: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_dispatch(signal, subscriber, context, config)
         end)
 
@@ -237,7 +237,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(log_dispatch: false)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_dispatch(signal, subscriber, context, config)
         end)
 
@@ -288,7 +288,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(level: :info, log_dispatch: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.after_dispatch(signal, subscriber, :ok, context, config)
         end)
 
@@ -304,7 +304,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(level: :info, log_errors: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.after_dispatch(
             signal,
             subscriber,
@@ -327,14 +327,14 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       {:ok, config} = LoggerMiddleware.init(log_dispatch: false, log_errors: false)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.after_dispatch(signal, subscriber, :ok, context, config)
         end)
 
       assert log == ""
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.after_dispatch(
             signal,
             subscriber,
@@ -364,7 +364,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       }
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_dispatch(signal, subscriber, context, config)
         end)
 
@@ -386,7 +386,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
       }
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_dispatch(signal, subscriber, context, config)
         end)
 
@@ -407,7 +407,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
         LoggerMiddleware.init(level: :info, log_publish: true, include_signal_data: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
@@ -423,7 +423,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
         LoggerMiddleware.init(level: :info, log_publish: true, include_signal_data: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
@@ -444,7 +444,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
         LoggerMiddleware.init(level: :info, log_publish: true, include_signal_data: true)
 
       log =
-        capture_log(fn ->
+        capture_log([level: :debug], fn ->
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 

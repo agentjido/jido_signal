@@ -233,11 +233,18 @@ defmodule Jido.Signal.Dispatch.Http do
       {:error, reason} = error ->
         if should_retry?(attempt, retry_config) do
           delay = calculate_delay(attempt, retry_config)
-          Logger.warning("HTTP request failed, retrying in #{delay}ms: #{inspect(reason)}")
+
+          Logger.warning(fn ->
+            "HTTP request failed, retrying in #{delay}ms: #{safe_inspect(reason)}"
+          end)
+
           Process.sleep(delay)
           do_request_with_retry(method, url, headers, body, timeout, retry_config, attempt + 1)
         else
-          Logger.error("HTTP request failed after #{attempt} attempts: #{inspect(reason)}")
+          Logger.error(fn ->
+            "HTTP request failed after #{attempt} attempts: #{safe_inspect(reason)}"
+          end)
+
           error
         end
     end
@@ -273,5 +280,30 @@ defmodule Jido.Signal.Dispatch.Http do
   defp calculate_delay(attempt, %{base_delay: base_delay, max_delay: max_delay}) do
     delay = trunc(base_delay * :math.pow(2, attempt - 1))
     min(delay, max_delay)
+  end
+
+  defp safe_inspect(term, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+    max_length = Keyword.get(opts, :max_length, 200)
+
+    inspected =
+      try do
+        inspect(term,
+          limit: limit,
+          printable_limit: max_length,
+          width: max_length,
+          charlists: :as_lists
+        )
+      rescue
+        error -> "#inspect_error<#{Exception.message(error)}>"
+      catch
+        kind, _reason -> "#inspect_#{kind}<uninspectable>"
+      end
+
+    if String.length(inspected) > max_length do
+      String.slice(inspected, 0, max_length) <> "..."
+    else
+      inspected
+    end
   end
 end
