@@ -9,6 +9,17 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
 
   @moduletag :capture_log
 
+  setup do
+    previous_level = Logger.level()
+    Logger.configure(level: :debug)
+
+    on_exit(fn ->
+      Logger.configure(level: previous_level)
+    end)
+
+    :ok
+  end
+
   describe "LoggerMiddleware.init/1" do
     test "initializes with default options" do
       assert {:ok, config} = LoggerMiddleware.init([])
