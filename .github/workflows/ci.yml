@@ -26,11 +26,3 @@ jobs:
       experimental_compile_otp_versions: '["28.4.1"]'
       experimental_compile_otp_name: '28'
       test_command: mix test
-
-  preview_test:
-    name: Test (Elixir 1.20 preview)
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@main
-    with:
-      otp_versions: '["29"]'
-      elixir_versions: '["1.20.0-rc.4"]'
-      test_command: mix test
