@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      version_override:
+        description: "Optional bare SemVer override (for example 1.2.3, not v1.2.3)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -25,9 +30,10 @@ permissions:
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@main
+    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v3
     with:
       dry_run: ${{ inputs.dry_run }}
       hex_dry_run: ${{ inputs.hex_dry_run }}
       skip_tests: ${{ inputs.skip_tests }}
+      version_override: ${{ inputs.version_override }}
     secrets: inherit
