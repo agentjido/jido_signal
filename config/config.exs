@@ -3,8 +3,11 @@ import Config
 # Git hooks and git_ops configuration for conventional commits
 # Only configure when the dependencies are actually available (dev environment)
 if config_env() == :dev do
+  # git_hooks walks upward looking for a .git directory, which fails in linked worktrees
+  # where .git is a file. Point it at the project root explicitly so auto-install still works.
   config :git_hooks,
     auto_install: true,
+    project_path: Path.expand("..", __DIR__),
     verbose: true,
     hooks: [
       commit_msg: [
