@@ -300,7 +300,6 @@ defmodule Jido.Signal.Using do
                      {:error,
                       "Signal #{inspect(__MODULE__)} failed to validate extension namespace #{inspect(namespace)}: #{inspect(reason)}"}}
                 end
-
             end
           end)
         end
