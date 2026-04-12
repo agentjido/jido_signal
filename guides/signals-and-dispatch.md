@@ -70,6 +70,16 @@ timestamp = Jido.Signal.ID.extract_timestamp(signal.id)
 
 ## Dispatch Adapters
 
+Dispatch in `jido_signal` answers one narrow question: where should this signal be delivered?
+It is a delivery mechanism for signals, not a statement that every effect in the wider Jido
+ecosystem must be represented as signal dispatch.
+
+`jido_signal` owns signal envelopes and delivery adapters. The broader boundary between pure
+agent logic, directives, and runtime execution is documented in Jido's
+[Core Loop](https://hexdocs.pm/jido/core-loop.html) and
+[Actions](https://hexdocs.pm/jido/actions.html) guides. Some actions in the wider ecosystem may
+still perform direct I/O when they need an immediate result.
+
 ### PID Adapter
 
 Direct process delivery:

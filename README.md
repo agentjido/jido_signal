@@ -276,6 +276,12 @@ routes = [
 
 Flexible delivery to multiple destinations:
 
+Dispatch is delivery infrastructure: it takes an existing signal and sends it to configured
+destinations. In the wider Jido ecosystem, that does not mean every effect must be modeled as
+signal dispatch. The broader boundary between pure agent logic, directives, and runtime execution
+lives in Jido's [Core Loop](https://hexdocs.pm/jido/core-loop.html) and
+[Actions](https://hexdocs.pm/jido/actions.html) guides.
+
 ```elixir
 alias Jido.Signal.Dispatch
 
