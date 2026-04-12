@@ -377,6 +377,5 @@ defmodule Jido.Signal.Sanitizer do
   defp value_type(value) when is_function(value), do: "function"
   defp value_type(value) when is_port(value), do: "port"
   defp value_type(value) when is_bitstring(value), do: "bitstring"
-  defp value_type(%module{}), do: inspect(module)
   defp value_type(value), do: value |> Kernel.inspect() |> truncate_binary(64)
 end

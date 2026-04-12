@@ -9,19 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
-### Changed
-- Align package observability with the shared Jido standards:
-  - add `Jido.Signal.Sanitizer` with distinct `:telemetry` and `:transport` profiles
-  - add canonical public error serialization through `Jido.Signal.Error.to_map/1`
-  - normalize dispatch errors through `:jido_signal` config by default
-  - move dispatch telemetry to span-shaped `[:jido, :dispatch, :start|:stop|:exception]` events with bounded metadata
-  - stop emitting raw dispatch targets and rich bus payloads in default telemetry metadata
-  - use config-backed default execution log level via `config :jido_signal, default_log_level: :info`
-
-### Notes
-- Observability consumers should treat the `[:jido, :dispatch, :stop]` metadata and measurements as updated contract surface.
-- Bus spy behavior now resolves full signals lazily from the bus log rather than relying on rich payloads embedded in telemetry metadata.
-
 ## [v2.1.1](https://github.com/agentjido/jido_signal/compare/v2.1.0...v2.1.1) (2026-03-28)
 
 

@@ -54,8 +54,6 @@ defmodule Jido.Signal.Dispatch.Http do
   alias Jido.Signal.Sanitizer
   alias Jido.Signal.Util
 
-  require Logger
-
   @default_timeout 5000
   @default_method :post
   @default_retry %{
