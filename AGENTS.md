@@ -4,11 +4,10 @@
 Model domain events as validated signals and route them predictably through bus/dispatch layers.
 
 ## Work Management
-<!-- covers: jido_signal.workflow.beadwork_guidance_present -->
-- This project tracks durable work with `bw` (beadwork).
-- Always run `bw prime` before starting repository work.
-- If the task touches `.spec/`, run `mix spec.prime --base HEAD` after `bw prime` and before editing current truth.
-- Treat commits, Beadwork issue state, and PR updates as part of finishing the task.
+- Work from a topic branch or worktree based on `main`.
+- Keep changes focused on a single pull request.
+- Use Conventional Commits.
+- Update docs and tests when behavior changes.
 
 ## Runtime Baseline
 - Elixir `~> 1.18`
