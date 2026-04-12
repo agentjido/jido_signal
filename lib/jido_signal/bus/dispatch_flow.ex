@@ -115,7 +115,7 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         signal,
         subscription_id,
         subscription,
-        %{outcome: :start},
+        %{signal: signal, subscription: subscription, outcome: :start},
         partition_id
       )
     )
@@ -137,7 +137,12 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         signal,
         subscription_id,
         subscription,
-        after_dispatch_metadata(result),
+        %{
+          signal: signal,
+          subscription: subscription,
+          dispatch_result: result
+        }
+        |> Map.merge(after_dispatch_metadata(result)),
         partition_id
       )
     )
@@ -158,7 +163,12 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         signal,
         subscription_id,
         subscription,
-        %{outcome: :skipped, reason: :middleware_skip},
+        %{
+          signal: signal,
+          subscription: subscription,
+          outcome: :skipped,
+          reason: :middleware_skip
+        },
         partition_id
       )
     )
@@ -183,6 +193,9 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         subscription_id,
         subscription,
         %{
+          error: reason,
+          signal: signal,
+          subscription: subscription,
           outcome: :error,
           error_type: Error.type(error),
           retryable?: Error.retryable?(error)

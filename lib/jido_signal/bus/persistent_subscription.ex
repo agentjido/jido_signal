@@ -649,7 +649,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp handle_dlq(state, signal_log_id, signal, reason, attempt_count) do
     metadata = %{
       attempt_count: attempt_count,
-      last_error: Error.to_map(reason),
+      last_error: inspect(reason),
+      last_error_data: Error.to_map(reason),
       subscription_id: state.id,
       signal_log_id: signal_log_id
     }

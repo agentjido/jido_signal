@@ -90,9 +90,8 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, String.t()}
   def validate_opts(opts) do
     raw_level = Keyword.get(opts, :log_level, Keyword.get(opts, :level, :info))
-    level = Util.resolve_log_level(opts)
     structured = Keyword.get(opts, :structured, false)
-    include_data = Keyword.get(opts, :include_data, false)
+    include_data = Keyword.get(opts, :include_data, true)
 
     cond do
       raw_level not in @valid_levels ->
@@ -106,7 +105,6 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
         {:error, "include_data must be a boolean"}
 
       true ->
-        _ = level
         {:ok, opts}
     end
   end
@@ -119,26 +117,18 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   def deliver(signal, opts) do
     level = Keyword.get(opts, :log_level, Util.resolve_log_level(opts))
     structured = Keyword.get(opts, :structured, false)
-    include_data = Keyword.get(opts, :include_data, false)
-
-    metadata = [
-      signal_id: signal.id,
-      signal_type: signal.type,
-      signal_source: signal.source
-    ]
+    include_data = Keyword.get(opts, :include_data, true)
 
     Logger.log(
       level,
       fn ->
         if structured do
-          signal
-          |> structured_payload(include_data)
-          |> Jason.encode!()
+          structured_payload(signal, include_data)
         else
           build_log_message(signal, include_data)
         end
       end,
-      metadata
+      []
     )
 
     :ok
@@ -160,11 +150,11 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   end
 
   defp build_log_message(signal, false) do
-    "signal dispatched id=#{signal.id} type=#{signal.type} source=#{signal.source}"
+    "SIGNAL: #{signal.type} from #{signal.source}"
   end
 
   defp build_log_message(signal, true) do
-    "signal dispatched id=#{signal.id} type=#{signal.type} source=#{signal.source} " <>
-      "data=#{Sanitizer.preview(signal.data, :telemetry)}"
+    "SIGNAL: #{signal.type} from #{signal.source} " <>
+      "with data=#{Sanitizer.preview(signal.data, :telemetry)}"
   end
 end

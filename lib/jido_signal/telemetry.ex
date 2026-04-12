@@ -2,29 +2,24 @@ defmodule Jido.Signal.Telemetry do
   @moduledoc """
   Canonical telemetry helper for Jido Signal.
 
-  This module centralizes metadata shaping for telemetry emission and exposes a
-  span helper for owning execution boundaries.
+  This module centralizes trace-context metadata merging for telemetry emission
+  and exposes a span helper for owning execution boundaries.
   """
 
-  alias Jido.Signal.Sanitizer
   alias Jido.Signal.TraceContext
 
   @type event_name :: [atom()]
 
   @doc """
-  Emits a telemetry event with bounded metadata.
+  Emits a telemetry event with package trace metadata merged in.
   """
   @spec execute(event_name(), map(), map()) :: :ok
   def execute(event_name, measurements, metadata \\ %{}) do
-    :telemetry.execute(
-      event_name,
-      normalize_measurements(measurements),
-      normalize_metadata(metadata)
-    )
+    :telemetry.execute(event_name, measurements, normalize_metadata(metadata))
   end
 
   @doc """
-  Emits a telemetry span with bounded metadata.
+  Emits a telemetry span with package trace metadata merged in.
 
   The wrapped function should return `{result, stop_metadata}`.
   """
@@ -46,21 +41,10 @@ defmodule Jido.Signal.Telemetry do
     :telemetry.detach(handler_id)
   end
 
-  defp normalize_measurements(measurements) do
-    Map.new(measurements, fn
-      {key, value} when is_integer(value) or is_float(value) ->
-        {key, value}
-
-      {key, value} ->
-        {key, Sanitizer.sanitize(value, :telemetry)}
-    end)
-  end
-
   defp normalize_metadata(metadata) do
     TraceContext.to_telemetry_metadata()
     |> Map.merge(metadata)
     |> drop_nil_entries()
-    |> Sanitizer.sanitize(:telemetry)
   end
 
   defp drop_nil_entries(metadata) do

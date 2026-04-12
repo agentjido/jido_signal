@@ -45,13 +45,12 @@ defmodule Jido.Signal.BusSpy do
   - `[:jido, :signal, :bus, :dispatch_skipped]` - When middleware skips dispatch
   - `[:jido, :signal, :bus, :dispatch_error]` - When dispatch fails
 
-  The emitted telemetry stays bounded and low-cardinality. Full signal structs are
-  resolved lazily from the bus log using the emitted `bus_name` and `signal_id`.
+  The spy prefers full signal and subscription metadata from telemetry when
+  available and falls back to bounded metadata if needed.
   """
 
   use GenServer
 
-  alias Jido.Signal.Bus
   alias Jido.Signal.Telemetry
 
   @type spy_ref :: pid()
@@ -211,8 +210,6 @@ defmodule Jido.Signal.BusSpy do
   end
 
   def handle_info({:telemetry_event, event_name, measurements, metadata}, state) do
-    signal = resolve_signal(Map.get(metadata, :bus_name), Map.get(metadata, :signal_id))
-
     # Convert telemetry event to our signal event format
     signal_event = %{
       event: List.last(event_name),
@@ -222,14 +219,20 @@ defmodule Jido.Signal.BusSpy do
       signal_type: Map.get(metadata, :signal_type),
       subscription_id: Map.get(metadata, :subscription_id),
       subscription_path: Map.get(metadata, :subscription_path),
-      signal: signal,
-      subscription: %{
-        id: Map.get(metadata, :subscription_id),
-        path: Map.get(metadata, :subscription_path),
-        dispatch_target_kind: Map.get(metadata, :dispatch_target_kind)
-      },
-      dispatch_result: dispatch_result_from_metadata(metadata),
-      error: Map.get(metadata, :error_type),
+      signal: Map.get(metadata, :signal),
+      subscription:
+        Map.get(
+          metadata,
+          :subscription,
+          %{
+            id: Map.get(metadata, :subscription_id),
+            path: Map.get(metadata, :subscription_path),
+            dispatch_target_kind: Map.get(metadata, :dispatch_target_kind)
+          }
+        ),
+      dispatch_result:
+        Map.get(metadata, :dispatch_result, dispatch_result_from_metadata(metadata)),
+      error: Map.get(metadata, :error, Map.get(metadata, :error_type)),
       reason: Map.get(metadata, :reason)
     }
 
@@ -336,23 +339,4 @@ defmodule Jido.Signal.BusSpy do
   end
 
   defp dispatch_result_from_metadata(_metadata), do: nil
-
-  defp resolve_signal(nil, _signal_id), do: nil
-  defp resolve_signal(_bus_name, nil), do: nil
-
-  defp resolve_signal(bus_name, signal_id, attempts \\ 5)
-
-  defp resolve_signal(_bus_name, _signal_id, 0), do: nil
-
-  defp resolve_signal(bus_name, signal_id, attempts) do
-    with {:ok, recorded_signals} <- Bus.replay(bus_name, "**"),
-         %Jido.Signal.Bus.RecordedSignal{signal: signal} <-
-           Enum.find(recorded_signals, fn recorded -> recorded.signal.id == signal_id end) do
-      signal
-    else
-      _ ->
-        Process.sleep(10)
-        resolve_signal(bus_name, signal_id, attempts - 1)
-    end
-  end
 end
