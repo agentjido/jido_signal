@@ -37,6 +37,12 @@ defmodule Jido.Signal.Using do
   end
 
   @doc false
+  @spec fetch_extension_policy_module(map(), String.t()) :: module() | nil
+  def fetch_extension_policy_module(policy_modules, namespace) when is_map(policy_modules) do
+    Map.get(policy_modules, namespace)
+  end
+
+  @doc false
   defmacro define_accessor_functions do
     quote location: :keep do
       def type, do: @validated_opts[:type]
@@ -269,28 +275,34 @@ defmodule Jido.Signal.Using do
       end
 
       defp validate_policy_extension_data(effective_extensions) do
-        Enum.reduce_while(effective_extensions, {:ok, %{}}, fn {namespace, data}, {:ok, acc} ->
-          case Map.fetch(extension_policy_modules(), namespace) do
-            {:ok, extension_module} ->
-              case Ext.safe_validate_data(extension_module, data) do
-                {:ok, {:ok, validated_data}} ->
-                  {:cont, {:ok, Map.put(acc, namespace, validated_data)}}
+        policy_modules = extension_policy_modules()
 
-                {:ok, {:error, reason}} ->
-                  {:halt,
-                   {:error,
-                    "Signal #{inspect(__MODULE__)} received invalid data for extension namespace #{inspect(namespace)}: #{reason}"}}
+        if map_size(policy_modules) == 0 do
+          {:ok, effective_extensions}
+        else
+          Enum.reduce_while(effective_extensions, {:ok, %{}}, fn {namespace, data}, {:ok, acc} ->
+            case Using.fetch_extension_policy_module(policy_modules, namespace) do
+              nil ->
+                {:cont, {:ok, Map.put(acc, namespace, data)}}
 
-                {:error, reason} ->
-                  {:halt,
-                   {:error,
-                    "Signal #{inspect(__MODULE__)} failed to validate extension namespace #{inspect(namespace)}: #{inspect(reason)}"}}
-              end
+              extension_module ->
+                case Ext.safe_validate_data(extension_module, data) do
+                  {:ok, {:ok, validated_data}} ->
+                    {:cont, {:ok, Map.put(acc, namespace, validated_data)}}
 
-            :error ->
-              {:cont, {:ok, Map.put(acc, namespace, data)}}
-          end
-        end)
+                  {:ok, {:error, reason}} ->
+                    {:halt,
+                     {:error,
+                      "Signal #{inspect(__MODULE__)} received invalid data for extension namespace #{inspect(namespace)}: #{reason}"}}
+
+                  {:error, reason} ->
+                    {:halt,
+                     {:error,
+                      "Signal #{inspect(__MODULE__)} failed to validate extension namespace #{inspect(namespace)}: #{inspect(reason)}"}}
+                end
+            end
+          end)
+        end
       end
 
       defp extension_policy_modules, do: @extension_policy_modules

@@ -7,8 +7,6 @@ defmodule JidoTest.Signal.Bus.PersistentSubscriptionTest do
   alias Jido.Signal.Bus.Subscriber
   alias Jido.Signal.ID
 
-  require Logger
-
   # Uncomment to see detailed logs during test execution
   # @moduletag :capture_log
 

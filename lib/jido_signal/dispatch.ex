@@ -157,8 +157,7 @@ defmodule Jido.Signal.Dispatch do
     console: Jido.Signal.Dispatch.ConsoleAdapter,
     noop: Jido.Signal.Dispatch.NoopAdapter,
     http: Jido.Signal.Dispatch.Http,
-    webhook: Jido.Signal.Dispatch.Webhook,
-    nil: nil
+    webhook: Jido.Signal.Dispatch.Webhook
   }
 
   @doc """
@@ -659,9 +658,6 @@ defmodule Jido.Signal.Dispatch do
     case Map.fetch(@builtin_adapters, adapter) do
       {:ok, module} when not is_nil(module) ->
         {:ok, module}
-
-      {:ok, nil} ->
-        {:error, :no_adapter_needed}
 
       :error ->
         if Code.ensure_loaded?(adapter) and function_exported?(adapter, :deliver, 2) do

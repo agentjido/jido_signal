@@ -76,8 +76,6 @@ defmodule Jido.Signal.Dispatch.Webhook do
   alias Jido.Signal.Dispatch.CircuitBreaker
   alias Jido.Signal.Dispatch.Http
 
-  require Logger
-
   @default_signature_header "x-webhook-signature"
   @default_event_type_header "x-webhook-event"
   @default_timestamp_header "x-webhook-timestamp"
