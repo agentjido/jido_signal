@@ -54,6 +54,7 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.ID
   alias Jido.Signal.Names
   alias Jido.Signal.Router
+  alias Jido.Signal.Sanitizer
   alias Jido.Signal.Telemetry
 
   require Logger
@@ -158,18 +159,19 @@ defmodule Jido.Signal.Bus do
         {journal_adapter, pid, true}
 
       {:error, reason} ->
-        Logger.warning(
-          "Failed to initialize journal adapter #{inspect(journal_adapter)}: #{inspect(reason)}"
-        )
+        Logger.warning(fn ->
+          "Failed to initialize journal adapter=#{inspect(journal_adapter)} " <>
+            "reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
 
         {nil, nil, false}
     end
   end
 
   defp do_init_journal_adapter(name, _journal_adapter, _existing_pid) do
-    Logger.debug(
-      "Bus #{name} started without journal adapter - checkpoints will be in-memory only"
-    )
+    Logger.debug(fn ->
+      "Bus #{name} started without journal adapter checkpoints=in_memory_only"
+    end)
 
     {nil, nil, false}
   end
@@ -752,8 +754,7 @@ defmodule Jido.Signal.Bus do
 
       {:error, reason} ->
         {:error,
-         {:error,
-          Error.execution_error("Failed to start publish task", %{reason: inspect(reason)})}}
+         {:error, Error.execution_error("Failed to start publish task", %{reason: reason})}}
     end
   end
 
@@ -790,11 +791,10 @@ defmodule Jido.Signal.Bus do
       end
     rescue
       error ->
-        {:error,
-         Error.execution_error("Publish task failed", %{reason: Exception.message(error)})}
+        {:error, Error.execution_error("Publish task failed", %{reason: error})}
     catch
       :exit, reason ->
-        {:error, Error.execution_error("Publish task exited", %{reason: inspect(reason)})}
+        {:error, Error.execution_error("Publish task exited", %{reason: reason})}
     end
   end
 
@@ -1190,7 +1190,7 @@ defmodule Jido.Signal.Bus do
           Error.execution_error("Publish task exited before replying", %{reason: reason})
 
         _ ->
-          Error.execution_error("Publish task crashed", %{reason: inspect(reason)})
+          Error.execution_error("Publish task crashed", %{reason: reason})
       end
 
     GenServer.reply(inflight.from, {:error, error})
@@ -1211,10 +1211,10 @@ defmodule Jido.Signal.Bus do
 
   def handle_info({:EXIT, pid, reason}, state) do
     if linked_runtime_process?(pid, state) and reason != :normal do
-      Logger.error(
-        "Linked runtime process exited, stopping bus to avoid stale state: " <>
-          "pid=#{inspect(pid)} reason=#{inspect(reason)}"
-      )
+      Logger.error(fn ->
+        "Linked runtime process exited pid=#{inspect(pid)} " <>
+          "reason=#{Sanitizer.preview(reason, :telemetry)}"
+      end)
 
       {:stop, {:linked_runtime_exit, pid, reason}, state}
     else
@@ -1231,7 +1231,7 @@ defmodule Jido.Signal.Bus do
   end
 
   def handle_info(msg, state) do
-    Logger.debug("Unexpected message in Bus: #{inspect(msg)}")
+    Logger.debug(fn -> "Unexpected bus message=#{Sanitizer.preview(msg, :telemetry)}" end)
     {:noreply, state}
   end
 

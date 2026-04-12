@@ -9,7 +9,9 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   use GenServer
 
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Error
   alias Jido.Signal.ID
+  alias Jido.Signal.Sanitizer
   alias Jido.Signal.Telemetry
 
   require Logger
@@ -112,7 +114,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
             0
 
           {:error, reason} ->
-            Logger.warning("Failed to load checkpoint for #{checkpoint_key}: #{inspect(reason)}")
+            Logger.warning(fn ->
+              "Failed to load checkpoint key=#{checkpoint_key} " <>
+                "reason=#{Sanitizer.preview(reason, :telemetry)}"
+            end)
 
             0
         end
@@ -238,7 +243,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         {:noreply, new_state}
 
       {:error, :queue_full, new_state} ->
-        Logger.warning("Dropping signal #{signal_log_id} - subscription #{state.id} queue full")
+        Logger.warning(fn ->
+          "Dropping signal log_id=#{signal_log_id} subscription_id=#{state.id} queue_full=true"
+        end)
+
         {:noreply, new_state}
     end
   end
@@ -268,7 +276,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   # Helper function to replay missed signals
   defp replay_missed_signals(state) do
-    Logger.debug("Replaying missed signals for subscription #{state.id}")
+    Logger.debug(fn -> "Replaying missed signals subscription_id=#{state.id}" end)
 
     missed_signals = fetch_signals_since_checkpoint(state)
 
@@ -372,9 +380,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         :ok
 
       {:error, reason} ->
-        Logger.debug(
-          "Dispatch failed during replay, signal: #{inspect(signal)}, reason: #{inspect(reason)}"
-        )
+        Logger.debug(fn ->
+          "Replay dispatch failed signal_id=#{signal.id} type=#{signal.type} " <>
+            "reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
     end
   end
 
@@ -503,9 +512,10 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "Failed to persist checkpoint for #{state.checkpoint_key}: #{inspect(reason)}"
-        )
+        Logger.warning(fn ->
+          "Failed to persist checkpoint key=#{state.checkpoint_key} " <>
+            "reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
 
         :ok
     end
@@ -639,7 +649,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp handle_dlq(state, signal_log_id, signal, reason, attempt_count) do
     metadata = %{
       attempt_count: attempt_count,
-      last_error: inspect(reason),
+      last_error: Error.to_map(reason),
       subscription_id: state.id,
       signal_log_id: signal_log_id
     }
@@ -664,15 +674,20 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
             }
           )
 
-          Logger.debug("Signal #{signal.id} moved to DLQ after #{attempt_count} attempts")
+          Logger.debug(fn ->
+            "Signal moved to DLQ signal_id=#{signal.id} attempts=#{attempt_count}"
+          end)
 
         {:error, dlq_error} ->
-          Logger.error("Failed to write to DLQ for signal #{signal.id}: #{inspect(dlq_error)}")
+          Logger.error(fn ->
+            "Failed to write DLQ signal_id=#{signal.id} " <>
+              "reason=#{Sanitizer.preview(dlq_error, :telemetry)}"
+          end)
       end
     else
-      Logger.warning(
-        "Signal #{signal.id} exhausted #{attempt_count} attempts but no DLQ configured"
-      )
+      Logger.warning(fn ->
+        "Signal exhausted retries without DLQ signal_id=#{signal.id} attempts=#{attempt_count}"
+      end)
     end
 
     # Remove from tracking - signal is now in DLQ (or dropped if no DLQ)

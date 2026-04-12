@@ -3,6 +3,7 @@ defmodule Jido.Signal.Bus.DispatchFlow do
 
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.Error
   alias Jido.Signal.Telemetry
 
   require Logger
@@ -87,7 +88,14 @@ defmodule Jido.Signal.Bus.DispatchFlow do
           partition_id
         )
 
-        Logger.warning("Middleware halted dispatch for signal #{signal.id}: #{inspect(reason)}")
+        normalized_error = Error.normalize(reason)
+
+        Logger.warning(fn ->
+          "Bus #{bus_name}: middleware halted dispatch signal_id=#{signal.id} " <>
+            "subscription_id=#{subscription_id} error_type=#{Error.type(normalized_error)} " <>
+            "message=#{Exception.message(normalized_error)}"
+        end)
+
         {:skip, middleware}
     end
   end
@@ -107,7 +115,7 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         signal,
         subscription_id,
         subscription,
-        %{signal: signal, subscription: subscription},
+        %{outcome: :start},
         partition_id
       )
     )
@@ -129,7 +137,7 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         signal,
         subscription_id,
         subscription,
-        %{dispatch_result: result, signal: signal, subscription: subscription},
+        after_dispatch_metadata(result),
         partition_id
       )
     )
@@ -150,7 +158,7 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         signal,
         subscription_id,
         subscription,
-        %{reason: :middleware_skip, signal: signal, subscription: subscription},
+        %{outcome: :skipped, reason: :middleware_skip},
         partition_id
       )
     )
@@ -164,6 +172,8 @@ defmodule Jido.Signal.Bus.DispatchFlow do
          reason,
          partition_id
        ) do
+    error = Error.normalize(reason)
+
     Telemetry.execute(
       [:jido, :signal, :bus, :dispatch_error],
       %{timestamp: System.monotonic_time(:microsecond)},
@@ -172,7 +182,11 @@ defmodule Jido.Signal.Bus.DispatchFlow do
         signal,
         subscription_id,
         subscription,
-        %{error: reason, signal: signal, subscription: subscription},
+        %{
+          outcome: :error,
+          error_type: Error.type(error),
+          retryable?: Error.retryable?(error)
+        },
         partition_id
       )
     )
@@ -190,6 +204,7 @@ defmodule Jido.Signal.Bus.DispatchFlow do
       Map.merge(
         %{
           bus_name: bus_name,
+          dispatch_target_kind: dispatch_target_kind(subscription.dispatch),
           signal_id: signal.id,
           signal_type: signal.type,
           subscription_id: subscription_id,
@@ -205,4 +220,19 @@ defmodule Jido.Signal.Bus.DispatchFlow do
 
   defp maybe_put_partition_id(metadata, partition_id),
     do: Map.put(metadata, :partition_id, partition_id)
+
+  defp after_dispatch_metadata(:ok), do: %{outcome: :ok}
+
+  defp after_dispatch_metadata({:error, reason}) do
+    error = Error.normalize(reason)
+
+    %{
+      outcome: :error,
+      error_type: Error.type(error),
+      retryable?: Error.retryable?(error)
+    }
+  end
+
+  defp dispatch_target_kind({adapter, _opts}) when is_atom(adapter), do: adapter
+  defp dispatch_target_kind(_dispatch), do: :unknown
 end

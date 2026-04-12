@@ -13,6 +13,7 @@ defmodule Jido.Signal.Bus.Stream do
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
   alias Jido.Signal.Router
+  alias Jido.Signal.Sanitizer
 
   require Logger
 
@@ -96,12 +97,18 @@ defmodule Jido.Signal.Bus.Stream do
         {:ok, filtered_signals}
 
       {:error, reason} ->
-        Logger.error("Invalid pattern: #{inspect(reason)}")
+        Logger.error(fn ->
+          "Invalid replay pattern reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
+
         {:error, :invalid_pattern}
     end
   rescue
     error ->
-      Logger.error("Error filtering signals: #{inspect(error)}")
+      Logger.error(fn ->
+        "Signal filtering failed reason=#{Sanitizer.preview(error, :telemetry)}"
+      end)
+
       {:error, :filter_failed}
   end
 

@@ -54,26 +54,26 @@ Jido.Signal.Dispatch.dispatch(signal, configs)
 
 ### Normalization
 
-Enable error normalization for structured error handling:
+Dispatch errors normalize through `Jido.Signal.Error` by default:
 
 ```elixir
 # config/config.exs
-config :jido, normalize_dispatch_errors: true
+config :jido_signal,
+  normalize_dispatch_errors: true,
+  default_log_level: :info
 ```
 
-Without normalization (default):
+Structured callers can serialize the public contract through `Error.to_map/1`:
 
 ```elixir
-{:error, :timeout} = Dispatch.dispatch(signal, {:http, [url: "http://down.example.com"]})
-```
+{:error, error} = Dispatch.dispatch(signal, config)
 
-With normalization:
-
-```elixir
-{:error, %Jido.Signal.Error.DispatchError{
+%{
+  type: :dispatch_error,
   message: "Signal dispatch failed",
-  details: %{adapter: :http, reason: :timeout, config: {:http, [...]}}
-}} = Dispatch.dispatch(signal, config)
+  details: %{"adapter" => "http", "reason" => "timeout"},
+  retryable?: true
+} = Jido.Signal.Error.to_map(error)
 ```
 
 ### Batch Error Handling
@@ -245,7 +245,8 @@ test "emits telemetry events" do
   Dispatch.dispatch(signal, {:noop, []})
   
   assert_receive {[:jido, :dispatch, :start], _, %{adapter: :noop}}
-  assert_receive {[:jido, :dispatch, :stop], %{latency_ms: _}, %{success?: true}}
+  assert_receive {[:jido, :dispatch, :stop], %{duration: _},
+                  %{outcome: :ok, success?: true}}
 end
 ```
 
@@ -287,11 +288,11 @@ Monitor dispatch performance:
   "dispatch-latency",
   [:jido, :dispatch, :stop],
   fn [:jido, :dispatch, :stop], measurements, metadata, _ ->
-    latency = measurements.latency_ms
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
     adapter = metadata.adapter
     
-    if latency > 1000 do
-      Logger.warning("Slow dispatch: #{adapter} took #{latency}ms")
+    if duration_ms > 1000 do
+      Logger.warning("Slow dispatch: #{adapter} took #{duration_ms}ms")
     end
   end,
   []

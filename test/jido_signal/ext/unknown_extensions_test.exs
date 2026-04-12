@@ -24,8 +24,8 @@ defmodule Jido.Signal.Ext.UnknownExtensionsTest do
           assert signal.extensions["another_unknown"] == 42
         end)
 
-      assert log =~ "Unknown extension 'custom_extension' encountered - preserving as opaque data"
-      assert log =~ "Unknown extension 'another_unknown' encountered - preserving as opaque data"
+      assert log =~ "Unknown extension namespace=custom_extension preserved_as=opaque"
+      assert log =~ "Unknown extension namespace=another_unknown preserved_as=opaque"
     end
 
     test "preserves complex unknown extension data" do
@@ -50,7 +50,7 @@ defmodule Jido.Signal.Ext.UnknownExtensionsTest do
           assert signal.extensions["complex_unknown"]["deep"]["very"]["nested"] == "value"
         end)
 
-      assert log =~ "Unknown extension 'complex_unknown' encountered - preserving as opaque data"
+      assert log =~ "Unknown extension namespace=complex_unknown preserved_as=opaque"
     end
 
     test "preserves unknown extensions through JSON serialization round-trip" do
@@ -104,7 +104,7 @@ defmodule Jido.Signal.Ext.UnknownExtensionsTest do
           assert signal.extensions["unknown_ext"] == "should_be_preserved"
         end)
 
-      assert log =~ "Unknown extension 'unknown_ext' encountered - preserving as opaque data"
+      assert log =~ "Unknown extension namespace=unknown_ext preserved_as=opaque"
     end
 
     test "handles mixed known and unknown extensions" do
@@ -127,8 +127,8 @@ defmodule Jido.Signal.Ext.UnknownExtensionsTest do
           assert signal.extensions["another_unknown"] == 42
         end)
 
-      assert log =~ "Unknown extension 'unknown_ext' encountered - preserving as opaque data"
-      assert log =~ "Unknown extension 'another_unknown' encountered - preserving as opaque data"
+      assert log =~ "Unknown extension namespace=unknown_ext preserved_as=opaque"
+      assert log =~ "Unknown extension namespace=another_unknown preserved_as=opaque"
     end
 
     test "does not treat core CloudEvents fields as unknown extensions" do

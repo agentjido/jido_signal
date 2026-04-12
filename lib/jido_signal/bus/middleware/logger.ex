@@ -41,6 +41,9 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
 
   use Jido.Signal.Bus.Middleware
 
+  alias Jido.Signal.Sanitizer
+  alias Jido.Signal.Util
+
   require Logger
 
   @type context :: Jido.Signal.Bus.Middleware.context()
@@ -49,7 +52,7 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   @impl true
   def init(opts) do
     config = %{
-      level: Keyword.get(opts, :level, :info),
+      level: Util.resolve_log_level(opts),
       log_publish: Keyword.get(opts, :log_publish, true),
       log_dispatch: Keyword.get(opts, :log_dispatch, true),
       log_errors: Keyword.get(opts, :log_errors, true),
@@ -76,7 +79,11 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
 
     Logger.log(
       config.level,
-      "Bus #{context.bus_name}: Publishing #{signal_count} signal(s) of types: #{inspect(signal_types)} [#{context.timestamp}]"
+      fn ->
+        "Bus #{context.bus_name}: publishing #{signal_count} signal(s) types=#{inspect(signal_types)}"
+      end,
+      bus_name: context.bus_name,
+      signal_count: signal_count
     )
   end
 
@@ -89,11 +96,14 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   end
 
   defp log_single_signal_data(signal, config) do
-    data_preview = format_signal_data(signal.data, config.max_data_length)
-
     Logger.log(
       config.level,
-      "Signal #{signal.id} (#{signal.type}) from #{signal.source}: #{data_preview}"
+      fn ->
+        "signal payload id=#{signal.id} type=#{signal.type} source=#{signal.source} " <>
+          "data=#{format_signal_data(signal.data, config.max_data_length)}"
+      end,
+      signal_id: signal.id,
+      signal_type: signal.type
     )
   end
 
@@ -104,7 +114,11 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
 
       Logger.log(
         config.level,
-        "Bus #{context.bus_name}: Successfully published #{signal_count} signal(s) [#{context.timestamp}]"
+        fn ->
+          "Bus #{context.bus_name}: published #{signal_count} signal(s)"
+        end,
+        bus_name: context.bus_name,
+        signal_count: signal_count
       )
     end
 
@@ -118,7 +132,14 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
 
       Logger.log(
         config.level,
-        "Bus #{context.bus_name}: Dispatching signal #{signal.id} (#{signal.type}) to #{dispatch_info} via #{subscriber.path} [#{context.timestamp}]"
+        fn ->
+          "Bus #{context.bus_name}: dispatching signal id=#{signal.id} type=#{signal.type} " <>
+            "subscription=#{subscriber.id} path=#{subscriber.path} dispatch=#{dispatch_info}"
+        end,
+        bus_name: context.bus_name,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        subscription_id: subscriber.id
       )
     end
 
@@ -134,7 +155,14 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
 
           Logger.log(
             config.level,
-            "Bus #{context.bus_name}: Successfully dispatched signal #{signal.id} (#{signal.type}) to #{dispatch_info} via #{subscriber.path} [#{context.timestamp}]"
+            fn ->
+              "Bus #{context.bus_name}: dispatched signal id=#{signal.id} type=#{signal.type} " <>
+                "subscription=#{subscriber.id} path=#{subscriber.path} dispatch=#{dispatch_info}"
+            end,
+            bus_name: context.bus_name,
+            signal_id: signal.id,
+            signal_type: signal.type,
+            subscription_id: subscriber.id
           )
         end
 
@@ -142,9 +170,16 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
         if config.log_errors do
           dispatch_info = format_dispatch_info(subscriber.dispatch)
 
-          Logger.log(
-            :error,
-            "Bus #{context.bus_name}: Failed to dispatch signal #{signal.id} (#{signal.type}) to #{dispatch_info} via #{subscriber.path}: #{inspect(reason)} [#{context.timestamp}]"
+          Logger.error(
+            fn ->
+              "Bus #{context.bus_name}: failed dispatch signal id=#{signal.id} type=#{signal.type} " <>
+                "subscription=#{subscriber.id} path=#{subscriber.path} dispatch=#{dispatch_info} " <>
+                "reason=#{Sanitizer.preview(reason, :telemetry, max_length: config.max_data_length)}"
+            end,
+            bus_name: context.bus_name,
+            signal_id: signal.id,
+            signal_type: signal.type,
+            subscription_id: subscriber.id
           )
         end
     end
@@ -157,21 +192,11 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   defp format_signal_data(nil, _max_length), do: "nil"
 
   defp format_signal_data(data, max_length) when is_binary(data) do
-    if String.length(data) > max_length do
-      String.slice(data, 0, max_length) <> "..."
-    else
-      data
-    end
+    Sanitizer.preview(data, :telemetry, max_length: max_length)
   end
 
   defp format_signal_data(data, max_length) do
-    formatted = inspect(data, limit: :infinity, printable_limit: :infinity)
-
-    if String.length(formatted) > max_length do
-      String.slice(formatted, 0, max_length) <> "..."
-    else
-      formatted
-    end
+    Sanitizer.preview(data, :telemetry, max_length: max_length)
   end
 
   defp format_dispatch_info({:pid, opts}) do

@@ -20,6 +20,8 @@ defmodule Jido.Signal.Util do
 
   alias Jido.Signal.Names
 
+  require Logger
+
   @type server :: pid() | atom() | binary() | {name :: atom() | binary(), registry :: module()}
 
   @doc """
@@ -127,4 +129,49 @@ defmodule Jido.Signal.Util do
       [] -> {:error, :not_found}
     end
   end
+
+  @doc """
+  Returns the package-default execution log level.
+  """
+  @spec default_log_level() :: Logger.level()
+  def default_log_level do
+    Application.get_env(:jido_signal, :default_log_level, :info)
+    |> normalize_log_level(:info)
+  end
+
+  @doc """
+  Resolves a per-call execution log level with package defaults.
+
+  Precedence:
+    1. `opts[:log_level]`
+    2. `opts[:level]` (legacy compatibility)
+    3. `config :jido_signal, default_log_level: ...`
+    4. built-in `:info`
+  """
+  @spec resolve_log_level(keyword()) :: Logger.level()
+  def resolve_log_level(opts \\ []) when is_list(opts) do
+    opts
+    |> Keyword.get(:log_level, Keyword.get(opts, :level, default_log_level()))
+    |> normalize_log_level(default_log_level())
+  end
+
+  @doc """
+  Conditionally emits a log message based on a threshold level.
+  """
+  @spec cond_log(Logger.level(), Logger.level(), Logger.message(), keyword()) :: :ok
+  def cond_log(threshold_level, message_level, message, metadata \\ []) do
+    threshold_level = normalize_log_level(threshold_level, default_log_level())
+    message_level = normalize_log_level(message_level, :info)
+
+    if Logger.compare_levels(threshold_level, message_level) in [:lt, :eq] do
+      Logger.log(message_level, message, metadata)
+    else
+      :ok
+    end
+  end
+
+  defp normalize_log_level(level, _fallback) when level in [:debug, :info, :warning, :error],
+    do: level
+
+  defp normalize_log_level(_level, fallback), do: fallback
 end

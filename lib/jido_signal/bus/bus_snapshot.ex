@@ -41,6 +41,7 @@ defmodule Jido.Signal.Bus.Snapshot do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
   alias Jido.Signal.ID
+  alias Jido.Signal.Sanitizer
 
   require Logger
 
@@ -176,12 +177,15 @@ defmodule Jido.Signal.Bus.Snapshot do
         {:ok, snapshot_ref, new_state}
 
       {:error, reason} ->
-        Logger.warning("Failed to create snapshot: #{inspect(reason)}")
+        Logger.warning(fn ->
+          "Failed to create snapshot reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
+
         {:error, reason}
     end
   rescue
     error ->
-      Logger.error("Error creating snapshot: #{Exception.message(error)}")
+      Logger.error(fn -> "Snapshot creation failed message=#{Exception.message(error)}" end)
       {:error, :snapshot_creation_failed}
   end
 
@@ -225,12 +229,12 @@ defmodule Jido.Signal.Bus.Snapshot do
       {:ok, data}
     else
       :error ->
-        Logger.debug("Snapshot not found: #{snapshot_id}")
+        Logger.debug(fn -> "Snapshot not found id=#{snapshot_id}" end)
         {:error, :not_found}
     end
   rescue
     error ->
-      Logger.error("Error reading snapshot: #{Exception.message(error)}")
+      Logger.error(fn -> "Snapshot read failed message=#{Exception.message(error)}" end)
       {:error, :snapshot_read_failed}
   end
 
@@ -259,12 +263,12 @@ defmodule Jido.Signal.Bus.Snapshot do
         {:ok, new_state}
 
       false ->
-        Logger.debug("Cannot delete snapshot: not found #{snapshot_id}")
+        Logger.debug(fn -> "Snapshot delete skipped id=#{snapshot_id} not_found=true" end)
         {:error, :not_found}
     end
   rescue
     error ->
-      Logger.error("Error deleting snapshot: #{Exception.message(error)}")
+      Logger.error(fn -> "Snapshot delete failed message=#{Exception.message(error)}" end)
       {:error, :snapshot_deletion_failed}
   end
 
@@ -288,7 +292,7 @@ defmodule Jido.Signal.Bus.Snapshot do
     {:ok, %{state | snapshots: %{}}}
   rescue
     error ->
-      Logger.error("Error cleaning up snapshots: #{Exception.message(error)}")
+      Logger.error(fn -> "Snapshot cleanup failed message=#{Exception.message(error)}" end)
       {:error, :snapshot_cleanup_failed}
   end
 
@@ -325,7 +329,10 @@ defmodule Jido.Signal.Bus.Snapshot do
     {:ok, %{state | snapshots: new_snapshots}}
   rescue
     error ->
-      Logger.error("Error cleaning up snapshots with filter: #{Exception.message(error)}")
+      Logger.error(fn ->
+        "Snapshot filtered cleanup failed message=#{Exception.message(error)}"
+      end)
+
       {:error, :snapshot_cleanup_failed}
   end
 

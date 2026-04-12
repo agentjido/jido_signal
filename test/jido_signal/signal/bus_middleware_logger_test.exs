@@ -76,7 +76,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
-      assert log =~ "Bus test_bus: Publishing 2 signal(s)"
+      assert log =~ "Bus test_bus: publishing 2 signal(s)"
       assert log =~ "test.signal"
       assert log =~ "another.signal"
     end
@@ -104,7 +104,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
           LoggerMiddleware.before_publish(signals, context, config)
         end)
 
-      assert log =~ "Signal signal-1 (test.signal)"
+      assert log =~ "signal payload id=signal-1 type=test.signal"
       assert log =~ "%{message: \"test message\", value: 1}"
     end
 
@@ -172,7 +172,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
           LoggerMiddleware.after_publish(signals, context, config)
         end)
 
-      assert log =~ "Bus test_bus: Successfully published 1 signal(s)"
+      assert log =~ "Bus test_bus: published 1 signal(s)"
     end
 
     test "does not log when log_publish is disabled", %{context: context, signals: signals} do
@@ -225,7 +225,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
           LoggerMiddleware.before_dispatch(signal, subscriber, context, config)
         end)
 
-      assert log =~ "Bus test_bus: Dispatching signal signal-1 (test.signal)"
+      assert log =~ "Bus test_bus: dispatching signal id=signal-1 type=test.signal"
       assert log =~ "pid(#{inspect(self())}, async)"
     end
 
@@ -292,7 +292,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
           LoggerMiddleware.after_dispatch(signal, subscriber, :ok, context, config)
         end)
 
-      assert log =~ "Bus test_bus: Successfully dispatched signal signal-1"
+      assert log =~ "Bus test_bus: dispatched signal id=signal-1 type=test.signal"
       assert log =~ "pid(#{inspect(self())}, async)"
     end
 
@@ -315,7 +315,7 @@ defmodule JidoTest.Signal.Bus.Middleware.Logger do
         end)
 
       assert log =~ "[error]"
-      assert log =~ "Bus test_bus: Failed to dispatch signal signal-1"
+      assert log =~ "Bus test_bus: failed dispatch signal id=signal-1 type=test.signal"
       assert log =~ ":timeout"
     end
 

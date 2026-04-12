@@ -15,7 +15,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
   # Test with error normalization enabled per test
 
   test "dispatch normalizes errors to Jido.Signal.Error when enabled" do
-    Application.put_env(:jido, :normalize_dispatch_errors, true)
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
 
     # Use PID adapter with dead process
@@ -32,11 +32,11 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert Exception.message(error) =~ "Signal dispatch failed"
 
     # Clean up
-    Application.delete_env(:jido, :normalize_dispatch_errors)
+    Application.delete_env(:jido_signal, :normalize_dispatch_errors)
   end
 
   test "dispatch_batch normalizes errors when enabled" do
-    Application.put_env(:jido, :normalize_dispatch_errors, true)
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
 
     configs = [
@@ -54,7 +54,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert Exception.message(error) =~ "Signal dispatch failed"
 
     # Clean up
-    Application.delete_env(:jido, :normalize_dispatch_errors)
+    Application.delete_env(:jido_signal, :normalize_dispatch_errors)
   end
 
   test "telemetry events are emitted with correct metadata" do
@@ -69,8 +69,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
       handler_id,
       [
         [:jido, :dispatch, :start],
-        [:jido, :dispatch, :stop],
-        [:jido, :dispatch, :exception]
+        [:jido, :dispatch, :stop]
       ],
       &__MODULE__.handle_telemetry_event/4,
       nil
@@ -86,11 +85,13 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
     assert metadata.adapter == :noop
     assert metadata.signal_type == "test.event"
-    assert metadata.target == :unknown
+    assert metadata.target_kind == :unknown
+    assert metadata.runtime_surface == :dispatch
 
     assert_receive {:telemetry, [:jido, :dispatch, :stop], measurements, metadata}
-    assert Map.has_key?(measurements, :latency_ms)
+    assert Map.has_key?(measurements, :duration)
     assert metadata.success? == true
+    assert metadata.outcome == :ok
 
     # Failed dispatch
     {:ok, pid} = Agent.start(fn -> :ok end)
@@ -99,11 +100,14 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
 
     {:error, _} = Dispatch.dispatch(signal, config)
 
-    # Should receive start and exception events
+    # Should receive start and stop events with handled error metadata
     assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, _}
-    assert_receive {:telemetry, [:jido, :dispatch, :exception], measurements, metadata}
-    assert Map.has_key?(measurements, :latency_ms)
+    assert_receive {:telemetry, [:jido, :dispatch, :stop], measurements, metadata}
+    assert Map.has_key?(measurements, :duration)
     assert metadata.success? == false
+    assert metadata.outcome == :error
+    assert metadata.error_type == :dispatch_error
+    assert metadata.retryable? == false
 
     :telemetry.detach(handler_id)
   end

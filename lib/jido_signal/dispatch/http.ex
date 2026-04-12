@@ -51,6 +51,8 @@ defmodule Jido.Signal.Dispatch.Http do
   @behaviour Jido.Signal.Dispatch.Adapter
 
   alias Jido.Signal.Dispatch.CircuitBreaker
+  alias Jido.Signal.Sanitizer
+  alias Jido.Signal.Util
 
   require Logger
 
@@ -233,11 +235,19 @@ defmodule Jido.Signal.Dispatch.Http do
       {:error, reason} = error ->
         if should_retry?(attempt, retry_config) do
           delay = calculate_delay(attempt, retry_config)
-          Logger.warning("HTTP request failed, retrying in #{delay}ms: #{inspect(reason)}")
+
+          Util.cond_log(Util.default_log_level(), :info, fn ->
+            "HTTP dispatch retry attempt=#{attempt} delay_ms=#{delay} " <>
+              "reason=#{Sanitizer.preview(reason, :telemetry)}"
+          end)
+
           Process.sleep(delay)
           do_request_with_retry(method, url, headers, body, timeout, retry_config, attempt + 1)
         else
-          Logger.error("HTTP request failed after #{attempt} attempts: #{inspect(reason)}")
+          Util.cond_log(Util.default_log_level(), :error, fn ->
+            "HTTP dispatch failed attempts=#{attempt} reason=#{Sanitizer.preview(reason, :telemetry)}"
+          end)
+
           error
         end
     end

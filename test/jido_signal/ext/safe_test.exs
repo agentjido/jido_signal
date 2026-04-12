@@ -59,7 +59,7 @@ defmodule Jido.Signal.Ext.SafeTest do
                  Ext.safe_validate_data(CrashingExtension, %{})
       end)
 
-    assert log =~ "crashed: Boom! Extension crashed"
+    assert log =~ "crashed message=Boom! Extension crashed"
   end
 
   test "catches and logs throws from to_attrs" do
@@ -71,7 +71,7 @@ defmodule Jido.Signal.Ext.SafeTest do
                  Ext.safe_to_attrs(CrashingExtension, %{})
       end)
 
-    assert log =~ "threw: :oops"
+    assert log =~ "threw reason=:oops"
   end
 
   test "catches and logs exits from from_attrs" do
@@ -83,6 +83,6 @@ defmodule Jido.Signal.Ext.SafeTest do
                  Ext.safe_from_attrs(CrashingExtension, %{})
       end)
 
-    assert log =~ "exited: :normal"
+    assert log =~ "exited reason=:normal"
   end
 end
