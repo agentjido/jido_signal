@@ -5,11 +5,11 @@ defmodule Jido.Signal.DispatchTest do
 
   setup do
     # Enable error normalization for all tests
-    Application.put_env(:jido, :normalize_dispatch_errors, true)
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
 
     on_exit(fn ->
       # Reset to default after tests
-      Application.delete_env(:jido, :normalize_dispatch_errors)
+      Application.delete_env(:jido_signal, :normalize_dispatch_errors)
     end)
 
     :ok

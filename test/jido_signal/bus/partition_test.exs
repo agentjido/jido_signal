@@ -595,7 +595,9 @@ defmodule JidoTest.Signal.Bus.PartitionTest do
         assert_receive {:dispatch_event, [:jido, :signal, :bus, :dispatch_error], _, metadata},
                        1000
 
-        assert metadata.error == :forced_halt
+        assert metadata.outcome == :error
+        assert metadata.error_type == :internal_error
+        assert metadata.retryable? == false
       end)
     end
   end

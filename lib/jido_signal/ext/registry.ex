@@ -69,6 +69,8 @@ defmodule Jido.Signal.Ext.Registry do
 
   require Logger
 
+  alias Jido.Signal.Sanitizer
+
   @registry_name __MODULE__
   @pending_key {__MODULE__, :pending_registrations}
   @pending_lock_key {__MODULE__, :pending_lock}
@@ -143,12 +145,12 @@ defmodule Jido.Signal.Ext.Registry do
     catch
       :exit, {:noproc, _} ->
         enqueue_pending_registration(module)
-        Logger.debug("Extension registry not started, queued registration of #{module}")
+        Logger.debug(fn -> "Extension registry unavailable queued module=#{inspect(module)}" end)
         :ok
 
       :exit, {:timeout, _} ->
         enqueue_pending_registration(module)
-        Logger.debug("Extension registry timeout, queued registration of #{module}")
+        Logger.debug(fn -> "Extension registry timeout queued module=#{inspect(module)}" end)
         :ok
     end
   end
@@ -295,7 +297,11 @@ defmodule Jido.Signal.Ext.Registry do
 
   # Fallback for testing when the registry is not started
   def handle_call(request, from, state) do
-    Logger.warning("Unhandled registry call: #{inspect(request)} from #{inspect(from)}")
+    Logger.warning(fn ->
+      "Unhandled registry call request=#{Sanitizer.preview(request, :telemetry)} " <>
+        "from=#{Sanitizer.preview(from, :telemetry)}"
+    end)
+
     {:reply, {:error, :unknown_request}, state}
   end
 
@@ -310,9 +316,10 @@ defmodule Jido.Signal.Ext.Registry do
 
       existing_module ->
         # Different module trying to register same namespace.
-        Logger.warning(
-          "Extension namespace '#{namespace}' already registered by #{existing_module}, ignoring registration of #{module}"
-        )
+        Logger.warning(fn ->
+          "Extension namespace=#{namespace} already registered by=#{inspect(existing_module)} " <>
+            "ignoring=#{inspect(module)}"
+        end)
 
         state
     end

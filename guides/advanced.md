@@ -54,26 +54,29 @@ Jido.Signal.Dispatch.dispatch(signal, configs)
 
 ### Normalization
 
-Enable error normalization for structured error handling:
+Dispatch errors can normalize through `Jido.Signal.Error` when you opt in:
 
 ```elixir
 # config/config.exs
-config :jido, normalize_dispatch_errors: true
+config :jido_signal,
+  default_log_level: :info
+
+# Compatibility transition: normalized dispatch errors remain opt-in.
+config :jido_signal,
+  normalize_dispatch_errors: true
 ```
 
-Without normalization (default):
+Structured callers can serialize the public contract through `Error.to_map/1`:
 
 ```elixir
-{:error, :timeout} = Dispatch.dispatch(signal, {:http, [url: "http://down.example.com"]})
-```
+{:error, error} = Dispatch.dispatch(signal, config)
 
-With normalization:
-
-```elixir
-{:error, %Jido.Signal.Error.DispatchError{
+%{
+  type: :dispatch_error,
   message: "Signal dispatch failed",
-  details: %{adapter: :http, reason: :timeout, config: {:http, [...]}}
-}} = Dispatch.dispatch(signal, config)
+  details: %{"adapter" => "http", "reason" => "timeout"},
+  retryable?: true
+} = Jido.Signal.Error.to_map(error)
 ```
 
 ### Batch Error Handling
@@ -245,7 +248,8 @@ test "emits telemetry events" do
   Dispatch.dispatch(signal, {:noop, []})
   
   assert_receive {[:jido, :dispatch, :start], _, %{adapter: :noop}}
-  assert_receive {[:jido, :dispatch, :stop], %{latency_ms: _}, %{success?: true}}
+  assert_receive {[:jido, :dispatch, :stop], %{latency_ms: _},
+                  %{outcome: :ok, success?: true}}
 end
 ```
 
@@ -287,11 +291,11 @@ Monitor dispatch performance:
   "dispatch-latency",
   [:jido, :dispatch, :stop],
   fn [:jido, :dispatch, :stop], measurements, metadata, _ ->
-    latency = measurements.latency_ms
+    duration_ms = measurements.latency_ms
     adapter = metadata.adapter
     
-    if latency > 1000 do
-      Logger.warning("Slow dispatch: #{adapter} took #{latency}ms")
+    if duration_ms > 1000 do
+      Logger.warning("Slow dispatch: #{adapter} took #{duration_ms}ms")
     end
   end,
   []

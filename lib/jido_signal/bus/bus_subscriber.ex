@@ -12,6 +12,7 @@ defmodule Jido.Signal.Bus.Subscriber do
   alias Jido.Signal.Error
   alias Jido.Signal.Names
   alias Jido.Signal.Router
+  alias Jido.Signal.Sanitizer
 
   require Logger
 
@@ -214,7 +215,10 @@ defmodule Jido.Signal.Bus.Subscriber do
           :ok
 
         {:error, reason} ->
-          Logger.warning("Failed to delete checkpoint for #{checkpoint_key}: #{inspect(reason)}")
+          Logger.warning(fn ->
+            "Failed to delete checkpoint key=#{checkpoint_key} " <>
+              "reason=#{Sanitizer.preview(reason, :telemetry)}"
+          end)
       end
 
       case state.journal_adapter.clear_dlq(subscription_id, state.journal_pid) do
@@ -222,9 +226,10 @@ defmodule Jido.Signal.Bus.Subscriber do
           :ok
 
         {:error, reason} ->
-          Logger.warning(
-            "Failed to clear DLQ for subscription #{subscription_id}: #{inspect(reason)}"
-          )
+          Logger.warning(fn ->
+            "Failed to clear DLQ subscription_id=#{subscription_id} " <>
+              "reason=#{Sanitizer.preview(reason, :telemetry)}"
+          end)
       end
     end
   end

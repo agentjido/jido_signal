@@ -67,6 +67,7 @@ defmodule Jido.Signal.Ext do
   """
 
   alias Jido.Signal.Error
+  alias Jido.Signal.Sanitizer
 
   require Logger
 
@@ -266,28 +267,34 @@ defmodule Jido.Signal.Ext do
     {:ok, apply(mod, fun, args)}
   rescue
     e ->
-      Logger.warning(
-        "Extension #{inspect(mod)}.#{fun}/#{length(args)} crashed: #{Exception.message(e)}"
-      )
+      Logger.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} crashed " <>
+          "message=#{Exception.message(e)}"
+      end)
 
       {:error, e}
   catch
     :exit, reason ->
-      Logger.warning(
-        "Extension #{inspect(mod)}.#{fun}/#{length(args)} exited: #{inspect(reason)}"
-      )
+      Logger.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} exited " <>
+          "reason=#{Sanitizer.preview(reason, :telemetry)}"
+      end)
 
       {:error, reason}
 
     :throw, reason ->
-      Logger.warning("Extension #{inspect(mod)}.#{fun}/#{length(args)} threw: #{inspect(reason)}")
+      Logger.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} threw " <>
+          "reason=#{Sanitizer.preview(reason, :telemetry)}"
+      end)
 
       {:error, reason}
 
     kind, reason ->
-      Logger.warning(
-        "Extension #{inspect(mod)}.#{fun}/#{length(args)} failed with #{kind}: #{inspect(reason)}"
-      )
+      Logger.warning(fn ->
+        "Extension #{inspect(mod)}.#{fun}/#{length(args)} failed kind=#{kind} " <>
+          "reason=#{Sanitizer.preview(reason, :telemetry)}"
+      end)
 
       {:error, {kind, reason}}
   end

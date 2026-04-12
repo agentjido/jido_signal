@@ -2,8 +2,8 @@ defmodule Jido.Signal.BusSpy do
   @moduledoc """
   A test utility for observing signals crossing process boundaries via telemetry events.
 
-  The BusSpy allows test processes to capture the exact signals that travel across
-  process boundaries through the Signal Bus without interfering with normal signal
+  The BusSpy allows test processes to capture signals that travel across process
+  boundaries through the Signal Bus without interfering with normal signal
   delivery. It integrates cleanly with existing cross-process test infrastructure.
 
   ## Usage
@@ -45,7 +45,8 @@ defmodule Jido.Signal.BusSpy do
   - `[:jido, :signal, :bus, :dispatch_skipped]` - When middleware skips dispatch
   - `[:jido, :signal, :bus, :dispatch_error]` - When dispatch fails
 
-  Each event includes full signal and subscription metadata for test verification.
+  The spy prefers full signal and subscription metadata from telemetry when
+  available and falls back to bounded metadata if needed.
   """
 
   use GenServer
@@ -219,9 +220,19 @@ defmodule Jido.Signal.BusSpy do
       subscription_id: Map.get(metadata, :subscription_id),
       subscription_path: Map.get(metadata, :subscription_path),
       signal: Map.get(metadata, :signal),
-      subscription: Map.get(metadata, :subscription),
-      dispatch_result: Map.get(metadata, :dispatch_result),
-      error: Map.get(metadata, :error),
+      subscription:
+        Map.get(
+          metadata,
+          :subscription,
+          %{
+            id: Map.get(metadata, :subscription_id),
+            path: Map.get(metadata, :subscription_path),
+            dispatch_target_kind: Map.get(metadata, :dispatch_target_kind)
+          }
+        ),
+      dispatch_result:
+        Map.get(metadata, :dispatch_result, dispatch_result_from_metadata(metadata)),
+      error: Map.get(metadata, :error, Map.get(metadata, :error_type)),
       reason: Map.get(metadata, :reason)
     }
 
@@ -320,4 +331,12 @@ defmodule Jido.Signal.BusSpy do
         false
     end
   end
+
+  defp dispatch_result_from_metadata(%{outcome: :ok}), do: :ok
+
+  defp dispatch_result_from_metadata(%{outcome: :error, error_type: error_type}) do
+    {:error, error_type}
+  end
+
+  defp dispatch_result_from_metadata(_metadata), do: nil
 end

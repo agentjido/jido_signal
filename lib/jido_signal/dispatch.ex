@@ -146,7 +146,11 @@ defmodule Jido.Signal.Dispatch do
                                       :dispatch_max_concurrency,
                                       8
                                     )
-  @normalize_errors_compile_time Application.compile_env(:jido, :normalize_dispatch_errors, false)
+  @normalize_errors_compile_time Application.compile_env(
+                                   :jido,
+                                   :normalize_dispatch_errors,
+                                   false
+                                 )
 
   @builtin_adapters %{
     pid: Jido.Signal.Dispatch.PidAdapter,
@@ -546,19 +550,11 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp should_normalize_errors? do
-    @normalize_errors_compile_time or
-      Application.get_env(:jido, :normalize_dispatch_errors, false)
-  end
-
-  defp get_target_from_opts(opts) do
-    cond do
-      target = Keyword.get(opts, :target) -> target
-      url = Keyword.get(opts, :url) -> url
-      pid = Keyword.get(opts, :pid) -> pid
-      name = Keyword.get(opts, :name) -> name
-      topic = Keyword.get(opts, :topic) -> topic
-      true -> :unknown
-    end
+    Application.get_env(
+      :jido_signal,
+      :normalize_dispatch_errors,
+      Application.get_env(:jido, :normalize_dispatch_errors, @normalize_errors_compile_time)
+    )
   end
 
   defp validate_single_config({nil, opts}) when is_list(opts) do
@@ -585,34 +581,25 @@ defmodule Jido.Signal.Dispatch do
 
   defp dispatch_single(signal, {adapter, opts}) do
     start_time = System.monotonic_time(:millisecond)
-
-    signal_type =
-      case signal do
-        %{type: type} -> type
-        _ -> :unknown
-      end
-
-    metadata = %{
-      adapter: adapter,
-      signal_type: signal_type,
-      target: get_target_from_opts(opts)
-    }
+    metadata = dispatch_telemetry_metadata(signal, adapter, opts)
 
     Telemetry.execute([:jido, :dispatch, :start], %{}, metadata)
 
     result = do_dispatch_single(signal, {adapter, opts})
+    measurements = %{latency_ms: System.monotonic_time(:millisecond) - start_time}
 
-    end_time = System.monotonic_time(:millisecond)
-    latency_ms = end_time - start_time
-    success = match?(:ok, result)
-
-    measurements = %{latency_ms: latency_ms}
-    metadata = Map.put(metadata, :success?, success)
-
-    if success do
-      Telemetry.execute([:jido, :dispatch, :stop], measurements, metadata)
+    if match?(:ok, result) do
+      Telemetry.execute(
+        [:jido, :dispatch, :stop],
+        measurements,
+        dispatch_success_metadata(metadata)
+      )
     else
-      Telemetry.execute([:jido, :dispatch, :exception], measurements, metadata)
+      Telemetry.execute(
+        [:jido, :dispatch, :exception],
+        measurements,
+        dispatch_failure_metadata(metadata, result, adapter, opts)
+      )
     end
 
     result
@@ -650,6 +637,70 @@ defmodule Jido.Signal.Dispatch do
       :ok -> :ok
       {:error, reason} -> normalize_error(reason, adapter, {adapter, opts})
     end
+  end
+
+  defp dispatch_telemetry_metadata(signal, adapter, opts) do
+    %{
+      adapter: adapter,
+      runtime_surface: :dispatch,
+      signal_type: signal_type(signal),
+      target: get_target_from_opts(opts),
+      target_kind: target_kind(opts)
+    }
+  end
+
+  defp dispatch_success_metadata(metadata),
+    do: Map.merge(metadata, %{outcome: :ok, success?: true})
+
+  defp dispatch_failure_metadata(metadata, {:error, reason}, adapter, opts) do
+    error = dispatch_error_for_telemetry(reason, adapter, {adapter, opts})
+
+    Map.merge(metadata, %{
+      outcome: :error,
+      retry_count: 0,
+      success?: false,
+      error_type: Error.type(error),
+      retryable?: Error.retryable?(error)
+    })
+  end
+
+  defp dispatch_failure_metadata(metadata, _result, _adapter, _opts),
+    do: Map.merge(metadata, %{outcome: :error, success?: false})
+
+  defp signal_type(%{type: type}) when is_binary(type), do: type
+  defp signal_type(_signal), do: :unknown
+
+  defp get_target_from_opts(opts) do
+    cond do
+      target = Keyword.get(opts, :target) -> target
+      url = Keyword.get(opts, :url) -> url
+      pid = Keyword.get(opts, :pid) -> pid
+      name = Keyword.get(opts, :name) -> name
+      topic = Keyword.get(opts, :topic) -> topic
+      true -> :unknown
+    end
+  end
+
+  defp target_kind(opts) do
+    cond do
+      Keyword.has_key?(opts, :url) -> :url
+      Keyword.has_key?(opts, :topic) -> :topic
+      Keyword.has_key?(opts, :pid) -> :pid
+      match?({:name, _}, Keyword.get(opts, :target)) -> :name
+      is_pid(Keyword.get(opts, :target)) -> :pid
+      Keyword.has_key?(opts, :target) -> :target
+      true -> :unknown
+    end
+  end
+
+  defp dispatch_error_for_telemetry(%Error.DispatchError{} = error, _adapter, _config), do: error
+
+  defp dispatch_error_for_telemetry(reason, adapter, config) do
+    Error.dispatch_error("Signal dispatch failed", %{
+      adapter: adapter,
+      reason: reason,
+      config: config
+    })
   end
 
   defp resolve_adapter(nil), do: {:ok, nil}

@@ -365,6 +365,31 @@ middleware = [
 
 Middleware callbacks (`before_publish`, `after_publish`, `before_dispatch`, `after_dispatch`) are executed with timeout protection (default 100ms, configurable via `middleware_timeout_ms`). Slow middleware is terminated and the operation continues. See `Jido.Signal.Bus.Middleware.Logger` for a complete implementation example.
 
+### Observability
+
+Dispatch telemetry keeps the legacy `[:jido, :dispatch, :start|:stop|:exception]`
+events with bounded metadata, and package execution logging defaults to
+`config :jido_signal, default_log_level: :info`.
+
+```elixir
+config :jido_signal,
+  default_log_level: :info
+
+# Opt in to normalized dispatch errors during the compatibility transition.
+config :jido_signal,
+  normalize_dispatch_errors: true
+
+{:error, error} = Jido.Signal.Dispatch.dispatch(signal, {:http, [url: "https://down.example.com"]})
+
+Jido.Signal.Error.to_map(error)
+# => %{
+# =>   type: :dispatch_error,
+# =>   message: "Signal dispatch failed",
+# =>   details: %{"adapter" => "http", "reason" => "timeout"},
+# =>   retryable?: true
+# => }
+```
+
 ### Causality Tracking
 
 Track signal relationships for complete system observability:

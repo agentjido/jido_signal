@@ -62,6 +62,9 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Sanitizer
+  alias Jido.Signal.Util
+
   require Logger
 
   @valid_levels [:debug, :info, :warning, :error]
@@ -86,71 +89,72 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, String.t()}
   def validate_opts(opts) do
-    level = Keyword.get(opts, :level, :info)
+    raw_level = Keyword.get(opts, :log_level, Keyword.get(opts, :level, :info))
+    structured = Keyword.get(opts, :structured, false)
+    include_data = Keyword.get(opts, :include_data, true)
 
-    if level in @valid_levels do
-      {:ok, opts}
-    else
-      {:error, "Invalid log level: #{inspect(level)}. Must be one of #{inspect(@valid_levels)}"}
+    cond do
+      raw_level not in @valid_levels ->
+        {:error,
+         "Invalid log level: #{inspect(raw_level)}. Must be one of #{inspect(@valid_levels)}"}
+
+      not is_boolean(structured) ->
+        {:error, "structured must be a boolean"}
+
+      not is_boolean(include_data) ->
+        {:error, "include_data must be a boolean"}
+
+      true ->
+        {:ok, opts}
     end
   end
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
   Logs a signal using the configured format and level.
-
-  ## Parameters
-
-  * `signal` - The signal to log
-  * `opts` - Validated options from `validate_opts/1`
-
-  ## Options
-
-  * `:level` - (optional) The log level to use, defaults to `:info`
-  * `:structured` - (optional) Whether to use structured format, defaults to `false`
-
-  ## Returns
-
-  * `:ok` - Signal was logged successfully
-
-  ## Examples
-
-      iex> signal = %Jido.Signal{type: "user:created", data: %{id: 123}}
-      iex> LoggerAdapter.deliver(signal, [level: :info])
-      :ok
-      # Logs: "Signal dispatched: user:created from source with data=%{id: 123}"
-
-      iex> LoggerAdapter.deliver(signal, [level: :info, structured: true])
-      :ok
-      # Logs structured map with event details
   """
   @spec deliver(Jido.Signal.t(), Keyword.t()) :: :ok
   def deliver(signal, opts) do
-    level = Keyword.get(opts, :level, :info)
+    level = Keyword.get(opts, :log_level, Util.resolve_log_level(opts))
     structured = Keyword.get(opts, :structured, false)
+    include_data = Keyword.get(opts, :include_data, true)
 
-    if structured do
-      Logger.log(
-        level,
-        fn ->
-          %{
-            event: "signal_dispatched",
-            id: signal.id,
-            type: signal.type,
-            data: signal.data,
-            source: signal.source
-          }
-        end,
-        []
-      )
-    else
-      Logger.log(
-        level,
-        "SIGNAL: #{signal.type} from #{signal.source} with data=#{inspect(signal.data)}",
-        []
-      )
-    end
+    Logger.log(
+      level,
+      fn ->
+        if structured do
+          structured_payload(signal, include_data)
+        else
+          build_log_message(signal, include_data)
+        end
+      end,
+      []
+    )
 
     :ok
+  end
+
+  defp structured_payload(signal, include_data) do
+    payload = %{
+      event: "signal_dispatched",
+      id: signal.id,
+      type: signal.type,
+      source: signal.source
+    }
+
+    if include_data do
+      Map.put(payload, :data, Sanitizer.sanitize(signal.data, :telemetry))
+    else
+      payload
+    end
+  end
+
+  defp build_log_message(signal, false) do
+    "SIGNAL: #{signal.type} from #{signal.source}"
+  end
+
+  defp build_log_message(signal, true) do
+    "SIGNAL: #{signal.type} from #{signal.source} " <>
+      "with data=#{Sanitizer.preview(signal.data, :telemetry)}"
   end
 end
