@@ -59,6 +59,12 @@ defmodule Jido.Signal.Telemetry do
   defp normalize_metadata(metadata) do
     TraceContext.to_telemetry_metadata()
     |> Map.merge(metadata)
+    |> drop_nil_entries()
     |> Sanitizer.sanitize(:telemetry)
+  end
+
+  defp drop_nil_entries(metadata) do
+    Enum.reject(metadata, fn {_key, value} -> is_nil(value) end)
+    |> Enum.into(%{})
   end
 end

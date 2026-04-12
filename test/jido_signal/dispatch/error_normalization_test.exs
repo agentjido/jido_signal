@@ -12,6 +12,28 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     send(test_pid, {:telemetry, event, measurements, metadata})
   end
 
+  defmodule CrashingAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def validate_opts(opts), do: {:ok, opts}
+
+    @impl true
+    def deliver(_signal, _opts), do: raise("adapter crashed")
+  end
+
+  setup do
+    Application.delete_env(:jido_signal, :normalize_dispatch_errors)
+    Application.delete_env(:jido, :normalize_dispatch_errors)
+
+    on_exit(fn ->
+      Application.delete_env(:jido_signal, :normalize_dispatch_errors)
+      Application.delete_env(:jido, :normalize_dispatch_errors)
+    end)
+
+    :ok
+  end
+
   # Test with error normalization enabled per test
 
   test "dispatch normalizes errors to Jido.Signal.Error when enabled" do
@@ -30,9 +52,6 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     {:error, error} = result
 
     assert Exception.message(error) =~ "Signal dispatch failed"
-
-    # Clean up
-    Application.delete_env(:jido_signal, :normalize_dispatch_errors)
   end
 
   test "dispatch_batch normalizes errors when enabled" do
@@ -52,12 +71,11 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     {:error, [{1, error}]} = result
 
     assert Exception.message(error) =~ "Signal dispatch failed"
-
-    # Clean up
-    Application.delete_env(:jido_signal, :normalize_dispatch_errors)
   end
 
   test "telemetry events are emitted with correct metadata" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+
     # Set up telemetry handler
     test_pid = self()
     handler_id = :dispatch_test_handler
@@ -69,7 +87,8 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
       handler_id,
       [
         [:jido, :dispatch, :start],
-        [:jido, :dispatch, :stop]
+        [:jido, :dispatch, :stop],
+        [:jido, :dispatch, :exception]
       ],
       &__MODULE__.handle_telemetry_event/4,
       nil
@@ -85,11 +104,12 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
     assert metadata.adapter == :noop
     assert metadata.signal_type == "test.event"
+    assert metadata.target == :unknown
     assert metadata.target_kind == :unknown
     assert metadata.runtime_surface == :dispatch
 
     assert_receive {:telemetry, [:jido, :dispatch, :stop], measurements, metadata}
-    assert Map.has_key?(measurements, :duration)
+    assert Map.has_key?(measurements, :latency_ms)
     assert metadata.success? == true
     assert metadata.outcome == :ok
 
@@ -100,15 +120,39 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
 
     {:error, _} = Dispatch.dispatch(signal, config)
 
-    # Should receive start and stop events with handled error metadata
+    # Should receive start and exception events for handled dispatch failures
     assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, _}
-    assert_receive {:telemetry, [:jido, :dispatch, :stop], measurements, metadata}
-    assert Map.has_key?(measurements, :duration)
+    assert_receive {:telemetry, [:jido, :dispatch, :exception], measurements, metadata}
+    assert Map.has_key?(measurements, :latency_ms)
     assert metadata.success? == false
     assert metadata.outcome == :error
     assert metadata.error_type == :dispatch_error
     assert metadata.retryable? == false
 
     :telemetry.detach(handler_id)
+  end
+
+  test "dispatch leaves raw adapter reasons unchanged by default" do
+    {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+    config = {:named, [target: {:name, :nonexistent_process}, delivery_mode: :async]}
+
+    assert {:error, :process_not_found} = Dispatch.dispatch(signal, config)
+  end
+
+  test "dispatch still honors legacy normalization config during transition" do
+    Application.put_env(:jido, :normalize_dispatch_errors, true)
+    {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+    config = {:named, [target: {:name, :nonexistent_process}, delivery_mode: :async]}
+
+    assert {:error, %Error.DispatchError{}} = Dispatch.dispatch(signal, config)
+  end
+
+  test "adapter crashes still escape the dispatch boundary" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+    {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+
+    assert_raise RuntimeError, "adapter crashed", fn ->
+      Dispatch.dispatch(signal, {CrashingAdapter, []})
+    end
   end
 end

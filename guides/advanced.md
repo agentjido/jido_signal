@@ -54,13 +54,16 @@ Jido.Signal.Dispatch.dispatch(signal, configs)
 
 ### Normalization
 
-Dispatch errors normalize through `Jido.Signal.Error` by default:
+Dispatch errors can normalize through `Jido.Signal.Error` when you opt in:
 
 ```elixir
 # config/config.exs
 config :jido_signal,
-  normalize_dispatch_errors: true,
   default_log_level: :info
+
+# Compatibility transition: normalized dispatch errors remain opt-in.
+config :jido_signal,
+  normalize_dispatch_errors: true
 ```
 
 Structured callers can serialize the public contract through `Error.to_map/1`:
@@ -245,7 +248,7 @@ test "emits telemetry events" do
   Dispatch.dispatch(signal, {:noop, []})
   
   assert_receive {[:jido, :dispatch, :start], _, %{adapter: :noop}}
-  assert_receive {[:jido, :dispatch, :stop], %{duration: _},
+  assert_receive {[:jido, :dispatch, :stop], %{latency_ms: _},
                   %{outcome: :ok, success?: true}}
 end
 ```
@@ -288,7 +291,7 @@ Monitor dispatch performance:
   "dispatch-latency",
   [:jido, :dispatch, :stop],
   fn [:jido, :dispatch, :stop], measurements, metadata, _ ->
-    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    duration_ms = measurements.latency_ms
     adapter = metadata.adapter
     
     if duration_ms > 1000 do

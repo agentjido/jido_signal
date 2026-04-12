@@ -147,9 +147,9 @@ defmodule Jido.Signal.Dispatch do
                                       8
                                     )
   @normalize_errors_compile_time Application.compile_env(
-                                   :jido_signal,
+                                   :jido,
                                    :normalize_dispatch_errors,
-                                   true
+                                   false
                                  )
 
   @builtin_adapters %{
@@ -550,7 +550,11 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp should_normalize_errors? do
-    Application.get_env(:jido_signal, :normalize_dispatch_errors, @normalize_errors_compile_time)
+    Application.get_env(
+      :jido_signal,
+      :normalize_dispatch_errors,
+      Application.get_env(:jido, :normalize_dispatch_errors, @normalize_errors_compile_time)
+    )
   end
 
   defp validate_single_config({nil, opts}) when is_list(opts) do
@@ -576,10 +580,29 @@ defmodule Jido.Signal.Dispatch do
   defp dispatch_single(_signal, {nil, _opts}), do: :ok
 
   defp dispatch_single(signal, {adapter, opts}) do
-    Telemetry.span([:jido, :dispatch], dispatch_telemetry_metadata(signal, adapter, opts), fn ->
-      result = do_dispatch_single(signal, {adapter, opts})
-      {result, dispatch_stop_metadata(result)}
-    end)
+    start_time = System.monotonic_time(:millisecond)
+    metadata = dispatch_telemetry_metadata(signal, adapter, opts)
+
+    Telemetry.execute([:jido, :dispatch, :start], %{}, metadata)
+
+    result = do_dispatch_single(signal, {adapter, opts})
+    measurements = %{latency_ms: System.monotonic_time(:millisecond) - start_time}
+
+    if match?(:ok, result) do
+      Telemetry.execute(
+        [:jido, :dispatch, :stop],
+        measurements,
+        dispatch_success_metadata(metadata)
+      )
+    else
+      Telemetry.execute(
+        [:jido, :dispatch, :exception],
+        measurements,
+        dispatch_failure_metadata(metadata, result, adapter, opts)
+      )
+    end
+
+    result
   end
 
   defp do_dispatch_single(signal, {adapter, opts}) do
@@ -610,20 +633,9 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp dispatch_deliver(signal, adapter_module, adapter, opts) do
-    try do
-      case adapter_module.deliver(signal, opts) do
-        :ok -> :ok
-        {:error, reason} -> normalize_error(reason, adapter, {adapter, opts})
-      end
-    rescue
-      error ->
-        normalize_error(error, adapter, {adapter, opts})
-    catch
-      :exit, reason ->
-        normalize_error(reason, adapter, {adapter, opts})
-
-      kind, reason ->
-        normalize_error({kind, reason}, adapter, {adapter, opts})
+    case adapter_module.deliver(signal, opts) do
+      :ok -> :ok
+      {:error, reason} -> normalize_error(reason, adapter, {adapter, opts})
     end
   end
 
@@ -632,32 +644,42 @@ defmodule Jido.Signal.Dispatch do
       adapter: adapter,
       runtime_surface: :dispatch,
       signal_type: signal_type(signal),
+      target: get_target_from_opts(opts),
       target_kind: target_kind(opts)
     }
   end
 
-  defp dispatch_stop_metadata(:ok) do
-    %{
-      outcome: :ok,
-      retry_count: 0,
-      success?: true
-    }
-  end
+  defp dispatch_success_metadata(metadata),
+    do: Map.merge(metadata, %{outcome: :ok, success?: true})
 
-  defp dispatch_stop_metadata({:error, error}) do
-    error = Error.normalize(error)
+  defp dispatch_failure_metadata(metadata, {:error, reason}, adapter, opts) do
+    error = dispatch_error_for_telemetry(reason, adapter, {adapter, opts})
 
-    %{
+    Map.merge(metadata, %{
       outcome: :error,
       retry_count: 0,
       success?: false,
       error_type: Error.type(error),
       retryable?: Error.retryable?(error)
-    }
+    })
   end
+
+  defp dispatch_failure_metadata(metadata, _result, _adapter, _opts),
+    do: Map.merge(metadata, %{outcome: :error, success?: false})
 
   defp signal_type(%{type: type}) when is_binary(type), do: type
   defp signal_type(_signal), do: :unknown
+
+  defp get_target_from_opts(opts) do
+    cond do
+      target = Keyword.get(opts, :target) -> target
+      url = Keyword.get(opts, :url) -> url
+      pid = Keyword.get(opts, :pid) -> pid
+      name = Keyword.get(opts, :name) -> name
+      topic = Keyword.get(opts, :topic) -> topic
+      true -> :unknown
+    end
+  end
 
   defp target_kind(opts) do
     cond do
@@ -669,6 +691,16 @@ defmodule Jido.Signal.Dispatch do
       Keyword.has_key?(opts, :target) -> :target
       true -> :unknown
     end
+  end
+
+  defp dispatch_error_for_telemetry(%Error.DispatchError{} = error, _adapter, _config), do: error
+
+  defp dispatch_error_for_telemetry(reason, adapter, config) do
+    Error.dispatch_error("Signal dispatch failed", %{
+      adapter: adapter,
+      reason: reason,
+      config: config
+    })
   end
 
   defp resolve_adapter(nil), do: {:ok, nil}

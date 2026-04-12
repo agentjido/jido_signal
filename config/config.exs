@@ -1,8 +1,7 @@
 import Config
 
 config :jido_signal,
-  default_log_level: :info,
-  normalize_dispatch_errors: true
+  default_log_level: :info
 
 # Git hooks and git_ops configuration for conventional commits
 # Only configure when the dependencies are actually available (dev environment)

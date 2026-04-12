@@ -367,12 +367,16 @@ Middleware callbacks (`before_publish`, `after_publish`, `before_dispatch`, `aft
 
 ### Observability
 
-Dispatch spans emit bounded telemetry under `[:jido, :dispatch, ...]`, and
-package execution logging defaults to `config :jido_signal, default_log_level: :info`.
+Dispatch telemetry keeps the legacy `[:jido, :dispatch, :start|:stop|:exception]`
+events with bounded metadata, and package execution logging defaults to
+`config :jido_signal, default_log_level: :info`.
 
 ```elixir
 config :jido_signal,
-  default_log_level: :info,
+  default_log_level: :info
+
+# Opt in to normalized dispatch errors during the compatibility transition.
+config :jido_signal,
   normalize_dispatch_errors: true
 
 {:error, error} = Jido.Signal.Dispatch.dispatch(signal, {:http, [url: "https://down.example.com"]})
