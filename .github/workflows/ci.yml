@@ -10,16 +10,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  lint:
-    name: Lint
-    uses: agentjido/github-actions/.github/workflows/elixir-lint.yml@v3
-    secrets: inherit
+permissions:
+  contents: read
 
-  test:
-    name: Test
-    uses: agentjido/github-actions/.github/workflows/elixir-test.yml@v3
+jobs:
+  ci:
+    name: CI
+    uses: agentjido/github-actions/.github/workflows/elixir-ci.yml@feat/v4-workflow-platform
+    secrets: inherit
     with:
+      quality_command: mix quality
       otp_versions: '["27", "28"]'
       elixir_versions: '["1.18", "1.19"]'
       experimental_compile_elixir_versions: '["v1.20.0-rc.4"]'
