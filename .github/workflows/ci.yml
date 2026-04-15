@@ -19,6 +19,7 @@ jobs:
     uses: agentjido/github-actions/.github/workflows/elixir-ci.yml@feat/v4-workflow-platform
     secrets: inherit
     with:
+      quality_command: mix quality
       otp_versions: '["27", "28"]'
       elixir_versions: '["1.18", "1.19"]'
       experimental_compile_elixir_versions: '["v1.20.0-rc.4"]'
