@@ -203,7 +203,7 @@ defmodule Jido.Signal.MixProject do
       {:telemetry, "~> 1.3"},
       {:uniq, "~> 0.6.1"},
       {:splode, "~> 0.3.0"},
-      {:zoi, "~> 0.17.1"},
+      {:zoi, "~> 0.18.1"},
       {:memento, "~> 0.5.0"},
       {:fuse, "~> 2.5"},
 
