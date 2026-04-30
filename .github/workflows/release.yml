@@ -25,12 +25,14 @@ on:
         default: ""
 
 permissions:
+  actions: read
   contents: write
+  pull-requests: write
 
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@v3
+    uses: agentjido/github-actions/.github/workflows/elixir-release.yml@feat/v4-workflow-platform
     with:
       dry_run: ${{ inputs.dry_run }}
       hex_dry_run: ${{ inputs.hex_dry_run }}

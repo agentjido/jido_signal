@@ -40,6 +40,7 @@ defmodule Jido.Signal.Dispatch.Bus do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Bus
   alias Jido.Signal.Sanitizer
 
   require Logger
@@ -111,9 +112,9 @@ defmodule Jido.Signal.Dispatch.Bus do
     lookup_opts = if jido, do: [jido: jido], else: []
 
     try do
-      case Jido.Signal.Bus.whereis(bus_name, lookup_opts) do
+      case Bus.whereis(bus_name, lookup_opts) do
         {:ok, pid} ->
-          case Jido.Signal.Bus.publish(pid, [signal]) do
+          case Bus.publish(pid, [signal]) do
             {:ok, _recorded} -> :ok
             {:error, reason} -> {:error, reason}
           end

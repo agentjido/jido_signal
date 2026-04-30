@@ -1,8 +1,8 @@
 defmodule JidoTest.SignalTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Signal.ID
   alias Jido.Signal
+  alias Jido.Signal.ID
 
   # Simple test extension for testing extension API
   defmodule TestExtension do

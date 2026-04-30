@@ -195,42 +195,59 @@ defmodule Jido.Signal.Bus.Subscriber do
   end
 
   defp maybe_shutdown_persistent_subscription(state, subscription) do
-    if subscription && subscription.persistent? && subscription.persistence_pid do
-      try do
-        DynamicSupervisor.terminate_child(state.child_supervisor, subscription.persistence_pid)
-      catch
-        :exit, _reason -> :ok
-      end
+    if persistent_subscription?(subscription) do
+      terminate_persistent_subscription(state, subscription)
     end
+  end
+
+  defp persistent_subscription?(subscription) do
+    subscription && subscription.persistent? && subscription.persistence_pid
+  end
+
+  defp terminate_persistent_subscription(state, subscription) do
+    DynamicSupervisor.terminate_child(state.child_supervisor, subscription.persistence_pid)
+  catch
+    :exit, _reason -> :ok
   end
 
   defp maybe_delete_persistence(state, subscription_id, subscription, opts) do
     should_delete? = Keyword.get(opts, :delete_persistence, false)
 
-    if ((should_delete? and subscription) && subscription.persistent?) and state.journal_adapter do
+    if delete_persistence?(should_delete?, subscription, state) do
       checkpoint_key = "#{state.name}:#{subscription_id}"
 
-      case state.journal_adapter.delete_checkpoint(checkpoint_key, state.journal_pid) do
-        :ok ->
-          :ok
+      delete_checkpoint(state, checkpoint_key)
+      clear_dlq(state, subscription_id)
+    end
+  end
 
-        {:error, reason} ->
-          Logger.warning(fn ->
-            "Failed to delete checkpoint key=#{checkpoint_key} " <>
-              "reason=#{Sanitizer.preview(reason, :telemetry)}"
-          end)
-      end
+  defp delete_persistence?(should_delete?, subscription, state) do
+    should_delete? && subscription && subscription.persistent? && state.journal_adapter
+  end
 
-      case state.journal_adapter.clear_dlq(subscription_id, state.journal_pid) do
-        :ok ->
-          :ok
+  defp delete_checkpoint(state, checkpoint_key) do
+    case state.journal_adapter.delete_checkpoint(checkpoint_key, state.journal_pid) do
+      :ok ->
+        :ok
 
-        {:error, reason} ->
-          Logger.warning(fn ->
-            "Failed to clear DLQ subscription_id=#{subscription_id} " <>
-              "reason=#{Sanitizer.preview(reason, :telemetry)}"
-          end)
-      end
+      {:error, reason} ->
+        Logger.warning(fn ->
+          "Failed to delete checkpoint key=#{checkpoint_key} " <>
+            "reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
+    end
+  end
+
+  defp clear_dlq(state, subscription_id) do
+    case state.journal_adapter.clear_dlq(subscription_id, state.journal_pid) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(fn ->
+          "Failed to clear DLQ subscription_id=#{subscription_id} " <>
+            "reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
     end
   end
 

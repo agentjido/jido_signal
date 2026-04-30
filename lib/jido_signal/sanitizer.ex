@@ -98,36 +98,26 @@ defmodule Jido.Signal.Sanitizer do
     end
   end
 
-  defp do_sanitize(value, profile, opts, depth) when is_map(value) do
-    cond do
-      match?(%Date{}, value) ->
-        Date.to_iso8601(value)
+  defp do_sanitize(%Date{} = value, _profile, _opts, _depth), do: Date.to_iso8601(value)
+  defp do_sanitize(%DateTime{} = value, _profile, _opts, _depth), do: DateTime.to_iso8601(value)
 
-      match?(%Time{}, value) ->
-        Time.to_iso8601(value)
+  defp do_sanitize(%NaiveDateTime{} = value, _profile, _opts, _depth),
+    do: NaiveDateTime.to_iso8601(value)
 
-      match?(%NaiveDateTime{}, value) ->
-        NaiveDateTime.to_iso8601(value)
+  defp do_sanitize(%Time{} = value, _profile, _opts, _depth), do: Time.to_iso8601(value)
+  defp do_sanitize(%URI{} = value, _profile, _opts, _depth), do: URI.to_string(value)
 
-      match?(%DateTime{}, value) ->
-        DateTime.to_iso8601(value)
+  defp do_sanitize(%Signal{} = value, profile, opts, depth),
+    do: sanitize_signal(value, profile, opts, depth)
 
-      match?(%URI{}, value) ->
-        URI.to_string(value)
+  defp do_sanitize(value, profile, opts, depth) when is_exception(value),
+    do: sanitize_exception(value, profile, opts, depth)
 
-      match?(%Signal{}, value) ->
-        sanitize_signal(value, profile, opts, depth)
+  defp do_sanitize(value, profile, opts, depth) when is_struct(value),
+    do: sanitize_struct(value, profile, opts, depth)
 
-      is_exception(value) ->
-        sanitize_exception(value, profile, opts, depth)
-
-      is_struct(value) ->
-        sanitize_struct(value, profile, opts, depth)
-
-      true ->
-        sanitize_map(value, profile, opts, depth)
-    end
-  end
+  defp do_sanitize(value, profile, opts, depth) when is_map(value),
+    do: sanitize_map(value, profile, opts, depth)
 
   defp do_sanitize(value, :telemetry, _opts, _depth) when is_pid(value) or is_reference(value) do
     inspect(value)
@@ -249,32 +239,36 @@ defmodule Jido.Signal.Sanitizer do
   end
 
   defp sanitize_map(map, profile, opts, depth) do
-    cond do
-      depth >= opts.max_depth ->
-        summarize_collection(map, profile)
-
-      true ->
+    if depth >= opts.max_depth do
+      summarize_collection(map, profile)
+    else
+      {items, truncated?} =
         map
         |> Map.to_list()
         |> Enum.sort_by(fn {key, _value} -> key_sort_token(key) end)
         |> take_bounded(opts.max_items)
-        |> then(fn {items, truncated?} ->
-          sanitized =
-            Enum.reduce(items, empty_map(profile), fn {key, value}, acc ->
-              sanitized_key = sanitize_key(key, profile)
 
-              sanitized_value =
-                if sensitive_key?(key) do
-                  redacted_value(profile)
-                else
-                  do_sanitize(value, profile, opts, depth + 1)
-                end
-
-              Map.put(acc, sanitized_key, sanitized_value)
-            end)
-
-          maybe_mark_map_truncation(sanitized, truncated?, map_size(map), profile)
+      sanitized =
+        Enum.reduce(items, empty_map(profile), fn entry, acc ->
+          sanitize_map_entry(entry, acc, profile, opts, depth)
         end)
+
+      maybe_mark_map_truncation(sanitized, truncated?, map_size(map), profile)
+    end
+  end
+
+  defp sanitize_map_entry({key, value}, acc, profile, opts, depth) do
+    sanitized_key = sanitize_key(key, profile)
+    sanitized_value = sanitize_map_value(key, value, profile, opts, depth)
+
+    Map.put(acc, sanitized_key, sanitized_value)
+  end
+
+  defp sanitize_map_value(key, value, profile, opts, depth) do
+    if sensitive_key?(key) do
+      redacted_value(profile)
+    else
+      do_sanitize(value, profile, opts, depth + 1)
     end
   end
 

@@ -103,27 +103,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     # Compute checkpoint key (unique per bus + subscription)
     checkpoint_key = "#{bus_name}:#{id}"
 
-    # Load checkpoint from journal if adapter is configured
-    loaded_checkpoint =
-      if journal_adapter do
-        case journal_adapter.get_checkpoint(checkpoint_key, journal_pid) do
-          {:ok, cp} ->
-            cp
-
-          {:error, :not_found} ->
-            0
-
-          {:error, reason} ->
-            Logger.warning(fn ->
-              "Failed to load checkpoint key=#{checkpoint_key} " <>
-                "reason=#{Sanitizer.preview(reason, :telemetry)}"
-            end)
-
-            0
-        end
-      else
-        Keyword.get(opts, :checkpoint, 0)
-      end
+    loaded_checkpoint = load_checkpoint(opts, journal_adapter, journal_pid, checkpoint_key)
 
     state = %__MODULE__{
       id: id,
@@ -148,6 +128,28 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     state = maybe_monitor_client(state, state.client_pid)
 
     {:ok, state}
+  end
+
+  defp load_checkpoint(opts, nil, _journal_pid, _checkpoint_key) do
+    Keyword.get(opts, :checkpoint, 0)
+  end
+
+  defp load_checkpoint(_opts, journal_adapter, journal_pid, checkpoint_key) do
+    case journal_adapter.get_checkpoint(checkpoint_key, journal_pid) do
+      {:ok, checkpoint} ->
+        checkpoint
+
+      {:error, :not_found} ->
+        0
+
+      {:error, reason} ->
+        Logger.warning(fn ->
+          "Failed to load checkpoint key=#{checkpoint_key} " <>
+            "reason=#{Sanitizer.preview(reason, :telemetry)}"
+        end)
+
+        0
+    end
   end
 
   @impl GenServer
@@ -331,14 +333,12 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   end
 
   defp fetch_signals_since_checkpoint(state) do
-    try do
-      case GenServer.call(state.bus_pid, {:signals_since, state.checkpoint}) do
-        {:ok, signals} when is_list(signals) -> signals
-        _ -> []
-      end
-    catch
-      :exit, _reason -> []
+    case GenServer.call(state.bus_pid, {:signals_since, state.checkpoint}) do
+      {:ok, signals} when is_list(signals) -> signals
+      _ -> []
     end
+  catch
+    :exit, _reason -> []
   end
 
   defp signal_after_checkpoint?(signal_log_id, signal, checkpoint) do
@@ -474,24 +474,30 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   @spec resolve_ack_signal_log_id(t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   defp resolve_ack_signal_log_id(state, ack_identifier) do
-    cond do
-      Map.has_key?(state.in_flight_signals, ack_identifier) ->
-        {:ok, ack_identifier}
+    if Map.has_key?(state.in_flight_signals, ack_identifier) do
+      {:ok, ack_identifier}
+    else
+      find_ack_signal_log_id(state, ack_identifier)
+    end
+  end
 
-      true ->
-        case Enum.find(state.in_flight_signals, fn {_signal_log_id, signal} ->
-               is_map(signal) and Map.get(signal, :id) == ack_identifier
-             end) do
-          {signal_log_id, _signal} ->
-            {:ok, signal_log_id}
+  defp find_ack_signal_log_id(state, ack_identifier) do
+    case Enum.find(state.in_flight_signals, fn {_signal_log_id, signal} ->
+           is_map(signal) and Map.get(signal, :id) == ack_identifier
+         end) do
+      {signal_log_id, _signal} ->
+        {:ok, signal_log_id}
 
-          nil ->
-            if ID.valid?(ack_identifier) do
-              {:error, {:unknown_signal_log_id, ack_identifier}}
-            else
-              {:error, {:invalid_signal_log_id, ack_identifier}}
-            end
-        end
+      nil ->
+        invalid_ack_signal_log_id(ack_identifier)
+    end
+  end
+
+  defp invalid_ack_signal_log_id(ack_identifier) do
+    if ID.valid?(ack_identifier) do
+      {:error, {:unknown_signal_log_id, ack_identifier}}
+    else
+      {:error, {:invalid_signal_log_id, ack_identifier}}
     end
   end
 
@@ -655,41 +661,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       signal_log_id: signal_log_id
     }
 
-    if state.journal_adapter do
-      case state.journal_adapter.put_dlq_entry(
-             state.id,
-             signal,
-             reason,
-             metadata,
-             state.journal_pid
-           ) do
-        {:ok, dlq_id} ->
-          Telemetry.execute(
-            [:jido, :signal, :subscription, :dlq],
-            %{},
-            %{
-              subscription_id: state.id,
-              signal_id: signal.id,
-              dlq_id: dlq_id,
-              attempts: attempt_count
-            }
-          )
-
-          Logger.debug(fn ->
-            "Signal moved to DLQ signal_id=#{signal.id} attempts=#{attempt_count}"
-          end)
-
-        {:error, dlq_error} ->
-          Logger.error(fn ->
-            "Failed to write DLQ signal_id=#{signal.id} " <>
-              "reason=#{Sanitizer.preview(dlq_error, :telemetry)}"
-          end)
-      end
-    else
-      Logger.warning(fn ->
-        "Signal exhausted retries without DLQ signal_id=#{signal.id} attempts=#{attempt_count}"
-      end)
-    end
+    maybe_write_dlq_entry(state, signal, reason, metadata, attempt_count)
 
     # Remove from tracking - signal is now in DLQ (or dropped if no DLQ)
     new_in_flight = Map.delete(state.in_flight_signals, signal_log_id)
@@ -702,5 +674,46 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
         pending_signals: new_pending,
         attempts: new_attempts
     }
+  end
+
+  defp maybe_write_dlq_entry(%{journal_adapter: nil}, signal, _reason, _metadata, attempt_count) do
+    Logger.warning(fn ->
+      "Signal exhausted retries without DLQ signal_id=#{signal.id} attempts=#{attempt_count}"
+    end)
+  end
+
+  defp maybe_write_dlq_entry(state, signal, reason, metadata, attempt_count) do
+    state.journal_adapter.put_dlq_entry(
+      state.id,
+      signal,
+      reason,
+      metadata,
+      state.journal_pid
+    )
+    |> handle_dlq_write_result(state, signal, attempt_count)
+  end
+
+  defp handle_dlq_write_result({:ok, dlq_id}, state, signal, attempt_count) do
+    Telemetry.execute(
+      [:jido, :signal, :subscription, :dlq],
+      %{},
+      %{
+        subscription_id: state.id,
+        signal_id: signal.id,
+        dlq_id: dlq_id,
+        attempts: attempt_count
+      }
+    )
+
+    Logger.debug(fn ->
+      "Signal moved to DLQ signal_id=#{signal.id} attempts=#{attempt_count}"
+    end)
+  end
+
+  defp handle_dlq_write_result({:error, dlq_error}, _state, signal, _attempt_count) do
+    Logger.error(fn ->
+      "Failed to write DLQ signal_id=#{signal.id} " <>
+        "reason=#{Sanitizer.preview(dlq_error, :telemetry)}"
+    end)
   end
 end

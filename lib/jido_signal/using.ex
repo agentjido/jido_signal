@@ -167,7 +167,18 @@ defmodule Jido.Signal.Using do
   @doc false
   defmacro define_signal_builder_functions do
     quote location: :keep do
-      alias Jido.Signal.Ext
+      alias Jido.Signal.Using
+
+      require Using
+
+      Using.define_signal_attr_builder_functions()
+      Using.define_extension_policy_functions()
+    end
+  end
+
+  @doc false
+  defmacro define_signal_attr_builder_functions do
+    quote location: :keep do
       alias Jido.Signal.ID
 
       defp build_signal_attrs(validated_data, opts) do
@@ -209,7 +220,25 @@ defmodule Jido.Signal.Using do
           Map.put(acc, to_string(key), value)
         end)
       end
+    end
+  end
 
+  @doc false
+  defmacro define_extension_policy_functions do
+    quote location: :keep do
+      alias Jido.Signal.Using
+
+      require Using
+
+      Using.define_extension_normalization_functions()
+      Using.define_extension_requirement_functions()
+      Using.define_extension_data_validation_functions()
+    end
+  end
+
+  @doc false
+  defmacro define_extension_normalization_functions do
+    quote location: :keep do
       defp normalize_policy_extensions(attrs) do
         case extension_policy() do
           policy when map_size(policy) == 0 ->
@@ -247,7 +276,12 @@ defmodule Jido.Signal.Using do
       end
 
       defp normalize_explicit_extensions(_), do: %{}
+    end
+  end
 
+  @doc false
+  defmacro define_extension_requirement_functions do
+    quote location: :keep do
       defp validate_required_extensions(policy, effective_extensions) do
         case Enum.find(policy, fn {namespace, mode} ->
                mode == :required and not Map.has_key?(effective_extensions, namespace)
@@ -273,35 +307,74 @@ defmodule Jido.Signal.Using do
             :ok
         end
       end
+    end
+  end
+
+  @doc false
+  defmacro define_extension_data_validation_functions do
+    quote location: :keep do
+      alias Jido.Signal.Using
+
+      require Using
+
+      Using.define_extension_data_reduce_functions()
+      Using.define_extension_data_result_functions()
+    end
+  end
+
+  @doc false
+  defmacro define_extension_data_reduce_functions do
+    quote location: :keep do
+      alias Jido.Signal.Using
 
       defp validate_policy_extension_data(effective_extensions) do
         policy_modules = extension_policy_modules()
 
-        if map_size(policy_modules) == 0 do
-          {:ok, effective_extensions}
-        else
-          Enum.reduce_while(effective_extensions, {:ok, %{}}, fn {namespace, data}, {:ok, acc} ->
-            case Using.fetch_extension_policy_module(policy_modules, namespace) do
-              nil ->
-                {:cont, {:ok, Map.put(acc, namespace, data)}}
+        do_validate_policy_extension_data(policy_modules, effective_extensions)
+      end
 
-              extension_module ->
-                case Ext.safe_validate_data(extension_module, data) do
-                  {:ok, {:ok, validated_data}} ->
-                    {:cont, {:ok, Map.put(acc, namespace, validated_data)}}
+      defp do_validate_policy_extension_data(policy_modules, effective_extensions)
+           when map_size(policy_modules) == 0 do
+        {:ok, effective_extensions}
+      end
 
-                  {:ok, {:error, reason}} ->
-                    {:halt,
-                     {:error,
-                      "Signal #{inspect(__MODULE__)} received invalid data for extension namespace #{inspect(namespace)}: #{reason}"}}
+      defp do_validate_policy_extension_data(policy_modules, effective_extensions) do
+        Enum.reduce_while(effective_extensions, {:ok, %{}}, fn entry, result ->
+          validate_policy_extension_entry(entry, result, policy_modules)
+        end)
+      end
 
-                  {:error, reason} ->
-                    {:halt,
-                     {:error,
-                      "Signal #{inspect(__MODULE__)} failed to validate extension namespace #{inspect(namespace)}: #{inspect(reason)}"}}
-                end
-            end
-          end)
+      defp validate_policy_extension_entry({namespace, data}, {:ok, acc}, policy_modules) do
+        policy_modules
+        |> Using.fetch_extension_policy_module(namespace)
+        |> validate_policy_extension_data(namespace, data, acc)
+      end
+    end
+  end
+
+  @doc false
+  defmacro define_extension_data_result_functions do
+    quote location: :keep do
+      alias Jido.Signal.Ext
+
+      defp validate_policy_extension_data(nil, namespace, data, acc) do
+        {:cont, {:ok, Map.put(acc, namespace, data)}}
+      end
+
+      defp validate_policy_extension_data(extension_module, namespace, data, acc) do
+        case Ext.safe_validate_data(extension_module, data) do
+          {:ok, {:ok, validated_data}} ->
+            {:cont, {:ok, Map.put(acc, namespace, validated_data)}}
+
+          {:ok, {:error, reason}} ->
+            {:halt,
+             {:error,
+              "Signal #{inspect(__MODULE__)} received invalid data for extension namespace #{inspect(namespace)}: #{reason}"}}
+
+          {:error, reason} ->
+            {:halt,
+             {:error,
+              "Signal #{inspect(__MODULE__)} failed to validate extension namespace #{inspect(namespace)}: #{inspect(reason)}"}}
         end
       end
 

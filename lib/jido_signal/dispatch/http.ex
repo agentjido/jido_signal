@@ -226,29 +226,57 @@ defmodule Jido.Signal.Dispatch.Http do
     do: {:error, "#{field} must be a positive integer, got: #{inspect(invalid)}"}
 
   defp do_request_with_retry(method, url, headers, body, timeout, retry_config, attempt \\ 1) do
-    case do_request(method, url, headers, body, timeout) do
-      :ok ->
-        :ok
+    method
+    |> do_request(url, headers, body, timeout)
+    |> handle_request_result(method, url, headers, body, timeout, retry_config, attempt)
+  end
 
-      {:error, reason} = error ->
-        if should_retry?(attempt, retry_config) do
-          delay = calculate_delay(attempt, retry_config)
+  defp handle_request_result(
+         :ok,
+         _method,
+         _url,
+         _headers,
+         _body,
+         _timeout,
+         _retry_config,
+         _attempt
+       ),
+       do: :ok
 
-          Util.cond_log(Util.default_log_level(), :info, fn ->
-            "HTTP dispatch retry attempt=#{attempt} delay_ms=#{delay} " <>
-              "reason=#{Sanitizer.preview(reason, :telemetry)}"
-          end)
-
-          Process.sleep(delay)
-          do_request_with_retry(method, url, headers, body, timeout, retry_config, attempt + 1)
-        else
-          Util.cond_log(Util.default_log_level(), :error, fn ->
-            "HTTP dispatch failed attempts=#{attempt} reason=#{Sanitizer.preview(reason, :telemetry)}"
-          end)
-
-          error
-        end
+  defp handle_request_result(
+         {:error, reason} = error,
+         method,
+         url,
+         headers,
+         body,
+         timeout,
+         retry_config,
+         attempt
+       ) do
+    if should_retry?(attempt, retry_config) do
+      retry_request(method, url, headers, body, timeout, retry_config, attempt, reason)
+    else
+      log_request_failure(attempt, reason)
+      error
     end
+  end
+
+  defp log_request_failure(attempt, reason) do
+    Util.cond_log(Util.default_log_level(), :error, fn ->
+      "HTTP dispatch failed attempts=#{attempt} reason=#{Sanitizer.preview(reason, :telemetry)}"
+    end)
+  end
+
+  defp retry_request(method, url, headers, body, timeout, retry_config, attempt, reason) do
+    delay = calculate_delay(attempt, retry_config)
+
+    Util.cond_log(Util.default_log_level(), :info, fn ->
+      "HTTP dispatch retry attempt=#{attempt} delay_ms=#{delay} " <>
+        "reason=#{Sanitizer.preview(reason, :telemetry)}"
+    end)
+
+    Process.sleep(delay)
+    do_request_with_retry(method, url, headers, body, timeout, retry_config, attempt + 1)
   end
 
   defp do_request(method, url, headers, body, timeout) do

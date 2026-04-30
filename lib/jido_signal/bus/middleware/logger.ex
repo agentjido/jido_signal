@@ -149,45 +149,51 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   @impl true
   def after_dispatch(signal, subscriber, result, context, config) do
     case result do
-      :ok ->
-        if config.log_dispatch do
-          dispatch_info = format_dispatch_info(subscriber.dispatch)
-
-          Logger.log(
-            config.level,
-            fn ->
-              "Bus #{context.bus_name}: dispatched signal id=#{signal.id} type=#{signal.type} " <>
-                "subscription=#{subscriber.id} path=#{subscriber.path} dispatch=#{dispatch_info}"
-            end,
-            bus_name: context.bus_name,
-            signal_id: signal.id,
-            signal_type: signal.type,
-            subscription_id: subscriber.id
-          )
-        end
-
-      {:error, reason} ->
-        if config.log_errors do
-          dispatch_info = format_dispatch_info(subscriber.dispatch)
-
-          Logger.error(
-            fn ->
-              "Bus #{context.bus_name}: failed dispatch signal id=#{signal.id} type=#{signal.type} " <>
-                "subscription=#{subscriber.id} path=#{subscriber.path} dispatch=#{dispatch_info} " <>
-                "reason=#{Sanitizer.preview(reason, :telemetry, max_length: config.max_data_length)}"
-            end,
-            bus_name: context.bus_name,
-            signal_id: signal.id,
-            signal_type: signal.type,
-            subscription_id: subscriber.id
-          )
-        end
+      :ok -> maybe_log_dispatch_success(signal, subscriber, context, config)
+      {:error, reason} -> maybe_log_dispatch_error(signal, subscriber, reason, context, config)
     end
 
     {:cont, config}
   end
 
   # Private helper functions
+
+  defp maybe_log_dispatch_success(_signal, _subscriber, _context, %{log_dispatch: false}), do: :ok
+
+  defp maybe_log_dispatch_success(signal, subscriber, context, config) do
+    dispatch_info = format_dispatch_info(subscriber.dispatch)
+
+    Logger.log(
+      config.level,
+      fn ->
+        "Bus #{context.bus_name}: dispatched signal id=#{signal.id} type=#{signal.type} " <>
+          "subscription=#{subscriber.id} path=#{subscriber.path} dispatch=#{dispatch_info}"
+      end,
+      bus_name: context.bus_name,
+      signal_id: signal.id,
+      signal_type: signal.type,
+      subscription_id: subscriber.id
+    )
+  end
+
+  defp maybe_log_dispatch_error(_signal, _subscriber, _reason, _context, %{log_errors: false}),
+    do: :ok
+
+  defp maybe_log_dispatch_error(signal, subscriber, reason, context, config) do
+    dispatch_info = format_dispatch_info(subscriber.dispatch)
+
+    Logger.error(
+      fn ->
+        "Bus #{context.bus_name}: failed dispatch signal id=#{signal.id} type=#{signal.type} " <>
+          "subscription=#{subscriber.id} path=#{subscriber.path} dispatch=#{dispatch_info} " <>
+          "reason=#{Sanitizer.preview(reason, :telemetry, max_length: config.max_data_length)}"
+      end,
+      bus_name: context.bus_name,
+      signal_id: signal.id,
+      signal_type: signal.type,
+      subscription_id: subscriber.id
+    )
+  end
 
   defp format_signal_data(nil, _max_length), do: "nil"
 
