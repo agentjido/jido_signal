@@ -18,4 +18,4 @@ permissions:
 jobs:
   review:
     name: Jido Review
-    uses: agentjido/github-actions/.github/workflows/jido-review.yml@feat/v4-workflow-platform
+    uses: agentjido/github-actions/.github/workflows/jido-review.yml@v4
