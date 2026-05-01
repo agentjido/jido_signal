@@ -575,22 +575,7 @@ defmodule Jido.Signal do
 
     {core, maybe_ext} = Map.split(remaining_attrs, @core_attrs |> Enum.map(&to_string/1))
 
-    unknown_extensions =
-      Enum.reduce(maybe_ext, %{}, fn {k, v}, acc ->
-        ns = to_string(k)
-
-        case Jido.Signal.Ext.Registry.get(ns) do
-          {:ok, _mod} ->
-            acc
-
-          {:error, :not_found} ->
-            Logger.warning(fn ->
-              "Unknown extension namespace=#{ns} preserved_as=opaque"
-            end)
-
-            Map.put(acc, ns, v)
-        end
-      end)
+    unknown_extensions = Enum.reduce(maybe_ext, %{}, &preserve_unknown_extension/2)
 
     all_extensions = Map.merge(final_extensions, unknown_extensions)
     remaining_attrs = core
@@ -622,6 +607,22 @@ defmodule Jido.Signal do
       {:ok, event}
     else
       {:error, reason} -> {:error, "parse error: #{reason}"}
+    end
+  end
+
+  defp preserve_unknown_extension({key, value}, acc) do
+    namespace = to_string(key)
+
+    case Jido.Signal.Ext.Registry.get(namespace) do
+      {:ok, _mod} ->
+        acc
+
+      {:error, :not_found} ->
+        Logger.warning(fn ->
+          "Unknown extension namespace=#{namespace} preserved_as=opaque"
+        end)
+
+        Map.put(acc, namespace, value)
     end
   end
 

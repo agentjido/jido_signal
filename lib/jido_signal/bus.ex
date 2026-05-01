@@ -41,10 +41,10 @@ defmodule Jido.Signal.Bus do
 
   use GenServer
 
+  alias Jido.Signal.Bus.DispatchFlow
   alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.Partition
   alias Jido.Signal.Bus.PartitionSupervisor
-  alias Jido.Signal.Bus.DispatchFlow
   alias Jido.Signal.Bus.Snapshot
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Bus.Stream
@@ -56,6 +56,7 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Router
   alias Jido.Signal.Sanitizer
   alias Jido.Signal.Telemetry
+  alias Jido.Signal.Util
 
   require Logger
 
@@ -520,20 +521,18 @@ defmodule Jido.Signal.Bus do
   defp bus_call(bus, message) do
     target = bus_call_target(bus)
 
-    try do
-      {:ok, GenServer.call(target, message)}
-    catch
-      :exit, {:noproc, _} -> {:error, :not_found}
-      :exit, :noproc -> {:error, :not_found}
-      :exit, {:timeout, _} -> {:error, :timeout}
-      :exit, :timeout -> {:error, :timeout}
-    end
+    {:ok, GenServer.call(target, message)}
+  catch
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, :noproc -> {:error, :not_found}
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, :timeout -> {:error, :timeout}
   end
 
   defp bus_call_target(bus) when is_pid(bus), do: bus
 
   defp bus_call_target({name, registry}) when is_atom(registry) do
-    Jido.Signal.Util.via_tuple({name, registry})
+    Util.via_tuple({name, registry})
   end
 
   defp bus_call_target(bus_name) when is_atom(bus_name) or is_binary(bus_name) do
@@ -773,15 +772,15 @@ defmodule Jido.Signal.Bus do
                context,
                state.middleware_timeout_ms
              ),
-           state_with_middleware = %{state | middleware: updated_middleware},
            {:ok, publish_state, uuid_signal_pairs} <-
              publish_with_middleware(
-               state_with_middleware,
+               %{state | middleware: updated_middleware},
                processed_signals,
                context,
                state.middleware_timeout_ms
-             ),
-           final_state = finalize_publish(publish_state, processed_signals, context) do
+             ) do
+        final_state = finalize_publish(publish_state, processed_signals, context)
+
         {:ok,
          %{
            recorded_signals: build_recorded_signals(uuid_signal_pairs),
@@ -901,16 +900,14 @@ defmodule Jido.Signal.Bus do
   end
 
   defp safely_do_redrive_dlq(state, subscription_id, opts) do
-    try do
-      do_redrive_dlq(state, subscription_id, opts)
-    rescue
-      error ->
-        {:error, Exception.message(error)}
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-      :exit, :timeout -> {:error, :timeout}
-      :exit, reason -> {:error, reason}
-    end
+    do_redrive_dlq(state, subscription_id, opts)
+  rescue
+    error ->
+      {:error, Exception.message(error)}
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, :timeout -> {:error, :timeout}
+    :exit, reason -> {:error, reason}
   end
 
   defp fetch_subscription(state, subscription_id) do
@@ -1012,15 +1009,13 @@ defmodule Jido.Signal.Bus do
   end
 
   defp dispatch_batch_to_persistent(subscription, signal_entries) do
-    try do
-      GenServer.call(subscription.persistence_pid, {:signal_batch, signal_entries})
-    catch
-      :exit, {:noproc, _} ->
-        {:error, :subscription_not_available}
+    GenServer.call(subscription.persistence_pid, {:signal_batch, signal_entries})
+  catch
+    :exit, {:noproc, _} ->
+      {:error, :subscription_not_available}
 
-      :exit, {:timeout, _} ->
-        {:error, :timeout}
-    end
+    :exit, {:timeout, _} ->
+      {:error, :timeout}
   end
 
   defp find_saturated_subscriptions(results) do
@@ -1278,14 +1273,12 @@ defmodule Jido.Signal.Bus do
   end
 
   defp safe_partition_call(target, message) do
-    try do
-      GenServer.call(target, message)
-    catch
-      :exit, {:noproc, _} -> :ok
-      :exit, :noproc -> :ok
-      :exit, {:timeout, _} -> :ok
-      :exit, :timeout -> :ok
-    end
+    GenServer.call(target, message)
+  catch
+    :exit, {:noproc, _} -> :ok
+    :exit, :noproc -> :ok
+    :exit, {:timeout, _} -> :ok
+    :exit, :timeout -> :ok
   end
 
   defp log_id_after_checkpoint?(log_id, checkpoint) when is_integer(checkpoint) do
@@ -1337,19 +1330,15 @@ defmodule Jido.Signal.Bus do
   defp maybe_stop_child_supervisor(nil), do: :ok
 
   defp maybe_stop_child_supervisor(pid) when is_pid(pid) do
-    try do
-      Supervisor.stop(pid, :normal, 1_000)
-    catch
-      :exit, _reason -> :ok
-    end
+    Supervisor.stop(pid, :normal, 1_000)
+  catch
+    :exit, _reason -> :ok
   end
 
   defp maybe_stop_owned_journal(%{journal_owned?: true, journal_pid: pid}) when is_pid(pid) do
-    try do
-      GenServer.stop(pid, :normal, 1_000)
-    catch
-      :exit, _reason -> :ok
-    end
+    GenServer.stop(pid, :normal, 1_000)
+  catch
+    :exit, _reason -> :ok
   end
 
   defp maybe_stop_owned_journal(_state), do: :ok

@@ -100,25 +100,21 @@ defmodule Jido.Signal.Bus.State do
   """
   @spec append_signals(t(), [Jido.Signal.t() | {:ok, Jido.Signal.t()} | map()]) ::
           {:ok, t(), [{String.t(), Signal.t()}]} | {:error, term()}
+  def append_signals(%__MODULE__{} = state, []), do: {:ok, state, []}
+
   def append_signals(%__MODULE__{} = state, signals) when is_list(signals) do
-    if signals == [] do
-      {:ok, state, []}
-    else
-      try do
-        {uuids, _timestamp} = ID.generate_batch(length(signals))
-        uuid_signal_pairs = Enum.zip(uuids, signals)
+    {uuids, _timestamp} = ID.generate_batch(length(signals))
+    uuid_signal_pairs = Enum.zip(uuids, signals)
 
-        with {:ok, new_state} <- append_uuid_signal_pairs(state, uuid_signal_pairs) do
-          {:ok, new_state, uuid_signal_pairs}
-        end
-      rescue
-        e in KeyError ->
-          {:error, "Invalid signal format: #{Exception.message(e)}"}
-
-        e ->
-          {:error, "Error processing signals: #{Exception.message(e)}"}
-      end
+    with {:ok, new_state} <- append_uuid_signal_pairs(state, uuid_signal_pairs) do
+      {:ok, new_state, uuid_signal_pairs}
     end
+  rescue
+    e in KeyError ->
+      {:error, "Invalid signal format: #{Exception.message(e)}"}
+
+    e ->
+      {:error, "Error processing signals: #{Exception.message(e)}"}
   end
 
   @doc """
@@ -127,36 +123,34 @@ defmodule Jido.Signal.Bus.State do
   @spec append_uuid_signal_pairs(t(), [{String.t(), Signal.t()}]) :: {:ok, t()} | {:error, term()}
   def append_uuid_signal_pairs(%__MODULE__{} = state, uuid_signal_pairs)
       when is_list(uuid_signal_pairs) do
-    try do
-      new_log =
-        Enum.reduce(uuid_signal_pairs, state.log, fn {uuid, signal}, acc ->
-          Map.put(acc, uuid, signal)
-        end)
+    new_log =
+      Enum.reduce(uuid_signal_pairs, state.log, fn {uuid, signal}, acc ->
+        Map.put(acc, uuid, signal)
+      end)
 
-      {final_log, truncated_count} =
-        if map_size(new_log) > state.max_log_size do
-          truncated = truncate_to_size(new_log, state.max_log_size)
-          {truncated, map_size(new_log) - state.max_log_size}
-        else
-          {new_log, 0}
-        end
-
-      if truncated_count > 0 do
-        Telemetry.execute(
-          [:jido, :signal, :bus, :log_truncated],
-          %{removed_count: truncated_count},
-          %{bus_name: state.name, new_size: state.max_log_size}
-        )
+    {final_log, truncated_count} =
+      if map_size(new_log) > state.max_log_size do
+        truncated = truncate_to_size(new_log, state.max_log_size)
+        {truncated, map_size(new_log) - state.max_log_size}
+      else
+        {new_log, 0}
       end
 
-      {:ok, %{state | log: final_log}}
-    rescue
-      e in KeyError ->
-        {:error, "Invalid signal format: #{Exception.message(e)}"}
-
-      e ->
-        {:error, "Error processing signals: #{Exception.message(e)}"}
+    if truncated_count > 0 do
+      Telemetry.execute(
+        [:jido, :signal, :bus, :log_truncated],
+        %{removed_count: truncated_count},
+        %{bus_name: state.name, new_size: state.max_log_size}
+      )
     end
+
+    {:ok, %{state | log: final_log}}
+  rescue
+    e in KeyError ->
+      {:error, "Invalid signal format: #{Exception.message(e)}"}
+
+    e ->
+      {:error, "Error processing signals: #{Exception.message(e)}"}
   end
 
   # Truncates log to max_size, keeping the most recent entries (UUID7 is time-ordered)

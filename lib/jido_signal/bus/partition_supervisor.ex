@@ -7,8 +7,8 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
   """
   use Supervisor
 
-  alias Jido.Signal.Names
   alias Jido.Signal.Bus.Partition
+  alias Jido.Signal.Names
 
   @doc """
   Starts the partition supervisor.
