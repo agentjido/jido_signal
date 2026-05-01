@@ -26,5 +26,4 @@ jobs:
       experimental_compile_otp_versions: '["28.4.1"]'
       experimental_compile_otp_name: '28'
       docs_command: mix docs -f html
-      community_files_source_ref: chore/jido-policy-baseline
       test_command: mix test
