@@ -133,10 +133,7 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker do
   """
   @spec status(atom()) :: :ok | :blown
   def status(adapter_type) do
-    case fuse_call(:ask, [fuse_name(adapter_type), :sync]) do
-      :ok -> :ok
-      :blown -> :blown
-    end
+    fuse_call(:ask, [fuse_name(adapter_type), :sync])
   end
 
   @doc """

@@ -143,10 +143,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
     duration_us = System.monotonic_time(:microsecond) - start_time
     emit_telemetry(:get_effects, duration_us)
 
-    case result do
-      {:ok, effects} -> {:ok, effects}
-      {:error, reason} -> {:error, reason}
-    end
+    result
   end
 
   @impl true
@@ -224,10 +221,7 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
     duration_us = System.monotonic_time(:microsecond) - start_time
     emit_telemetry(:get_conversation, duration_us)
 
-    case result do
-      {:ok, signals} -> {:ok, signals}
-      {:error, reason} -> {:error, reason}
-    end
+    result
   end
 
   @impl true
