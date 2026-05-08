@@ -44,9 +44,7 @@ defmodule Jido.Signal.ExtTest do
 
     @impl Jido.Signal.Ext
     def from_attrs(attrs) do
-      # Custom deserialization: only process if this extension's data is present
-      # Handle both atom and string keys for tests
-      custom_content = attrs[:custom_content] || attrs["custom_content"]
+      custom_content = attrs[:custom_content]
 
       case custom_content do
         "custom_" <> actual_data -> %{content: actual_data}

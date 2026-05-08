@@ -197,10 +197,7 @@ defmodule Jido.Signal.Bus.Stream do
   end
 
   defp correlation_id_for(%Signal{} = signal) do
-    correlation_extension =
-      Map.get(signal.extensions, "correlation") || Map.get(signal.extensions, :correlation)
-
-    case correlation_extension do
+    case correlation_extension(signal.extensions) do
       %{trace_id: trace_id} when is_binary(trace_id) -> trace_id
       %{"trace_id" => trace_id} when is_binary(trace_id) -> trace_id
       %{correlation_id: correlation_id} when is_binary(correlation_id) -> correlation_id
@@ -208,4 +205,14 @@ defmodule Jido.Signal.Bus.Stream do
       _ -> nil
     end
   end
+
+  defp correlation_extension(%{"correlation" => nil, :correlation => correlation_extension}),
+    do: correlation_extension
+
+  defp correlation_extension(%{"correlation" => false, :correlation => correlation_extension}),
+    do: correlation_extension
+
+  defp correlation_extension(%{"correlation" => correlation_extension}), do: correlation_extension
+  defp correlation_extension(%{:correlation => correlation_extension}), do: correlation_extension
+  defp correlation_extension(_extensions), do: nil
 end

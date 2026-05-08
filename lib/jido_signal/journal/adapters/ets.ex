@@ -55,10 +55,7 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
     # Generate a unique prefix for this instance
     prefix = "journal_#{System.unique_integer([:positive, :monotonic])}_"
 
-    case start_link(prefix) do
-      {:ok, pid} -> {:ok, pid}
-      error -> error
-    end
+    start_link(prefix)
   end
 
   @impl Jido.Signal.Journal.Persistence

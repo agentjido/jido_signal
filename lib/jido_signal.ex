@@ -323,8 +323,8 @@ defmodule Jido.Signal do
   @doc false
   @spec build_extension_policy_modules(keyword()) :: %{optional(String.t()) => module()}
   def build_extension_policy_modules(policy) when is_list(policy) do
-    Enum.reduce(policy, %{}, fn {extension_module, _mode}, acc ->
-      Map.put(acc, extension_module.namespace(), extension_module)
+    Map.new(policy, fn {extension_module, _mode} ->
+      {extension_module.namespace(), extension_module}
     end)
   end
 

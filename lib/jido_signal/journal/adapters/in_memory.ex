@@ -12,19 +12,16 @@ defmodule Jido.Signal.Journal.Adapters.InMemory do
 
   @impl true
   def init do
-    case Agent.start_link(fn ->
-           %{
-             signals: %{},
-             causes: %{},
-             effects: %{},
-             conversations: %{},
-             checkpoints: %{},
-             dlq: %{}
-           }
-         end) do
-      {:ok, pid} -> {:ok, pid}
-      error -> error
-    end
+    Agent.start_link(fn ->
+      %{
+        signals: %{},
+        causes: %{},
+        effects: %{},
+        conversations: %{},
+        checkpoints: %{},
+        dlq: %{}
+      }
+    end)
   end
 
   @impl true

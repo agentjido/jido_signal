@@ -73,8 +73,7 @@ defmodule Jido.Signal.Serialization.VersioningTest do
       {:ok, term_binary} = ErlangTermSerializer.serialize(signal)
       term_map = :erlang.binary_to_term(term_binary, [:safe])
 
-      # ErlangTerm may have atom or string keys depending on source
-      version = term_map["jido_schema_version"] || term_map[:jido_schema_version]
+      version = term_map["jido_schema_version"]
       assert version == 1
     end
 
