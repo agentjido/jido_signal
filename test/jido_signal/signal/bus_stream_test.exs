@@ -380,6 +380,24 @@ defmodule Jido.Signal.Bus.StreamTest do
       assert hd(filtered_signals).signal.extensions["correlation"].trace_id == correlation_id
     end
 
+    test "filters signals by correlation_id with atom-keyed extension namespace" do
+      {:ok, signal} =
+        Signal.new("test.signal.1", %{value: 1},
+          extensions: %{correlation: %{trace_id: "trace-123"}}
+        )
+
+      state = %BusState{
+        name: :test_bus,
+        router: Router.new!(),
+        log: %{"uuid-1" => signal}
+      }
+
+      {:ok, filtered_signals} = Stream.filter(state, "**", nil, correlation_id: "trace-123")
+
+      assert length(filtered_signals) == 1
+      assert hd(filtered_signals).type == "test.signal.1"
+    end
+
     test "returns signals in chronological order" do
       {:ok, base_signal} =
         Signal.new(%{
