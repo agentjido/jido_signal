@@ -4,7 +4,9 @@
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_signal/)
 [![CI](https://github.com/agentjido/jido_signal/actions/workflows/ci.yml/badge.svg)](https://github.com/agentjido/jido_signal/actions/workflows/ci.yml)
 [![License](https://img.shields.io/hexpm/l/jido_signal.svg)](https://github.com/agentjido/jido_signal/blob/main/LICENSE)
-[![Coverage Status](https://coveralls.io/repos/github/agentjido/jido_signal/badge.svg?branch=main)](https://coveralls.io/github/agentjido/jido_signal?branch=main)
+[![Website](https://img.shields.io/badge/website-jido.run-0f172a.svg)](https://jido.run)
+[![Ecosystem](https://img.shields.io/badge/ecosystem-jido.run-0ea5e9.svg)](https://jido.run/ecosystem)
+[![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://jido.run/discord)
 
 > **Agent Communication Envelope and Utilities**
 
@@ -587,6 +589,8 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - [Documentation](https://hexdocs.pm/jido_signal)
 - [GitHub Repository](https://github.com/agentjido/jido_signal)
 - [Jido Website](https://jido.run)
+- [Jido Ecosystem](https://jido.run/ecosystem)
+- [Discord](https://jido.run/discord)
 - [CloudEvents Specification](https://cloudevents.io/)
 
 ---
