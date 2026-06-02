@@ -40,9 +40,8 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
   @impl true
   def init do
     with :ok <- ensure_started(),
-         :ok <- create_tables(),
-         :ok <- wait_for_tables() do
-      :ok
+         :ok <- create_tables() do
+      wait_for_tables()
     end
   end
 
