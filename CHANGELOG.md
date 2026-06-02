@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+## [v2.2.1](https://github.com/agentjido/jido_signal/compare/v2.2.0...v2.2.1) (2026-06-02)
+
+
+
+
+### Bug Fixes:
+
+* remove memento dependency by mikehostetler
+
 ## [v2.2.0](https://github.com/agentjido/jido_signal/compare/v2.1.1...v2.2.0) (2026-05-22)
 
 
