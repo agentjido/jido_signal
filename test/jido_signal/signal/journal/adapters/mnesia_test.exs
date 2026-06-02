@@ -64,6 +64,23 @@ defmodule Jido.Signal.Journal.Adapters.MnesiaTest do
     assert Tables.Checkpoint in mnesia_tables
   end
 
+  test "init returns an error when a disc-backed schema has not been created" do
+    try do
+      :mnesia.stop()
+      File.rm_rf("Mnesia.nonode@nohost")
+
+      assert {:error,
+              {:table_creation_failed, Tables.Signal,
+               {:bad_type, Tables.Signal, :disc_copies, _node}}} = Mnesia.init()
+    after
+      :mnesia.stop()
+      File.rm_rf("Mnesia.nonode@nohost")
+      :mnesia.create_schema([node()])
+      :mnesia.start()
+      :ok = Mnesia.init()
+    end
+  end
+
   test "put_signal/2 and get_signal/2" do
     signal = create_test_signal()
     assert :ok = Mnesia.put_signal(signal, nil)

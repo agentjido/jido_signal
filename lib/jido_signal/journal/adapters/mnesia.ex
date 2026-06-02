@@ -39,24 +39,44 @@ defmodule Jido.Signal.Journal.Adapters.Mnesia do
 
   @impl true
   def init do
+    with :ok <- ensure_started(),
+         :ok <- create_tables(),
+         :ok <- wait_for_tables() do
+      :ok
+    end
+  end
+
+  defp ensure_started do
     case :mnesia.system_info(:is_running) do
       :no -> :mnesia.start()
       _ -> :ok
     end
+  end
 
-    Enum.each(@tables, fn table ->
+  defp create_tables do
+    Enum.reduce_while(@tables, :ok, fn table, :ok ->
       case create_table(table) do
         :ok ->
-          :ok
+          {:cont, :ok}
 
         {:error, reason} ->
           Logger.warning("Failed to create Mnesia table #{inspect(table)}: #{inspect(reason)}")
+          {:halt, {:error, {:table_creation_failed, table, reason}}}
       end
     end)
+  end
 
-    :mnesia.wait_for_tables(@tables, 5000)
+  defp wait_for_tables do
+    case :mnesia.wait_for_tables(@tables, 5000) do
+      :ok ->
+        :ok
 
-    :ok
+      {:timeout, tables} ->
+        {:error, {:tables_not_available, tables}}
+
+      {:error, reason} ->
+        {:error, {:tables_not_available, reason}}
+    end
   end
 
   @impl true
