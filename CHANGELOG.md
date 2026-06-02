@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+### Fixed
+- Remove the direct `memento` dependency by implementing the Mnesia journal adapter with native `:mnesia`, restoring compatibility with OTP 29.
+
 ## [v2.2.0](https://github.com/agentjido/jido_signal/compare/v2.1.1...v2.2.0) (2026-05-22)
 
 
