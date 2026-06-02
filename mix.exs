@@ -60,7 +60,7 @@ defmodule Jido.Signal.MixProject do
 
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :mnesia],
       mod: {Jido.Signal.Application, []}
     ]
   end
@@ -204,7 +204,6 @@ defmodule Jido.Signal.MixProject do
       {:uniq, "~> 0.6.1"},
       {:splode, "~> 0.3.0"},
       {:zoi, "~> 0.18.1"},
-      {:memento, "~> 0.5.0"},
       {:fuse, "~> 2.5"},
 
       # Development & Test Dependencies

@@ -31,7 +31,7 @@ The Journal uses a behavior-based adapter pattern for storage:
 
 - **InMemory**: Fast in-process storage using Agent (default)
 - **ETS**: Shared ETS tables for cross-process access
-- **Mnesia**: Durable distributed storage using Memento; survives restarts
+- **Mnesia**: Durable distributed storage using Erlang/OTP Mnesia; survives restarts
 - **Custom**: Implement `Jido.Signal.Journal.Persistence` for databases, files, etc.
 
 ## Getting Started
@@ -135,7 +135,7 @@ journal = Jido.Signal.Journal.new(Jido.Signal.Journal.Adapters.Mnesia)
 - Distributed replication across Erlang cluster nodes
 - Full support for checkpoints and DLQ (for persistent subscriptions)
 - Higher latency than ETS but provides durability guarantees
-- Uses Memento tables: Signal, Cause, Effect, Conversation, Checkpoint, DLQ
+- Uses native Mnesia tables: Signal, Cause, Effect, Conversation, Checkpoint, DLQ
 
 ## Checkpoints and Dead Letter Queue
 

@@ -205,6 +205,7 @@ defmodule Jido.Signal.Journal.DLQMnesiaTest do
   alias Jido.Signal.Journal.Adapters.Mnesia
   alias Jido.Signal.Journal.Adapters.Mnesia.Tables
 
+  @compile {:no_warn_undefined, :mnesia}
   @moduletag :mnesia
 
   defp create_test_signal do
