@@ -188,15 +188,13 @@ defmodule Jido.Signal.Dispatch.Http do
   defp validate_url(nil), do: {:error, "url is required"}
 
   defp validate_url(url) when is_binary(url) do
-    cond do
-      Regex.match?(@url_unsafe_pattern, url) ->
-        {:error, "invalid url: contains whitespace or control characters"}
-
-      true ->
-        case URI.new(url) do
-          {:ok, uri} -> validate_http_uri(uri, url)
-          {:error, _part} -> {:error, "invalid url: must be a well-formed HTTP or HTTPS URL"}
-        end
+    if Regex.match?(@url_unsafe_pattern, url) do
+      {:error, "invalid url: contains whitespace or control characters"}
+    else
+      case URI.new(url) do
+        {:ok, uri} -> validate_http_uri(uri, url)
+        {:error, _part} -> {:error, "invalid url: must be a well-formed HTTP or HTTPS URL"}
+      end
     end
   end
 
@@ -332,56 +330,29 @@ defmodule Jido.Signal.Dispatch.Http do
          retry_config,
          attempt \\ 1
        ) do
+    request = %{
+      method: method,
+      url: url,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+      ssl_options: ssl_options,
+      retry_config: retry_config,
+      attempt: attempt
+    }
+
     method
     |> do_request(url, headers, body, timeout, ssl_options)
-    |> handle_request_result(
-      method,
-      url,
-      headers,
-      body,
-      timeout,
-      ssl_options,
-      retry_config,
-      attempt
-    )
+    |> handle_request_result(request)
   end
 
-  defp handle_request_result(
-         :ok,
-         _method,
-         _url,
-         _headers,
-         _body,
-         _timeout,
-         _ssl_options,
-         _retry_config,
-         _attempt
-       ),
-       do: :ok
+  defp handle_request_result(:ok, _request), do: :ok
 
-  defp handle_request_result(
-         {:error, reason} = error,
-         method,
-         url,
-         headers,
-         body,
-         timeout,
-         ssl_options,
-         retry_config,
-         attempt
-       ) do
+  defp handle_request_result({:error, reason} = error, request) do
+    %{attempt: attempt, retry_config: retry_config} = request
+
     if should_retry?(attempt, retry_config) do
-      retry_request(
-        method,
-        url,
-        headers,
-        body,
-        timeout,
-        ssl_options,
-        retry_config,
-        attempt,
-        reason
-      )
+      retry_request(request, reason)
     else
       log_request_failure(attempt, reason)
       error
@@ -394,17 +365,18 @@ defmodule Jido.Signal.Dispatch.Http do
     end)
   end
 
-  defp retry_request(
-         method,
-         url,
-         headers,
-         body,
-         timeout,
-         ssl_options,
-         retry_config,
-         attempt,
-         reason
-       ) do
+  defp retry_request(request, reason) do
+    %{
+      method: method,
+      url: url,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+      ssl_options: ssl_options,
+      retry_config: retry_config,
+      attempt: attempt
+    } = request
+
     delay = calculate_delay(attempt, retry_config)
 
     Util.cond_log(Util.default_log_level(), :info, fn ->

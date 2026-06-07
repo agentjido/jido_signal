@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
-### Security:
-
-* harden dispatch, webhook, HTTP, console, and ETS journal boundaries
-
 ## [v2.2.1](https://github.com/agentjido/jido_signal/compare/v2.2.0...v2.2.1) (2026-06-02)
 
 
