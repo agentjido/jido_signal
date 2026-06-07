@@ -119,7 +119,7 @@ defmodule Jido.Signal.Dispatch.ConsoleAdapter do
   def deliver(signal, opts) do
     timestamp = DateTime.utc_now() |> DateTime.to_iso8601()
     include_data = option(opts, :include_data, true)
-    data = if include_data, do: Sanitizer.preview(signal.data, :telemetry), else: "[OMITTED]"
+    data = if include_data, do: inspect_data(signal.data), else: "[OMITTED]"
 
     IO.puts("""
     [#{timestamp}] SIGNAL DISPATCHED
@@ -134,4 +134,10 @@ defmodule Jido.Signal.Dispatch.ConsoleAdapter do
 
   defp option(opts, key, default) when is_list(opts), do: Keyword.get(opts, key, default)
   defp option(_opts, _key, default), do: default
+
+  defp inspect_data(data) do
+    data
+    |> Sanitizer.sanitize(:telemetry)
+    |> inspect(pretty: true, limit: :infinity, printable_limit: :infinity)
+  end
 end
