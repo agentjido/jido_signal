@@ -132,6 +132,31 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     :telemetry.detach(handler_id)
   end
 
+  test "dispatch start telemetry redacts URL credentials and query strings" do
+    test_pid = self()
+    handler_id = {__MODULE__, :url_target_redaction, test_pid}
+
+    Process.put(:test_pid, test_pid)
+
+    :telemetry.attach(
+      handler_id,
+      [:jido, :dispatch, :start],
+      &__MODULE__.handle_telemetry_event/4,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+    config = {:http, [url: "https://user:pass@example.com/path?token=secret"]}
+
+    assert {:error, _reason} = Dispatch.dispatch(signal, config)
+
+    assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
+    assert metadata.target == "https://example.com/path"
+    assert metadata.target_kind == :url
+  end
+
   test "dispatch leaves raw adapter reasons unchanged by default" do
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
     config = {:named, [target: {:name, :nonexistent_process}, delivery_mode: :async]}

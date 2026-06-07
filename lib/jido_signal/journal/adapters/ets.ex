@@ -182,12 +182,12 @@ defmodule Jido.Signal.Journal.Adapters.ETS do
   @impl GenServer
   def init(_prefix) do
     adapter = %__MODULE__{
-      signals_table: :ets.new(:signals, [:set, :public]),
-      causes_table: :ets.new(:causes, [:set, :public]),
-      effects_table: :ets.new(:effects, [:set, :public]),
-      conversations_table: :ets.new(:conversations, [:set, :public]),
-      checkpoints_table: :ets.new(:checkpoints, [:set, :public]),
-      dlq_table: :ets.new(:dlq, [:set, :public])
+      signals_table: :ets.new(:signals, [:set, :protected]),
+      causes_table: :ets.new(:causes, [:set, :protected]),
+      effects_table: :ets.new(:effects, [:set, :protected]),
+      conversations_table: :ets.new(:conversations, [:set, :protected]),
+      checkpoints_table: :ets.new(:checkpoints, [:set, :protected]),
+      dlq_table: :ets.new(:dlq, [:set, :protected])
     }
 
     {:ok, adapter}

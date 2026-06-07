@@ -25,9 +25,13 @@ defmodule Jido.Signal.Sanitizer do
                     "private_key",
                     "refresh_token",
                     "secret",
+                    "signature",
                     "set_cookie",
                     "token",
-                    "webhook_secret"
+                    "webhook_secret",
+                    "webhook_signature",
+                    "x_api_key",
+                    "x_webhook_signature"
                   ])
 
   @doc """
@@ -82,7 +86,10 @@ defmodule Jido.Signal.Sanitizer do
 
   defp do_sanitize(value, profile, opts, depth) when is_list(value) do
     cond do
-      Keyword.keyword?(value) ->
+      value != [] and Keyword.keyword?(value) ->
+        sanitize_map(Map.new(value), profile, opts, depth)
+
+      key_value_list?(value) ->
         sanitize_map(Map.new(value), profile, opts, depth)
 
       depth >= opts.max_depth ->
@@ -310,8 +317,19 @@ defmodule Jido.Signal.Sanitizer do
   defp key_sort_token(key), do: inspect(key)
 
   defp sensitive_key?(key) do
-    key = key |> key_sort_token() |> String.downcase()
-    MapSet.member?(@sensitive_keys, key)
+    key = key |> key_sort_token() |> String.downcase() |> String.replace("-", "_")
+    unprefixed_key = String.trim_leading(key, "x_")
+
+    MapSet.member?(@sensitive_keys, key) or MapSet.member?(@sensitive_keys, unprefixed_key)
+  end
+
+  defp key_value_list?([]), do: false
+
+  defp key_value_list?(list) do
+    Enum.all?(list, fn
+      {key, _value} when is_atom(key) or is_binary(key) -> true
+      _other -> false
+    end)
   end
 
   defp summarize_collection(collection, :telemetry) when is_map(collection) do

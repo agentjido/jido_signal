@@ -313,6 +313,29 @@ defmodule JidoTest.Signal.Dispatch.ConsoleAdapterTest do
       assert output =~ String.slice(long_string, 0, 10)
     end
 
+    test "redacts sensitive data in console output", %{} do
+      {:ok, signal} =
+        Signal.new(%{
+          type: "secret.data",
+          source: "/test",
+          data: %{
+            api_key: "api-secret",
+            nested: %{password: "password-secret"},
+            safe: "visible"
+          }
+        })
+
+      output =
+        capture_io(fn ->
+          assert :ok = ConsoleAdapter.deliver(signal, [])
+        end)
+
+      assert output =~ "[REDACTED]"
+      assert output =~ "visible"
+      refute output =~ "api-secret"
+      refute output =~ "password-secret"
+    end
+
     test "concurrent deliveries work correctly", %{} do
       {:ok, signal} = Signal.new(%{type: "concurrent", source: "/test", data: %{id: "test"}})
 

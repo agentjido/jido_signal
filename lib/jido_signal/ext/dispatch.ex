@@ -91,6 +91,11 @@ defmodule Jido.Signal.Ext.Dispatch do
 
   alias Jido.Signal.Dispatch
 
+  @external_adapters Map.new(
+                       [:pid, :bus, :named, :pubsub, :logger, :console, :noop, :http, :webhook],
+                       fn adapter -> {Atom.to_string(adapter), adapter} end
+                     )
+
   # Override the default validation to use dispatch validation
   defoverridable validate_data: 1
 
@@ -180,9 +185,14 @@ defmodule Jido.Signal.Ext.Dispatch do
 
   defp deserialize_config(%{"adapter" => adapter_str, "opts" => opts_map})
        when is_binary(adapter_str) and is_map(opts_map) do
-    adapter = String.to_existing_atom(adapter_str)
-    opts = deserialize_opts(opts_map)
-    {adapter, opts}
+    case Map.fetch(@external_adapters, adapter_str) do
+      {:ok, adapter} ->
+        opts = deserialize_opts(opts_map)
+        {adapter, opts}
+
+      :error ->
+        %{"adapter" => adapter_str, "opts" => opts_map}
+    end
   end
 
   defp deserialize_config(configs) when is_list(configs) do

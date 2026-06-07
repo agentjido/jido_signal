@@ -66,9 +66,9 @@ defmodule Jido.Signal.Dispatch do
 
   ## Reserved Options
 
-  The following option keys are reserved for internal use and should not be used in dispatch configurations:
+  The following option keys are reserved for internal use and are stripped from dispatch configurations:
 
-  * `:__validated__` - Marks pre-validated configurations (internal optimization flag)
+  * `:__validated__`
 
   ## Deprecated
 
@@ -463,7 +463,7 @@ defmodule Jido.Signal.Dispatch do
       task_supervisor,
       validated_configs_with_idx,
       fn {config, original_idx} ->
-        case dispatch_single(signal, config) do
+        case dispatch_validated_single(signal, config) do
           :ok -> {:ok, original_idx}
           {:error, reason} -> {:error, {original_idx, reason}}
         end
@@ -558,13 +558,15 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp validate_single_config({nil, opts}) when is_list(opts) do
-    {:ok, {nil, opts}}
+    {:ok, {nil, strip_internal_opts(opts)}}
   end
 
   defp validate_single_config({adapter, opts}) when is_atom(adapter) and is_list(opts) do
+    opts = strip_internal_opts(opts)
+
     with {:ok, adapter_module} <- resolve_adapter(adapter),
          {:ok, validated_opts} <- validate_adapter_opts(adapter_module, opts, adapter) do
-      {:ok, {adapter, Keyword.put(validated_opts, :__validated__, true)}}
+      {:ok, {adapter, validated_opts}}
     else
       {:error, reason} -> normalize_validation_error(reason, adapter, {adapter, opts})
     end
@@ -580,12 +582,24 @@ defmodule Jido.Signal.Dispatch do
   defp dispatch_single(_signal, {nil, _opts}), do: :ok
 
   defp dispatch_single(signal, {adapter, opts}) do
+    with_dispatch_telemetry(signal, adapter, opts, fn ->
+      do_dispatch_single(signal, {adapter, opts})
+    end)
+  end
+
+  defp dispatch_validated_single(signal, {adapter, opts}) do
+    with_dispatch_telemetry(signal, adapter, opts, fn ->
+      do_dispatch_validated_single(signal, {adapter, opts})
+    end)
+  end
+
+  defp with_dispatch_telemetry(signal, adapter, opts, dispatch_fun) do
     start_time = System.monotonic_time(:millisecond)
     metadata = dispatch_telemetry_metadata(signal, adapter, opts)
 
     Telemetry.execute([:jido, :dispatch, :start], %{}, metadata)
 
-    result = do_dispatch_single(signal, {adapter, opts})
+    result = dispatch_fun.()
     measurements = %{latency_ms: System.monotonic_time(:millisecond) - start_time}
 
     if match?(:ok, result) do
@@ -615,22 +629,36 @@ defmodule Jido.Signal.Dispatch do
     end
   end
 
+  defp do_dispatch_validated_single(_signal, {nil, _opts}), do: :ok
+
+  defp do_dispatch_validated_single(signal, {adapter, opts}) do
+    case resolve_adapter(adapter) do
+      {:ok, nil} ->
+        :ok
+
+      {:ok, adapter_module} ->
+        dispatch_deliver(signal, adapter_module, adapter, opts)
+
+      {:error, reason} ->
+        normalize_error(reason, adapter, {adapter, opts})
+    end
+  end
+
   defp do_dispatch_with_adapter(_signal, nil, {_adapter, _opts}), do: :ok
 
   defp do_dispatch_with_adapter(signal, adapter_module, {adapter, opts}) do
-    # Skip validation if already validated
-    if Keyword.get(opts, :__validated__, false) do
-      dispatch_deliver(signal, adapter_module, adapter, opts)
-    else
-      case adapter_module.validate_opts(opts) do
-        {:ok, validated_opts} ->
-          dispatch_deliver(signal, adapter_module, adapter, validated_opts)
+    opts = strip_internal_opts(opts)
 
-        {:error, reason} ->
-          normalize_error(reason, adapter, {adapter, opts})
-      end
+    case adapter_module.validate_opts(opts) do
+      {:ok, validated_opts} ->
+        dispatch_deliver(signal, adapter_module, adapter, validated_opts)
+
+      {:error, reason} ->
+        normalize_error(reason, adapter, {adapter, opts})
     end
   end
+
+  defp strip_internal_opts(opts), do: Keyword.delete(opts, :__validated__)
 
   defp dispatch_deliver(signal, adapter_module, adapter, opts) do
     case adapter_module.deliver(signal, opts) do
@@ -673,13 +701,30 @@ defmodule Jido.Signal.Dispatch do
   defp get_target_from_opts(opts) do
     cond do
       target = Keyword.get(opts, :target) -> target
-      url = Keyword.get(opts, :url) -> url
+      url = Keyword.get(opts, :url) -> url_target_for_telemetry(url)
       pid = Keyword.get(opts, :pid) -> pid
       name = Keyword.get(opts, :name) -> name
       topic = Keyword.get(opts, :topic) -> topic
       true -> :unknown
     end
   end
+
+  defp url_target_for_telemetry(url) when is_binary(url) do
+    case URI.new(url) do
+      {:ok, %URI{scheme: scheme, host: host} = uri}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        uri
+        |> Map.put(:userinfo, nil)
+        |> Map.put(:query, nil)
+        |> Map.put(:fragment, nil)
+        |> URI.to_string()
+
+      _ ->
+        :invalid_url
+    end
+  end
+
+  defp url_target_for_telemetry(_url), do: :invalid_url
 
   defp target_kind(opts) do
     cond do
@@ -711,12 +756,26 @@ defmodule Jido.Signal.Dispatch do
         {:ok, module}
 
       :error ->
-        if Code.ensure_loaded?(adapter) and function_exported?(adapter, :deliver, 2) do
+        if dispatch_adapter_module?(adapter) do
           {:ok, adapter}
         else
           {:error,
-           "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, :pubsub, :bus, :logger, :console, :noop, :http, :webhook or a module implementing deliver/2"}
+           "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, :pubsub, :bus, :logger, :console, :noop, :http, :webhook or a module implementing Jido.Signal.Dispatch.Adapter"}
         end
     end
+  end
+
+  defp dispatch_adapter_module?(adapter) when is_atom(adapter) do
+    Code.ensure_loaded?(adapter) and
+      function_exported?(adapter, :validate_opts, 1) and
+      function_exported?(adapter, :deliver, 2) and
+      adapter_behaviour?(adapter)
+  end
+
+  defp adapter_behaviour?(adapter) do
+    behaviours = adapter.module_info(:attributes)[:behaviour] || []
+    Jido.Signal.Dispatch.Adapter in behaviours
+  rescue
+    _ -> false
   end
 end

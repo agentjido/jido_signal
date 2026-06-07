@@ -53,6 +53,11 @@ defmodule Jido.Signal.DispatchTest do
     end
   end
 
+  defmodule DeliverOnlyAdapter do
+    def validate_opts(opts), do: {:ok, opts}
+    def deliver(_signal, _opts), do: :ok
+  end
+
   describe "pid adapter" do
     setup do
       signal = %Jido.Signal{
@@ -182,6 +187,34 @@ defmodule Jido.Signal.DispatchTest do
     test "returns error for invalid adapter" do
       config = {:invalid_adapter, []}
       assert {:error, _} = Dispatch.validate_opts(config)
+    end
+
+    test "rejects modules that do not declare the adapter behaviour" do
+      config = {DeliverOnlyAdapter, []}
+      assert {:error, _} = Dispatch.validate_opts(config)
+    end
+
+    test "does not trust caller-supplied internal validation marker" do
+      signal = %Jido.Signal{
+        id: "test_signal",
+        type: "test",
+        source: "test",
+        time: DateTime.utc_now(),
+        data: %{}
+      }
+
+      config =
+        {:http,
+         [
+           __validated__: true,
+           url: "https://example.com",
+           method: :post,
+           headers: [{"x-bad\r\nx-injected", "value"}],
+           timeout: 5000,
+           retry: %{max_attempts: 1, base_delay: 1, max_delay: 1}
+         ]}
+
+      assert {:error, %Jido.Signal.Error.DispatchError{}} = Dispatch.dispatch(signal, config)
     end
 
     test "validates multiple dispatch configurations with default" do
