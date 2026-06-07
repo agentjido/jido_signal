@@ -116,7 +116,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
   def validate_opts(opts) do
-    with {:ok, _} <- Http.validate_opts(opts),
+    with {:ok, http_opts} <- Http.validate_opts(opts),
          {:ok, secret} <- validate_secret(Keyword.get(opts, :secret)),
          {:ok, signature_header} <-
            validate_header_name(
@@ -128,9 +128,10 @@ defmodule Jido.Signal.Dispatch.Webhook do
              Keyword.get(opts, :event_type_header, @default_event_type_header),
              :event_type_header
            ),
+         :ok <- validate_webhook_header_names(signature_header, event_type_header),
          {:ok, event_type_map} <- validate_event_type_map(Keyword.get(opts, :event_type_map)) do
       {:ok,
-       opts
+       http_opts
        |> Keyword.put(:secret, secret)
        |> Keyword.put(:signature_header, signature_header)
        |> Keyword.put(:event_type_header, event_type_header)
@@ -160,11 +161,13 @@ defmodule Jido.Signal.Dispatch.Webhook do
   """
   @spec deliver(Jido.Signal.t(), webhook_opts()) :: :ok | {:error, webhook_error()}
   def deliver(signal, opts) do
-    CircuitBreaker.install(:webhook)
+    with {:ok, opts} <- validate_opts(opts) do
+      CircuitBreaker.install(:webhook)
 
-    CircuitBreaker.run(:webhook, fn ->
-      do_deliver(signal, opts)
-    end)
+      CircuitBreaker.run(:webhook, fn ->
+        do_deliver(signal, opts)
+      end)
+    end
   end
 
   defp do_deliver(signal, opts) do
@@ -177,17 +180,18 @@ defmodule Jido.Signal.Dispatch.Webhook do
   @doc false
   @spec prepare_http_opts(Jido.Signal.t(), keyword()) :: {:ok, keyword()} | {:error, term()}
   def prepare_http_opts(signal, opts) do
-    payload = Jason.encode!(signal)
-    timestamp = DateTime.utc_now() |> DateTime.to_unix()
+    with {:ok, opts} <- validate_opts(opts),
+         {:ok, event_type} <- event_type(signal, opts) do
+      payload = Jason.encode!(signal)
+      timestamp = DateTime.utc_now() |> DateTime.to_unix()
 
-    with {:ok, event_type} <- event_type(signal, opts) do
       webhook_headers =
         []
         |> add_signature_header(payload, timestamp, opts)
         |> add_event_type_header(event_type, opts)
         |> add_timestamp_header(timestamp)
 
-      headers = merge_webhook_headers(Keyword.get(opts, :headers, []), webhook_headers)
+      headers = merge_webhook_headers(Keyword.get(opts, :headers, []), webhook_headers, opts)
 
       {:ok, Keyword.put(opts, :headers, headers)}
     end
@@ -203,15 +207,27 @@ defmodule Jido.Signal.Dispatch.Webhook do
   defp validate_secret(""), do: {:error, "secret must not be empty"}
   defp validate_secret(_invalid), do: {:error, "secret must be a string or nil"}
 
-  defp validate_header_name(name, _field) when is_binary(name) do
+  defp validate_header_name(name, field) when is_binary(name) do
     if Http.valid_header_name?(name) do
       {:ok, name}
     else
-      {:error, "invalid header name"}
+      {:error, "#{field} is not a valid HTTP header name"}
     end
   end
 
   defp validate_header_name(_invalid, field), do: {:error, "#{field} must be a string"}
+
+  defp validate_webhook_header_names(signature_header, event_type_header) do
+    header_names =
+      [signature_header, event_type_header, @default_timestamp_header]
+      |> Enum.map(&String.downcase/1)
+
+    if Enum.uniq(header_names) == header_names do
+      :ok
+    else
+      {:error, "webhook header names must be distinct"}
+    end
+  end
 
   defp validate_event_type_map(nil), do: {:ok, nil}
 
@@ -268,11 +284,9 @@ defmodule Jido.Signal.Dispatch.Webhook do
     end
   end
 
-  defp merge_webhook_headers(custom_headers, webhook_headers) when is_list(custom_headers) do
-    reserved_names =
-      webhook_headers
-      |> Enum.map(fn {name, _value} -> String.downcase(name) end)
-      |> MapSet.new()
+  defp merge_webhook_headers(custom_headers, webhook_headers, opts)
+       when is_list(custom_headers) do
+    reserved_names = reserved_webhook_header_names(opts)
 
     filtered_custom_headers =
       Enum.reject(custom_headers, fn
@@ -286,5 +300,15 @@ defmodule Jido.Signal.Dispatch.Webhook do
     filtered_custom_headers ++ webhook_headers
   end
 
-  defp merge_webhook_headers(_custom_headers, webhook_headers), do: webhook_headers
+  defp merge_webhook_headers(_custom_headers, webhook_headers, _opts), do: webhook_headers
+
+  defp reserved_webhook_header_names(opts) do
+    [
+      Keyword.get(opts, :signature_header, @default_signature_header),
+      Keyword.get(opts, :event_type_header, @default_event_type_header),
+      @default_timestamp_header
+    ]
+    |> Enum.map(&String.downcase/1)
+    |> MapSet.new()
+  end
 end

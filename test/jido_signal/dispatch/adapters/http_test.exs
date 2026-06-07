@@ -15,6 +15,10 @@ defmodule Jido.Signal.Dispatch.HttpTest do
     test "validates url format" do
       assert {:error, _} = Http.validate_opts(url: "not a url")
       assert {:error, _} = Http.validate_opts(url: "ftp://example.com")
+      assert {:error, _} = Http.validate_opts(url: "https://")
+      assert {:error, _} = Http.validate_opts(url: "https://exa mple.com")
+      assert {:error, _} = Http.validate_opts(url: "https://example.com:bad")
+      assert {:error, _} = Http.validate_opts(url: "https://user:pass@example.com/path")
       assert {:ok, _} = Http.validate_opts(url: "http://example.com")
       assert {:ok, _} = Http.validate_opts(url: "https://example.com")
     end
@@ -66,6 +70,12 @@ defmodule Jido.Signal.Dispatch.HttpTest do
                  url: "https://example.com",
                  headers: [{"bad:name", "value"}]
                )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 headers: [{"x-good", "bad\u0000value"}]
+               )
     end
 
     test "validates timeout" do
@@ -80,19 +90,37 @@ defmodule Jido.Signal.Dispatch.HttpTest do
       assert {:ok, opts} = Http.validate_opts(url: "https://example.com", ssl_options: [])
       assert opts[:ssl_options] == []
 
-      assert {:ok, opts} =
-               Http.validate_opts(
-                 url: "https://example.com",
-                 ssl_options: [verify: :verify_none]
-               )
-
-      assert opts[:ssl_options] == [verify: :verify_none]
-
       assert {:error, _} =
                Http.validate_opts(
                  url: "https://example.com",
                  ssl_options: %{verify: :verify_peer}
                )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 ssl_options: [verify: :verify_none]
+               )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 ssl_options: [verify_fun: {fn _, _, state -> {:valid, state} end, nil}]
+               )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 ssl_options: [customize_hostname_check: []]
+               )
+
+      assert {:ok, opts} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 ssl_options: [cacerts: []]
+               )
+
+      assert opts[:ssl_options] == [cacerts: []]
     end
 
     test "validates retry configuration" do
@@ -214,8 +242,8 @@ defmodule Jido.Signal.Dispatch.HttpTest do
         timeout: 1,
         retry: %{
           max_attempts: 1,
-          base_delay: 0,
-          max_delay: 0
+          base_delay: 1,
+          max_delay: 1
         }
       ]
 

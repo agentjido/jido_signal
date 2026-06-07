@@ -12,6 +12,8 @@ defmodule Jido.Signal.Dispatch.Http do
   * `:method` - (optional) HTTP method to use, one of [:post, :put, :patch], defaults to :post
   * `:headers` - (optional) List of headers to include in the request
   * `:timeout` - (optional) Request timeout in milliseconds, defaults to 5000
+  * `:ssl_options` - (optional) Additional TLS options. Certificate and hostname
+    verification are always enforced for HTTPS requests.
   * `:retry` - (optional) Retry configuration map with keys:
     * `:max_attempts` - Maximum number of retry attempts (default: 3)
     * `:base_delay` - Base delay between retries in milliseconds (default: 1000)
@@ -66,6 +68,9 @@ defmodule Jido.Signal.Dispatch.Http do
   @max_retry_delay 60_000
   @valid_methods [:post, :put, :patch]
   @header_name_pattern ~r/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+  @header_value_control_pattern ~r/[\x00-\x1F\x7F]/
+  @url_unsafe_pattern ~r/[\x00-\x20\x7F]/
+  @protected_ssl_options [:verify, :verify_fun, :customize_hostname_check]
 
   @type http_method :: :post | :put | :patch
   @type header :: {String.t(), String.t()}
@@ -152,11 +157,13 @@ defmodule Jido.Signal.Dispatch.Http do
   """
   @spec deliver(Jido.Signal.t(), delivery_opts()) :: :ok | {:error, delivery_error()}
   def deliver(signal, opts) do
-    CircuitBreaker.install(:http)
+    with {:ok, opts} <- validate_opts(opts) do
+      CircuitBreaker.install(:http)
 
-    CircuitBreaker.run(:http, fn ->
-      do_deliver(signal, opts)
-    end)
+      CircuitBreaker.run(:http, fn ->
+        do_deliver(signal, opts)
+      end)
+    end
   end
 
   @doc false
@@ -181,22 +188,32 @@ defmodule Jido.Signal.Dispatch.Http do
   defp validate_url(nil), do: {:error, "url is required"}
 
   defp validate_url(url) when is_binary(url) do
-    if String.contains?(url, ["\r", "\n"]) do
-      {:error, "invalid url: contains control characters"}
-    else
-      case URI.parse(url) do
-        %URI{scheme: scheme, host: host}
-        when not is_nil(scheme) and not is_nil(host) and scheme in ["http", "https"] ->
-          {:ok, url}
+    cond do
+      Regex.match?(@url_unsafe_pattern, url) ->
+        {:error, "invalid url: contains whitespace or control characters"}
 
-        _ ->
-          {:error,
-           "invalid url: #{Sanitizer.preview(url, :telemetry)} - must be an HTTP or HTTPS URL"}
-      end
+      true ->
+        case URI.new(url) do
+          {:ok, uri} -> validate_http_uri(uri, url)
+          {:error, _part} -> {:error, "invalid url: must be a well-formed HTTP or HTTPS URL"}
+        end
     end
   end
 
-  defp validate_url(invalid), do: {:error, "url must be a string, got: #{inspect(invalid)}"}
+  defp validate_url(_invalid), do: {:error, "url must be a string"}
+
+  defp validate_http_uri(%URI{userinfo: userinfo}, _url) when is_binary(userinfo) do
+    {:error, "invalid url: userinfo is not allowed"}
+  end
+
+  defp validate_http_uri(%URI{scheme: scheme, host: host}, url)
+       when scheme in ["http", "https"] and is_binary(host) and host != "" do
+    {:ok, url}
+  end
+
+  defp validate_http_uri(_uri, _url) do
+    {:error, "invalid url: must be an HTTP or HTTPS URL with a host"}
+  end
 
   defp validate_method(method) when method in @valid_methods, do: {:ok, method}
   defp validate_method(invalid), do: {:error, "invalid method: #{inspect(invalid)}"}
@@ -228,7 +245,7 @@ defmodule Jido.Signal.Dispatch.Http do
   @doc false
   @spec valid_header_value?(term()) :: boolean()
   def valid_header_value?(value) when is_binary(value) do
-    not String.contains?(value, ["\r", "\n"])
+    not Regex.match?(@header_value_control_pattern, value)
   end
 
   def valid_header_value?(_), do: false
@@ -243,14 +260,23 @@ defmodule Jido.Signal.Dispatch.Http do
   defp validate_timeout(_), do: {:error, "timeout must be a positive integer"}
 
   defp validate_ssl_options(opts) when is_list(opts) do
-    if Keyword.keyword?(opts) do
-      {:ok, opts}
-    else
-      {:error, "ssl_options must be a keyword list"}
+    cond do
+      not Keyword.keyword?(opts) ->
+        {:error, "ssl_options must be a keyword list"}
+
+      protected_option = protected_ssl_option(opts) ->
+        {:error, "#{protected_option} cannot be overridden in ssl_options"}
+
+      true ->
+        {:ok, opts}
     end
   end
 
   defp validate_ssl_options(_), do: {:error, "ssl_options must be a keyword list"}
+
+  defp protected_ssl_option(opts) do
+    Enum.find(@protected_ssl_options, &Keyword.has_key?(opts, &1))
+  end
 
   defp validate_retry(%{} = retry) do
     with {:ok, max_attempts} <- fetch_retry_integer(retry, :max_attempts),
