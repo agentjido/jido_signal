@@ -53,6 +53,11 @@ defmodule Jido.Signal.DispatchTest do
     end
   end
 
+  defmodule DeliverOnlyAdapter do
+    def validate_opts(opts), do: {:ok, opts}
+    def deliver(_signal, _opts), do: :ok
+  end
+
   describe "pid adapter" do
     setup do
       signal = %Jido.Signal{
@@ -181,6 +186,11 @@ defmodule Jido.Signal.DispatchTest do
 
     test "returns error for invalid adapter" do
       config = {:invalid_adapter, []}
+      assert {:error, _} = Dispatch.validate_opts(config)
+    end
+
+    test "rejects modules that do not declare the adapter behaviour" do
+      config = {DeliverOnlyAdapter, []}
       assert {:error, _} = Dispatch.validate_opts(config)
     end
 

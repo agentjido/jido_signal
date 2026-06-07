@@ -21,6 +21,27 @@ defmodule Jido.Signal.SanitizerTest do
       assert sanitized.safe == "value"
     end
 
+    test "redacts sensitive header tuple lists" do
+      sanitized =
+        Sanitizer.sanitize(
+          [
+            {"x-api-key", "api-secret"},
+            {"authorization", "Bearer secret-token"},
+            {"x-custom", "visible"}
+          ],
+          :telemetry
+        )
+
+      assert sanitized["x-api-key"] == "[REDACTED]"
+      assert sanitized["authorization"] == "[REDACTED]"
+      assert sanitized["x-custom"] == "visible"
+    end
+
+    test "keeps empty lists as lists" do
+      assert Sanitizer.sanitize([], :telemetry) == []
+      assert Sanitizer.sanitize([], :transport) == []
+    end
+
     test "serializes tuples and structs for transport" do
       {:ok, signal} =
         Signal.new(%{

@@ -49,6 +49,31 @@ defmodule Jido.Signal.Journal.Adapters.ETSTest do
     assert :ets.info(adapter.conversations_table) != :undefined
   end
 
+  test "tables are protected against direct writes from non-owner processes", %{pid: pid} do
+    adapter = :sys.get_state(pid)
+
+    assert :ets.info(adapter.signals_table, :protection) == :protected
+
+    parent = self()
+
+    spawn(fn ->
+      result =
+        try do
+          :ets.insert(adapter.signals_table, {"tampered", :signal})
+          :wrote
+        rescue
+          ArgumentError -> :protected
+        catch
+          :error, :badarg -> :protected
+        end
+
+      send(parent, {:direct_ets_write, result})
+    end)
+
+    assert_receive {:direct_ets_write, :protected}
+    assert {:error, :not_found} = ETS.get_signal("tampered", pid)
+  end
+
   test "put_signal/2 and get_signal/2", %{pid: pid} do
     signal = create_test_signal()
     assert :ok = ETS.put_signal(signal, pid)

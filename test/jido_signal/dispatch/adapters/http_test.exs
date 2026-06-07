@@ -48,13 +48,51 @@ defmodule Jido.Signal.Dispatch.HttpTest do
                  url: "https://example.com",
                  headers: "invalid"
                )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 headers: [{"x-good", "bad\r\nx-injected: yes"}]
+               )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 headers: [{"x-bad\r\nx-injected", "value"}]
+               )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 headers: [{"bad:name", "value"}]
+               )
     end
 
     test "validates timeout" do
       assert {:ok, _} = Http.validate_opts(url: "https://example.com", timeout: 5000)
       assert {:error, _} = Http.validate_opts(url: "https://example.com", timeout: 0)
       assert {:error, _} = Http.validate_opts(url: "https://example.com", timeout: -1)
+      assert {:error, _} = Http.validate_opts(url: "https://example.com", timeout: 60_001)
       assert {:error, _} = Http.validate_opts(url: "https://example.com", timeout: "invalid")
+    end
+
+    test "validates ssl options" do
+      assert {:ok, opts} = Http.validate_opts(url: "https://example.com", ssl_options: [])
+      assert opts[:ssl_options] == []
+
+      assert {:ok, opts} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 ssl_options: [verify: :verify_none]
+               )
+
+      assert opts[:ssl_options] == [verify: :verify_none]
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 ssl_options: %{verify: :verify_peer}
+               )
     end
 
     test "validates retry configuration" do
@@ -102,6 +140,35 @@ defmodule Jido.Signal.Dispatch.HttpTest do
                Http.validate_opts(
                  url: "https://example.com",
                  retry: "invalid"
+               )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 retry: %{
+                   max_attempts: 11,
+                   base_delay: 1000,
+                   max_delay: 5000
+                 }
+               )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 retry: %{
+                   max_attempts: 3,
+                   base_delay: 5000,
+                   max_delay: 1000
+                 }
+               )
+
+      assert {:error, _} =
+               Http.validate_opts(
+                 url: "https://example.com",
+                 retry: %{
+                   max_attempts: 3,
+                   base_delay: 1000
+                 }
                )
     end
   end

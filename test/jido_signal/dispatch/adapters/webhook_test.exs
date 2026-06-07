@@ -13,6 +13,7 @@ defmodule Jido.Signal.Dispatch.WebhookTest do
     test "validates optional secret" do
       assert {:ok, _} = Webhook.validate_opts(url: "https://example.com", secret: nil)
       assert {:ok, _} = Webhook.validate_opts(url: "https://example.com", secret: "mysecret")
+      assert {:error, _} = Webhook.validate_opts(url: "https://example.com", secret: "")
       assert {:error, _} = Webhook.validate_opts(url: "https://example.com", secret: 123)
     end
 
@@ -34,6 +35,18 @@ defmodule Jido.Signal.Dispatch.WebhookTest do
                Webhook.validate_opts(
                  url: "https://example.com",
                  event_type_header: 123
+               )
+
+      assert {:error, _} =
+               Webhook.validate_opts(
+                 url: "https://example.com",
+                 signature_header: "bad:header"
+               )
+
+      assert {:error, _} =
+               Webhook.validate_opts(
+                 url: "https://example.com",
+                 event_type_header: "bad\r\nheader"
                )
     end
 
@@ -59,6 +72,12 @@ defmodule Jido.Signal.Dispatch.WebhookTest do
                Webhook.validate_opts(
                  url: "https://example.com",
                  event_type_map: "invalid"
+               )
+
+      assert {:error, _} =
+               Webhook.validate_opts(
+                 url: "https://example.com",
+                 event_type_map: %{"user:created" => "bad\r\nvalue"}
                )
     end
 
@@ -151,6 +170,52 @@ defmodule Jido.Signal.Dispatch.WebhookTest do
 
       {:error, _} = result = Webhook.deliver(signal, opts)
       assert result
+    end
+
+    test "generated webhook headers override caller-supplied protected headers", %{signal: signal} do
+      opts = [
+        url: "https://example.com",
+        secret: "test_secret",
+        headers: [
+          {"X-Webhook-Signature", "attacker"},
+          {"x-webhook-event", "attacker.event"},
+          {"x-webhook-timestamp", "1"},
+          {"x-custom", "value"}
+        ]
+      ]
+
+      assert {:ok, http_opts} = Webhook.prepare_http_opts(signal, opts)
+      headers = Keyword.fetch!(http_opts, :headers)
+
+      refute {"X-Webhook-Signature", "attacker"} in headers
+      refute {"x-webhook-event", "attacker.event"} in headers
+      refute {"x-webhook-timestamp", "1"} in headers
+      assert {"x-custom", "value"} in headers
+
+      assert Enum.count(headers, fn {name, _} ->
+               String.downcase(name) == "x-webhook-signature"
+             end) == 1
+
+      assert Enum.count(headers, fn {name, _} ->
+               String.downcase(name) == "x-webhook-event"
+             end) == 1
+
+      assert Enum.count(headers, fn {name, _} ->
+               String.downcase(name) == "x-webhook-timestamp"
+             end) == 1
+    end
+
+    test "rejects signal types that cannot be sent as header values" do
+      signal = %Jido.Signal{
+        id: "test_signal",
+        type: "bad\r\nevent",
+        source: "test",
+        time: DateTime.utc_now(),
+        data: %{}
+      }
+
+      assert {:error, :invalid_event_type} =
+               Webhook.prepare_http_opts(signal, url: "https://example.com")
     end
   end
 end

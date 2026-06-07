@@ -711,12 +711,26 @@ defmodule Jido.Signal.Dispatch do
         {:ok, module}
 
       :error ->
-        if Code.ensure_loaded?(adapter) and function_exported?(adapter, :deliver, 2) do
+        if dispatch_adapter_module?(adapter) do
           {:ok, adapter}
         else
           {:error,
-           "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, :pubsub, :bus, :logger, :console, :noop, :http, :webhook or a module implementing deliver/2"}
+           "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, :pubsub, :bus, :logger, :console, :noop, :http, :webhook or a module implementing Jido.Signal.Dispatch.Adapter"}
         end
     end
+  end
+
+  defp dispatch_adapter_module?(adapter) when is_atom(adapter) do
+    Code.ensure_loaded?(adapter) and
+      function_exported?(adapter, :validate_opts, 1) and
+      function_exported?(adapter, :deliver, 2) and
+      adapter_behaviour?(adapter)
+  end
+
+  defp adapter_behaviour?(adapter) do
+    behaviours = adapter.module_info(:attributes)[:behaviour] || []
+    Jido.Signal.Dispatch.Adapter in behaviours
+  rescue
+    _ -> false
   end
 end

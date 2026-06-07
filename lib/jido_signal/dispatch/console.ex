@@ -62,6 +62,8 @@ defmodule Jido.Signal.Dispatch.ConsoleAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Sanitizer
+
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
   Validates the console adapter configuration options.
@@ -114,17 +116,22 @@ defmodule Jido.Signal.Dispatch.ConsoleAdapter do
       :ok
   """
   @spec deliver(Jido.Signal.t(), Keyword.t()) :: :ok
-  def deliver(signal, _opts) do
+  def deliver(signal, opts) do
     timestamp = DateTime.utc_now() |> DateTime.to_iso8601()
+    include_data = option(opts, :include_data, true)
+    data = if include_data, do: Sanitizer.preview(signal.data, :telemetry), else: "[OMITTED]"
 
     IO.puts("""
     [#{timestamp}] SIGNAL DISPATCHED
     id=#{signal.id}
     type=#{signal.type}
     source=#{signal.source}
-    data=#{inspect(signal.data, pretty: true, limit: :infinity)}
+    data=#{data}
     """)
 
     :ok
   end
+
+  defp option(opts, key, default) when is_list(opts), do: Keyword.get(opts, key, default)
+  defp option(_opts, _key, default), do: default
 end

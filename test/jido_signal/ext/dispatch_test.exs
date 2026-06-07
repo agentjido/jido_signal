@@ -403,6 +403,45 @@ defmodule Jido.Signal.Ext.DispatchTest do
     end
   end
 
+  describe "production dispatch extension security" do
+    test "deserializes built-in adapter names from CloudEvents attributes" do
+      attrs = %{
+        "dispatch" => %{
+          "adapter" => "logger",
+          "opts" => %{"level" => "info"}
+        }
+      }
+
+      assert {:logger, opts} = Jido.Signal.Ext.Dispatch.from_attrs(attrs)
+      assert opts[:level] == :info
+    end
+
+    test "does not deserialize arbitrary module adapter names from CloudEvents attributes" do
+      attrs = %{
+        "dispatch" => %{
+          "adapter" => "Elixir.Jido.Signal.DispatchTest.MockBusAdapter",
+          "opts" => %{}
+        }
+      }
+
+      result = Jido.Signal.Ext.Dispatch.from_attrs(attrs)
+
+      assert result == attrs["dispatch"]
+      assert {:error, _reason} = Jido.Signal.Ext.Dispatch.validate_data(result)
+    end
+
+    test "does not raise for unknown adapter strings" do
+      attrs = %{
+        "dispatch" => %{
+          "adapter" => "unknown_adapter_#{System.unique_integer([:positive])}",
+          "opts" => %{}
+        }
+      }
+
+      assert Jido.Signal.Ext.Dispatch.from_attrs(attrs) == attrs["dispatch"]
+    end
+  end
+
   describe "integration with Signal extension API" do
     setup do
       {:ok, signal} = Signal.new("test.event", %{message: "test"}, source: "/test")
