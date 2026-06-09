@@ -1,37 +1,42 @@
-if Code.ensure_loaded?(Msgpax) do
-  defmodule Jido.Signal.Serialization.MsgpackSerializer do
-    @moduledoc """
-    A serializer that uses the MessagePack format via the Msgpax library.
+defmodule Jido.Signal.Serialization.MsgpackSerializer do
+  @moduledoc """
+  A serializer that uses the MessagePack format via the optional Msgpax library.
 
-    MessagePack is a binary serialization format that is more compact than JSON
-    but still platform-independent, making it ideal for network communication
-    and storage.
+  MessagePack is a binary serialization format that is more compact than JSON
+  but still platform-independent, making it ideal for network communication
+  and storage.
 
-    ## Features
+  ## Features
 
-    - More compact than JSON
-    - Preserves more data types than JSON
-    - Cross-platform compatibility
-    - Fast serialization/deserialization
+  - More compact than JSON
+  - Preserves more data types than JSON
+  - Cross-platform compatibility
+  - Fast serialization/deserialization
 
-    ## Usage
+  ## Usage
 
-        # Configure as default serializer
-        config :jido, :default_serializer, Jido.Signal.Serialization.MsgpackSerializer
+      # Configure as default serializer
+      config :jido, :default_serializer, Jido.Signal.Serialization.MsgpackSerializer
 
-        # Or use explicitly
-        Signal.serialize(signal, serializer: Jido.Signal.Serialization.MsgpackSerializer)
+      # Or use explicitly
+      Signal.serialize(signal, serializer: Jido.Signal.Serialization.MsgpackSerializer)
 
-    ## Type Handling
+  ## Optional Dependency
 
-    MessagePack has limitations compared to Erlang terms:
-    - Atoms are converted to strings
-    - Tuples are converted to arrays
-    - Custom structs need explicit handling
-    """
+  Applications using this serializer must include `{:msgpax, "~> 2.3"}` in
+  their own dependencies.
 
-    @behaviour Jido.Signal.Serialization.Serializer
+  ## Type Handling
 
+  MessagePack has limitations compared to Erlang terms:
+  - Atoms are converted to strings
+  - Tuples are converted to arrays
+  - Custom structs need explicit handling
+  """
+
+  @behaviour Jido.Signal.Serialization.Serializer
+
+  if Code.ensure_loaded?(Msgpax) do
     alias Jido.Signal.Serialization.CloudEventsTransform
     alias Jido.Signal.Serialization.Config
     alias Jido.Signal.Serialization.TypeProvider
@@ -197,5 +202,30 @@ if Code.ensure_loaded?(Msgpax) do
     end
 
     defp prepare_for_serialization(term), do: term
+  else
+    @missing_msgpax_error {:missing_optional_dependency, :msgpax,
+                           "Add {:msgpax, \"~> 2.3\"} to your deps to use MessagePack serialization"}
+
+    @doc """
+    Returns a structured error when the optional Msgpax dependency is unavailable.
+    """
+    @impl true
+    def serialize(_term, _opts \\ []) do
+      {:error, @missing_msgpax_error}
+    end
+
+    @doc """
+    Returns a structured error when the optional Msgpax dependency is unavailable.
+    """
+    @impl true
+    def deserialize(_binary, _config \\ []) do
+      {:error, @missing_msgpax_error}
+    end
+
+    @doc """
+    Returns false when the optional Msgpax dependency is unavailable.
+    """
+    @spec valid_msgpack?(term()) :: false
+    def valid_msgpack?(_), do: false
   end
 end

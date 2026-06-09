@@ -197,7 +197,7 @@ defmodule Jido.Signal.MixProject do
     [
       # Deps
       {:jason, "~> 1.4"},
-      {:msgpax, "~> 2.3"},
+      {:msgpax, "~> 2.3", optional: true},
       {:nimble_options, "~> 1.1"},
       {:phoenix_pubsub, "~> 2.1", optional: true},
       {:telemetry, "~> 1.3"},

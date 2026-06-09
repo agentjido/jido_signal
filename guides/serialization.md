@@ -55,6 +55,9 @@ alias Jido.Signal.Serialization.JsonSerializer
 
 Compact binary format ideal for network transmission and storage efficiency.
 
+MessagePack support is optional. Applications that use this serializer must add
+`{:msgpax, "~> 2.3"}` to their own dependencies.
+
 ```elixir
 alias Jido.Signal.Serialization.MsgpackSerializer
 
@@ -115,7 +118,7 @@ config :jido,
 
 Available serializers:
 - `Jido.Signal.Serialization.JsonSerializer` (default)
-- `Jido.Signal.Serialization.MsgpackSerializer`
+- `Jido.Signal.Serialization.MsgpackSerializer` (requires optional `:msgpax` dependency)
 - `Jido.Signal.Serialization.ErlangTermSerializer`
 
 ### Runtime Configuration
