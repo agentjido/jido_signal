@@ -165,8 +165,6 @@ defmodule Jido.Signal.Dispatch.CircuitBreaker.Server do
     end
   end
 
-  defp blow(%Circuit{status: :blown} = circuit), do: circuit
-
   defp blow(%Circuit{} = circuit) do
     timer_id = make_ref()
 

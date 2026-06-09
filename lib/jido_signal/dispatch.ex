@@ -580,18 +580,11 @@ defmodule Jido.Signal.Dispatch do
     opts = strip_internal_opts(opts)
 
     with {:ok, adapter_module} <- resolve_adapter(adapter),
-         {:ok, validated_opts} <- validate_adapter_opts(adapter_module, opts, adapter) do
+         {:ok, validated_opts} <- adapter_module.validate_opts(opts) do
       {:ok, {adapter, validated_opts}}
     else
       {:error, reason} -> normalize_validation_error(reason, adapter, {adapter, opts})
     end
-  end
-
-  # Validates options with the adapter module, handling nil adapter case
-  defp validate_adapter_opts(nil, opts, _adapter), do: {:ok, opts}
-
-  defp validate_adapter_opts(adapter_module, opts, _adapter) do
-    adapter_module.validate_opts(opts)
   end
 
   defp dispatch_single(_signal, {nil, _opts}, _runtime_opts), do: :ok
@@ -648,9 +641,6 @@ defmodule Jido.Signal.Dispatch do
 
   defp do_dispatch_validated_single(signal, {adapter, opts}, runtime_opts) do
     case resolve_adapter(adapter) do
-      {:ok, nil} ->
-        :ok
-
       {:ok, adapter_module} ->
         dispatch_deliver(signal, adapter_module, adapter, opts, runtime_opts)
 
@@ -658,8 +648,6 @@ defmodule Jido.Signal.Dispatch do
         normalize_error(reason, adapter, {adapter, opts})
     end
   end
-
-  defp do_dispatch_with_adapter(_signal, nil, {_adapter, _opts}, _runtime_opts), do: :ok
 
   defp do_dispatch_with_adapter(signal, adapter_module, {adapter, opts}, runtime_opts) do
     opts = strip_internal_opts(opts)
@@ -795,8 +783,6 @@ defmodule Jido.Signal.Dispatch do
       config: config
     })
   end
-
-  defp resolve_adapter(nil), do: {:ok, nil}
 
   defp resolve_adapter(adapter) when is_atom(adapter) do
     case Map.fetch(@builtin_adapters, adapter) do

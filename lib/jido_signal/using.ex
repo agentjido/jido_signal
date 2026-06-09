@@ -330,18 +330,13 @@ defmodule Jido.Signal.Using do
       defp validate_policy_extension_data(effective_extensions) do
         policy_modules = extension_policy_modules()
 
-        do_validate_policy_extension_data(policy_modules, effective_extensions)
-      end
-
-      defp do_validate_policy_extension_data(policy_modules, effective_extensions)
-           when map_size(policy_modules) == 0 do
-        {:ok, effective_extensions}
-      end
-
-      defp do_validate_policy_extension_data(policy_modules, effective_extensions) do
-        Enum.reduce_while(effective_extensions, {:ok, %{}}, fn entry, result ->
-          validate_policy_extension_entry(entry, result, policy_modules)
-        end)
+        if map_size(policy_modules) == 0 do
+          {:ok, effective_extensions}
+        else
+          Enum.reduce_while(effective_extensions, {:ok, %{}}, fn entry, result ->
+            validate_policy_extension_entry(entry, result, policy_modules)
+          end)
+        end
       end
 
       defp validate_policy_extension_entry({namespace, data}, {:ok, acc}, policy_modules) do
