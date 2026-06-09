@@ -49,13 +49,16 @@ defmodule Jido.Signal.Dispatch.PubSub do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  require Logger
+
   @type delivery_target :: atom()
   @type delivery_opts :: [
           target: delivery_target(),
           topic: String.t()
         ]
   @type delivery_error ::
-          :pubsub_not_found
+          {:missing_dependency, :phoenix_pubsub}
+          | :pubsub_not_found
           | term()
 
   @impl Jido.Signal.Dispatch.Adapter
@@ -104,12 +107,23 @@ defmodule Jido.Signal.Dispatch.PubSub do
   ## Returns
 
   * `:ok` - Signal broadcast successfully
+  * `{:error, {:missing_dependency, :phoenix_pubsub}}` - Phoenix.PubSub is not installed
   * `{:error, :pubsub_not_found}` - PubSub server not found
   * `{:error, reason}` - Other broadcast failure
   """
   @spec deliver(Jido.Signal.t(), delivery_opts()) ::
           :ok | {:error, delivery_error()}
   def deliver(signal, opts) do
+    case ensure_phoenix_pubsub_loaded() do
+      :ok ->
+        do_deliver(signal, opts)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp do_deliver(signal, opts) do
     target = Keyword.fetch!(opts, :target)
     topic = Keyword.fetch!(opts, :topic)
 
@@ -121,6 +135,19 @@ defmodule Jido.Signal.Dispatch.PubSub do
     catch
       :exit, {:noproc, _} -> {:error, :pubsub_not_found}
       :exit, reason -> {:error, reason}
+    end
+  end
+
+  defp ensure_phoenix_pubsub_loaded do
+    if Code.ensure_loaded?(Phoenix.PubSub) do
+      :ok
+    else
+      Logger.warning(
+        "Phoenix.PubSub is required for Jido.Signal.Dispatch.PubSub; " <>
+          "add {:phoenix_pubsub, \"~> 2.1\"} to your dependencies to use :pubsub dispatch"
+      )
+
+      {:error, {:missing_dependency, :phoenix_pubsub}}
     end
   end
 

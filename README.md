@@ -105,6 +105,17 @@ def deps do
 end
 ```
 
+If you use `:pubsub` dispatch, also add Phoenix.PubSub to your application:
+
+```elixir
+def deps do
+  [
+    {:jido_signal, "~> 2.0"},
+    {:phoenix_pubsub, "~> 2.1"}
+  ]
+end
+```
+
 Then run:
 
 ```bash
@@ -292,6 +303,7 @@ dispatch_configs = [
   {:pid, target: my_process_pid},
   
   # Publish via Phoenix.PubSub
+  # Requires {:phoenix_pubsub, "~> 2.1"} in your app deps.
   {:pubsub, target: MyApp.PubSub, topic: "events"},
   
   # HTTP webhook with signature
