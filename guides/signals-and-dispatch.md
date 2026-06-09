@@ -110,7 +110,8 @@ config = {:named, [
 
 ### PubSub Adapter
 
-Phoenix.PubSub broadcast:
+Phoenix.PubSub broadcast. This adapter is optional; add `{:phoenix_pubsub, "~> 2.1"}`
+to your application dependencies before using `:pubsub` dispatch.
 
 ```elixir
 config = {:pubsub, [
