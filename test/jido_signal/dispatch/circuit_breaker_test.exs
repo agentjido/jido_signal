@@ -2,6 +2,8 @@ defmodule Jido.Signal.Dispatch.CircuitBreakerTest do
   use ExUnit.Case, async: false
 
   alias Jido.Signal.Dispatch.CircuitBreaker
+  alias Jido.Signal.Instance
+  alias Jido.Signal.Names
 
   @test_adapter :test_circuit_adapter
 
@@ -21,6 +23,36 @@ defmodule Jido.Signal.Dispatch.CircuitBreakerTest do
       assert :ok = CircuitBreaker.install(adapter)
     end
 
+    test "same configuration does not reset circuit state", %{adapter: adapter} do
+      opts = [strategy: {:standard, 1, 5_000}, refresh: 30_000]
+
+      assert :ok = CircuitBreaker.install(adapter, opts)
+      assert {:error, :fail1} = CircuitBreaker.run(adapter, fn -> {:error, :fail1} end)
+      assert CircuitBreaker.status(adapter) == :ok
+
+      assert :ok = CircuitBreaker.install(adapter, opts)
+      assert {:error, :fail2} = CircuitBreaker.run(adapter, fn -> {:error, :fail2} end)
+      assert CircuitBreaker.status(adapter) == :blown
+    end
+
+    test "changed configuration resets circuit state", %{adapter: adapter} do
+      assert :ok =
+               CircuitBreaker.install(adapter, strategy: {:standard, 0, 5_000}, refresh: 30_000)
+
+      assert {:error, :fail} = CircuitBreaker.run(adapter, fn -> {:error, :fail} end)
+      assert CircuitBreaker.status(adapter) == :blown
+
+      assert :ok =
+               CircuitBreaker.install(adapter, strategy: {:standard, 1, 5_000}, refresh: 30_000)
+
+      assert CircuitBreaker.status(adapter) == :ok
+
+      assert {:error, :fail_after_reconfigure} =
+               CircuitBreaker.run(adapter, fn -> {:error, :fail_after_reconfigure} end)
+
+      assert CircuitBreaker.status(adapter) == :ok
+    end
+
     test "accepts custom configuration", %{adapter: adapter} do
       opts = [
         strategy: {:standard, 2, 5_000},
@@ -29,6 +61,39 @@ defmodule Jido.Signal.Dispatch.CircuitBreakerTest do
 
       assert :ok = CircuitBreaker.install(adapter, opts)
       assert CircuitBreaker.installed?(adapter)
+    end
+
+    test "rejects unsupported strategy configuration", %{adapter: adapter} do
+      opts = [strategy: {:fault_injection, 0.1, 2, 5_000}]
+
+      assert {:error, {:invalid_strategy, {:fault_injection, 0.1, 2, 5_000}}} =
+               CircuitBreaker.install(adapter, opts)
+
+      refute CircuitBreaker.installed?(adapter)
+    end
+
+    test "rejects unknown options", %{adapter: adapter} do
+      assert {:error, {:invalid_options, [:unknown]}} =
+               CircuitBreaker.install(adapter, unknown: true)
+
+      refute CircuitBreaker.installed?(adapter)
+    end
+  end
+
+  describe "ensure_installed/2" do
+    test "installs a missing circuit", %{adapter: adapter} do
+      assert :ok = CircuitBreaker.ensure_installed(adapter)
+      assert CircuitBreaker.installed?(adapter)
+    end
+
+    test "does not reset an existing circuit with different configuration", %{adapter: adapter} do
+      assert :ok =
+               CircuitBreaker.install(adapter, strategy: {:standard, 0, 5_000}, refresh: 30_000)
+
+      assert :ok = CircuitBreaker.ensure_installed(adapter)
+
+      assert {:error, :fail} = CircuitBreaker.run(adapter, fn -> {:error, :fail} end)
+      assert CircuitBreaker.status(adapter) == :blown
     end
   end
 
@@ -90,6 +155,32 @@ defmodule Jido.Signal.Dispatch.CircuitBreakerTest do
       result = CircuitBreaker.run(adapter, fn -> {:ok, :should_not_run} end)
       assert result == {:error, :circuit_open}
     end
+
+    test "does not count failures outside the configured window", %{adapter: adapter} do
+      CircuitBreaker.install(adapter, strategy: {:standard, 1, 25}, refresh: 30_000)
+
+      CircuitBreaker.run(adapter, fn -> {:error, :fail1} end)
+      assert CircuitBreaker.status(adapter) == :ok
+
+      Process.sleep(40)
+
+      CircuitBreaker.run(adapter, fn -> {:error, :fail2} end)
+      assert CircuitBreaker.status(adapter) == :ok
+    end
+
+    test "opens under concurrent failures", %{adapter: adapter} do
+      CircuitBreaker.install(adapter, strategy: {:standard, 3, 1_000}, refresh: 30_000)
+
+      1..8
+      |> Enum.map(fn index ->
+        Task.async(fn ->
+          CircuitBreaker.run(adapter, fn -> {:error, {:fail, index}} end)
+        end)
+      end)
+      |> Task.await_many()
+
+      assert CircuitBreaker.status(adapter) == :blown
+    end
   end
 
   describe "status/1" do
@@ -134,6 +225,23 @@ defmodule Jido.Signal.Dispatch.CircuitBreakerTest do
       result = CircuitBreaker.run(adapter, fn -> {:ok, :success} end)
       assert result == {:ok, :success}
     end
+
+    test "ignores stale reset timers after reconfiguration", %{adapter: adapter} do
+      CircuitBreaker.install(adapter, strategy: {:standard, 0, 5_000}, refresh: 40)
+      CircuitBreaker.run(adapter, fn -> {:error, :fail} end)
+      assert CircuitBreaker.status(adapter) == :blown
+
+      CircuitBreaker.install(adapter, strategy: {:standard, 1, 5_000}, refresh: 500)
+      assert CircuitBreaker.status(adapter) == :ok
+
+      CircuitBreaker.run(adapter, fn -> {:error, :fail_after_reconfigure_1} end)
+      CircuitBreaker.run(adapter, fn -> {:error, :fail_after_reconfigure_2} end)
+      assert CircuitBreaker.status(adapter) == :blown
+
+      Process.sleep(80)
+
+      assert CircuitBreaker.status(adapter) == :blown
+    end
   end
 
   describe "installed?/1" do
@@ -144,6 +252,71 @@ defmodule Jido.Signal.Dispatch.CircuitBreakerTest do
 
     test "returns false for non-installed circuit" do
       assert CircuitBreaker.installed?(:non_existent_adapter_xyz) == false
+    end
+  end
+
+  describe "instance scoping" do
+    test "isolates circuits between breaker servers", %{adapter: adapter} do
+      instance_a = unique_instance()
+      instance_b = unique_instance()
+      start_supervised!({Instance, name: instance_a})
+      start_supervised!({Instance, name: instance_b})
+      server_a = Names.circuit_breaker(jido: instance_a)
+      server_b = Names.circuit_breaker(jido: instance_b)
+
+      opts = [strategy: {:standard, 0, 5_000}, refresh: 30_000]
+      opts_a = Keyword.put(opts, :server, server_a)
+      opts_b = Keyword.put(opts, :server, server_b)
+
+      assert :ok = CircuitBreaker.install(adapter, opts_a)
+      assert :ok = CircuitBreaker.install(adapter, opts_b)
+
+      assert {:error, :fail} =
+               CircuitBreaker.run(adapter, fn -> {:error, :fail} end, server: server_a)
+
+      assert CircuitBreaker.status(adapter, server: server_a) == :blown
+      assert CircuitBreaker.status(adapter, server: server_b) == :ok
+      refute CircuitBreaker.installed?(adapter)
+    end
+
+    test "returns an error when scoped server is not running", %{adapter: adapter} do
+      missing_server = unique_instance()
+
+      assert {:error, :server_not_found} =
+               CircuitBreaker.install(adapter, server: missing_server)
+
+      assert CircuitBreaker.status(adapter, server: missing_server) ==
+               {:error, :server_not_found}
+
+      refute CircuitBreaker.installed?(adapter, server: missing_server)
+    end
+
+    test "drops scoped circuit state when the Jido instance stops", %{adapter: adapter} do
+      instance = unique_instance()
+      {:ok, supervisor} = Instance.start_link(name: instance)
+      server = Names.circuit_breaker(jido: instance)
+      opts = [strategy: {:standard, 0, 5_000}, refresh: 30_000, server: server]
+
+      assert :ok = CircuitBreaker.install(adapter, opts)
+
+      assert {:error, :fail} =
+               CircuitBreaker.run(adapter, fn -> {:error, :fail} end, server: server)
+
+      assert CircuitBreaker.status(adapter, server: server) == :blown
+
+      assert :ok = Supervisor.stop(supervisor)
+      assert CircuitBreaker.status(adapter, server: server) == {:error, :server_not_found}
+    end
+
+    test "rejects invalid server scope", %{adapter: adapter} do
+      assert {:error, {:invalid_server, "bad"}} = CircuitBreaker.install(adapter, server: "bad")
+      assert {:error, {:invalid_server, "bad"}} = CircuitBreaker.status(adapter, server: "bad")
+      assert {:error, {:invalid_server, "bad"}} = CircuitBreaker.reset(adapter, server: "bad")
+
+      assert {:error, {:invalid_server, "bad"}} =
+               CircuitBreaker.run(adapter, fn -> :ok end, server: "bad")
+
+      refute CircuitBreaker.installed?(adapter, server: "bad")
     end
   end
 
@@ -217,19 +390,40 @@ defmodule Jido.Signal.Dispatch.CircuitBreakerTest do
   end
 
   describe "circuit auto-reset after timeout" do
-    @tag :flaky
     test "circuit resets after refresh timeout", %{adapter: adapter} do
       # Allow 0 failures (blow on first)
-      CircuitBreaker.install(adapter, strategy: {:standard, 0, 5_000}, refresh: 100)
+      CircuitBreaker.install(adapter, strategy: {:standard, 0, 5_000}, refresh: 25)
 
       CircuitBreaker.run(adapter, fn -> {:error, :fail} end)
 
       assert CircuitBreaker.status(adapter) == :blown
 
-      Process.sleep(150)
+      assert_eventually(fn -> CircuitBreaker.status(adapter) == :ok end)
 
       result = CircuitBreaker.run(adapter, fn -> {:ok, :success} end)
       assert result == {:ok, :success}
     end
+  end
+
+  defp assert_eventually(fun, timeout \\ 500) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    assert eventually?(fun, deadline)
+  end
+
+  defp eventually?(fun, deadline) do
+    if fun.() do
+      true
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        false
+      else
+        Process.sleep(10)
+        eventually?(fun, deadline)
+      end
+    end
+  end
+
+  defp unique_instance do
+    Module.concat(__MODULE__, "Instance#{System.unique_integer([:positive])}")
   end
 end

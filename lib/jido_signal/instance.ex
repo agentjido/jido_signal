@@ -31,9 +31,11 @@ defmodule Jido.Signal.Instance do
   - Registry (for managing signal subscriptions)
   - TaskSupervisor (for async operations)
   - Extension Registry (for signal extensions)
+  - CircuitBreaker server (for instance-scoped dispatch fault isolation)
 
   """
 
+  alias Jido.Signal.Dispatch.CircuitBreaker.Server, as: CircuitBreakerServer
   alias Jido.Signal.Names
 
   @type option ::
@@ -93,6 +95,7 @@ defmodule Jido.Signal.Instance do
     children = [
       {Registry, keys: :unique, name: Names.registry(instance_opts)},
       Jido.Signal.Ext.Registry.child_spec(name: Names.ext_registry(instance_opts)),
+      CircuitBreakerServer.child_spec(name: Names.circuit_breaker(instance_opts)),
       {Task.Supervisor, name: Names.task_supervisor(instance_opts)}
     ]
 

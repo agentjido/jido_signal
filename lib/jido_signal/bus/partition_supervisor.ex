@@ -47,6 +47,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
     middleware = Keyword.get(opts, :middleware, [])
     middleware_timeout_ms = Keyword.get(opts, :middleware_timeout_ms, 100)
     task_supervisor = Names.task_supervisor(jido: jido)
+    circuit_breaker_server = Names.circuit_breaker(jido: jido)
     journal_adapter = Keyword.get(opts, :journal_adapter)
     journal_pid = Keyword.get(opts, :journal_pid)
     rate_limit_per_sec = Keyword.get(opts, :rate_limit_per_sec, 10_000)
@@ -61,6 +62,7 @@ defmodule Jido.Signal.Bus.PartitionSupervisor do
              bus_name: bus_name,
              bus_pid: bus_pid,
              jido: jido,
+             circuit_breaker_server: circuit_breaker_server,
              middleware: middleware,
              middleware_timeout_ms: middleware_timeout_ms,
              task_supervisor: task_supervisor,

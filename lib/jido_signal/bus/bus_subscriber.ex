@@ -102,6 +102,7 @@ defmodule Jido.Signal.Bus.Subscriber do
       retry_interval: opts[:retry_interval] || 100,
       client_pid: client_pid,
       task_supervisor: Names.task_supervisor(jido: state.jido),
+      circuit_breaker_server: Names.circuit_breaker(jido: state.jido),
       journal_adapter: state.journal_adapter,
       journal_pid: state.journal_pid
     ]

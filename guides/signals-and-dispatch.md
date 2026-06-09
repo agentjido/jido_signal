@@ -287,12 +287,12 @@ By default, dispatch returns raw error atoms. Structured errors (`Jido.Signal.Er
 
 ## Circuit Breaker
 
-The `Jido.Signal.Dispatch.CircuitBreaker` module provides fault isolation for dispatch adapters using the `:fuse` library. Circuits are per-adapter-type, providing bulk protection without per-endpoint overhead.
+The `Jido.Signal.Dispatch.CircuitBreaker` module provides fault isolation for dispatch adapters. Circuits are per breaker server and adapter type, providing bulk protection without per-endpoint overhead. Direct dispatch uses the global breaker server; `Jido.Signal.Instance` supervisors start isolated breaker servers for their bus dispatch paths.
 
 ### Configuration
 
 Default settings:
-- 5 failures in 10 seconds triggers the circuit to open
+- More than 5 failures in 10 seconds triggers the circuit to open
 - 30 second reset time before allowing requests again
 
 ### Usage
@@ -301,8 +301,8 @@ Default settings:
 alias Jido.Signal.Dispatch.CircuitBreaker
 
 # Install circuit breaker (once at application startup)
-:ok = CircuitBreaker.install(:http, 
-  strategy: {:standard, 5, 10_000},  # 5 failures in 10 seconds
+:ok = CircuitBreaker.install(:http,
+  strategy: {:standard, 5, 10_000},  # tolerate 5 failures in 10 seconds
   refresh: 30_000                     # 30 second reset
 )
 

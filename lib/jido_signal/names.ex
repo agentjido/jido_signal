@@ -95,6 +95,23 @@ defmodule Jido.Signal.Names do
   end
 
   @doc """
+  Returns the CircuitBreaker server name for the given instance scope.
+
+  ## Examples
+
+      iex> Jido.Signal.Names.circuit_breaker([])
+      Jido.Signal.Dispatch.CircuitBreaker.Server
+
+      iex> Jido.Signal.Names.circuit_breaker(jido: MyApp.Jido)
+      MyApp.Jido.Signal.Dispatch.CircuitBreaker.Server
+
+  """
+  @spec circuit_breaker(opts()) :: atom()
+  def circuit_breaker(opts) do
+    scoped(opts, Jido.Signal.Dispatch.CircuitBreaker.Server)
+  end
+
+  @doc """
   Resolves a module name based on instance scope.
 
   When `jido:` option is nil or not present, returns the default module.

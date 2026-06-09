@@ -34,6 +34,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
               retry_timer_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               client_monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               task_supervisor: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              circuit_breaker_server: Zoi.atom() |> Zoi.optional(),
               journal_adapter: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
               journal_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               checkpoint_key: Zoi.string() |> Zoi.nullable() |> Zoi.optional()
@@ -116,6 +117,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
       max_attempts: Keyword.get(opts, :max_attempts, 5),
       retry_interval: Keyword.get(opts, :retry_interval, 100),
       task_supervisor: Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor),
+      circuit_breaker_server:
+        Keyword.get(opts, :circuit_breaker_server, Jido.Signal.Dispatch.CircuitBreaker.Server),
       in_flight_signals: %{},
       pending_signals: %{},
       attempts: %{},
@@ -374,7 +377,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
 
   defp dispatch_replay_signal(signal, state) do
     case Dispatch.dispatch(signal, state.bus_subscription.dispatch,
-           task_supervisor: state.task_supervisor
+           task_supervisor: state.task_supervisor,
+           circuit_breaker_server: state.circuit_breaker_server
          ) do
       :ok ->
         :ok
@@ -594,7 +598,8 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
     if state.bus_subscription.dispatch do
       result =
         Dispatch.dispatch(signal, state.bus_subscription.dispatch,
-          task_supervisor: state.task_supervisor
+          task_supervisor: state.task_supervisor,
+          circuit_breaker_server: state.circuit_breaker_server
         )
 
       handle_dispatch_result(result, state, signal_log_id, signal)

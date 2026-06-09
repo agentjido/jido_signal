@@ -204,7 +204,6 @@ defmodule Jido.Signal.MixProject do
       {:uniq, "~> 0.6.1"},
       {:splode, "~> 0.3.0"},
       {:zoi, "~> 0.18.1"},
-      {:fuse, "~> 2.5"},
 
       # Development & Test Dependencies
       {:git_ops, "~> 2.9", only: :dev, runtime: false},

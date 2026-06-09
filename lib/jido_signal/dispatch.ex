@@ -64,6 +64,13 @@ defmodule Jido.Signal.Dispatch do
   The batch dispatch function `dispatch_batch/3` continues to return indexed errors as before:
   `{:error, [{index, reason}, ...]}`.
 
+  ## Runtime Options
+
+  Runtime options are passed separately from adapter configuration:
+
+  * `:task_supervisor` - Task supervisor used for async and parallel dispatch work.
+  * `:circuit_breaker_server` - Circuit breaker server used by built-in HTTP and webhook dispatch.
+
   ## Reserved Options
 
   The following option keys are reserved for internal use and are stripped from dispatch configurations:
@@ -115,6 +122,7 @@ defmodule Jido.Signal.Dispatch do
       :ok = Dispatch.dispatch(signal, config)
   """
 
+  alias Jido.Signal.Dispatch.CircuitBreaker
   alias Jido.Signal.Error
   alias Jido.Signal.Telemetry
 
@@ -132,11 +140,15 @@ defmodule Jido.Signal.Dispatch do
           | module()
   @type dispatch_config :: {adapter(), Keyword.t()}
   @type dispatch_configs :: dispatch_config() | [dispatch_config()]
-  @type runtime_opts :: [task_supervisor: pid() | atom()]
+  @type runtime_opts :: [
+          task_supervisor: pid() | atom(),
+          circuit_breaker_server: atom()
+        ]
   @type batch_opts :: [
           batch_size: pos_integer(),
           max_concurrency: pos_integer(),
-          task_supervisor: pid() | atom()
+          task_supervisor: pid() | atom(),
+          circuit_breaker_server: atom()
         ]
 
   @default_batch_size 50
@@ -294,9 +306,9 @@ defmodule Jido.Signal.Dispatch do
   end
 
   # Handle single dispatcher
-  def dispatch(signal, {adapter, opts} = config, _runtime_opts)
+  def dispatch(signal, {adapter, opts} = config, runtime_opts)
       when is_atom(adapter) and is_list(opts) do
-    dispatch_single(signal, config)
+    dispatch_single(signal, config, runtime_opts)
   end
 
   # Handle multiple dispatchers
@@ -307,7 +319,7 @@ defmodule Jido.Signal.Dispatch do
       Task.Supervisor.async_stream(
         task_supervisor,
         configs,
-        fn config -> dispatch_single(signal, config) end,
+        fn config -> dispatch_single(signal, config, runtime_opts) end,
         max_concurrency: @default_dispatch_max_concurrency,
         ordered: true,
         timeout: :infinity
@@ -406,6 +418,7 @@ defmodule Jido.Signal.Dispatch do
     batch_size = Keyword.get(opts, :batch_size, @default_batch_size)
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
     task_supervisor = Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor)
+    runtime_opts = Keyword.take(opts, [:circuit_breaker_server])
 
     validation_results = validate_configs_with_index(configs)
     {valid_configs, validation_errors} = split_validation_results(validation_results)
@@ -418,7 +431,8 @@ defmodule Jido.Signal.Dispatch do
         validated_configs_with_idx,
         batch_size,
         max_concurrency,
-        task_supervisor
+        task_supervisor,
+        runtime_opts
       )
 
     validation_errors = extract_validation_errors(validation_errors)
@@ -456,14 +470,15 @@ defmodule Jido.Signal.Dispatch do
          validated_configs_with_idx,
          _batch_size,
          max_concurrency,
-         task_supervisor
+         task_supervisor,
+         runtime_opts
        ) do
     # Single stream over all configs (batch_size is now a no-op for backwards compat)
     Task.Supervisor.async_stream(
       task_supervisor,
       validated_configs_with_idx,
       fn {config, original_idx} ->
-        case dispatch_validated_single(signal, config) do
+        case dispatch_validated_single(signal, config, runtime_opts) do
           :ok -> {:ok, original_idx}
           {:error, reason} -> {:error, {original_idx, reason}}
         end
@@ -579,17 +594,17 @@ defmodule Jido.Signal.Dispatch do
     adapter_module.validate_opts(opts)
   end
 
-  defp dispatch_single(_signal, {nil, _opts}), do: :ok
+  defp dispatch_single(_signal, {nil, _opts}, _runtime_opts), do: :ok
 
-  defp dispatch_single(signal, {adapter, opts}) do
+  defp dispatch_single(signal, {adapter, opts}, runtime_opts) do
     with_dispatch_telemetry(signal, adapter, opts, fn ->
-      do_dispatch_single(signal, {adapter, opts})
+      do_dispatch_single(signal, {adapter, opts}, runtime_opts)
     end)
   end
 
-  defp dispatch_validated_single(signal, {adapter, opts}) do
+  defp dispatch_validated_single(signal, {adapter, opts}, runtime_opts) do
     with_dispatch_telemetry(signal, adapter, opts, fn ->
-      do_dispatch_validated_single(signal, {adapter, opts})
+      do_dispatch_validated_single(signal, {adapter, opts}, runtime_opts)
     end)
   end
 
@@ -619,39 +634,39 @@ defmodule Jido.Signal.Dispatch do
     result
   end
 
-  defp do_dispatch_single(signal, {adapter, opts}) do
+  defp do_dispatch_single(signal, {adapter, opts}, runtime_opts) do
     case resolve_adapter(adapter) do
       {:ok, adapter_module} ->
-        do_dispatch_with_adapter(signal, adapter_module, {adapter, opts})
+        do_dispatch_with_adapter(signal, adapter_module, {adapter, opts}, runtime_opts)
 
       {:error, reason} ->
         normalize_error(reason, adapter, {adapter, opts})
     end
   end
 
-  defp do_dispatch_validated_single(_signal, {nil, _opts}), do: :ok
+  defp do_dispatch_validated_single(_signal, {nil, _opts}, _runtime_opts), do: :ok
 
-  defp do_dispatch_validated_single(signal, {adapter, opts}) do
+  defp do_dispatch_validated_single(signal, {adapter, opts}, runtime_opts) do
     case resolve_adapter(adapter) do
       {:ok, nil} ->
         :ok
 
       {:ok, adapter_module} ->
-        dispatch_deliver(signal, adapter_module, adapter, opts)
+        dispatch_deliver(signal, adapter_module, adapter, opts, runtime_opts)
 
       {:error, reason} ->
         normalize_error(reason, adapter, {adapter, opts})
     end
   end
 
-  defp do_dispatch_with_adapter(_signal, nil, {_adapter, _opts}), do: :ok
+  defp do_dispatch_with_adapter(_signal, nil, {_adapter, _opts}, _runtime_opts), do: :ok
 
-  defp do_dispatch_with_adapter(signal, adapter_module, {adapter, opts}) do
+  defp do_dispatch_with_adapter(signal, adapter_module, {adapter, opts}, runtime_opts) do
     opts = strip_internal_opts(opts)
 
     case adapter_module.validate_opts(opts) do
       {:ok, validated_opts} ->
-        dispatch_deliver(signal, adapter_module, adapter, validated_opts)
+        dispatch_deliver(signal, adapter_module, adapter, validated_opts, runtime_opts)
 
       {:error, reason} ->
         normalize_error(reason, adapter, {adapter, opts})
@@ -660,11 +675,44 @@ defmodule Jido.Signal.Dispatch do
 
   defp strip_internal_opts(opts), do: Keyword.delete(opts, :__validated__)
 
-  defp dispatch_deliver(signal, adapter_module, adapter, opts) do
-    case adapter_module.deliver(signal, opts) do
-      :ok -> :ok
-      {:error, reason} -> normalize_error(reason, adapter, {adapter, opts})
+  defp dispatch_deliver(signal, adapter_module, adapter, opts, runtime_opts) do
+    deliver = fn ->
+      case adapter_module.deliver(signal, opts) do
+        :ok -> :ok
+        {:error, reason} -> normalize_error(reason, adapter, {adapter, opts})
+      end
     end
+
+    with_circuit_breaker(adapter, opts, runtime_opts, deliver)
+  end
+
+  defp with_circuit_breaker(adapter, opts, runtime_opts, deliver)
+       when adapter in [:http, :webhook] do
+    breaker_opts = [server: circuit_breaker_server(runtime_opts)]
+
+    case CircuitBreaker.ensure_installed(adapter, breaker_opts) do
+      :ok ->
+        adapter
+        |> CircuitBreaker.run(deliver, breaker_opts)
+        |> normalize_circuit_result(adapter, opts)
+
+      {:error, reason} ->
+        normalize_error(reason, adapter, {adapter, opts})
+    end
+  end
+
+  defp with_circuit_breaker(_adapter, _opts, _runtime_opts, deliver), do: deliver.()
+
+  defp normalize_circuit_result({:error, %Error.DispatchError{}} = error, _adapter, _opts),
+    do: error
+
+  defp normalize_circuit_result({:error, reason}, adapter, opts),
+    do: normalize_error(reason, adapter, {adapter, opts})
+
+  defp normalize_circuit_result(result, _adapter, _opts), do: result
+
+  defp circuit_breaker_server(runtime_opts) do
+    Keyword.get(runtime_opts, :circuit_breaker_server, CircuitBreaker.Server)
   end
 
   defp dispatch_telemetry_metadata(signal, adapter, opts) do

@@ -12,6 +12,7 @@ defmodule Jido.Signal.Bus.Stream do
   alias Jido.Signal.Bus.State, as: BusState
   alias Jido.Signal.Dispatch
   alias Jido.Signal.ID
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Sanitizer
 
@@ -126,21 +127,25 @@ defmodule Jido.Signal.Bus.Stream do
   def publish(%BusState{} = state, signals) when is_list(signals) do
     with :ok <- validate_signals(signals),
          {:ok, new_state, _new_signals} <- BusState.append_signals(state, signals) do
-      route_signals_to_subscribers(signals, new_state.subscriptions)
+      route_signals_to_subscribers(signals, new_state.subscriptions, new_state.jido)
       {:ok, new_state}
     end
   end
 
-  defp route_signals_to_subscribers(signals, subscriptions) do
+  defp route_signals_to_subscribers(signals, subscriptions, jido) do
     Enum.each(signals, fn signal ->
-      dispatch_to_matching_subscriptions(signal, subscriptions)
+      dispatch_to_matching_subscriptions(signal, subscriptions, jido)
     end)
   end
 
-  defp dispatch_to_matching_subscriptions(signal, subscriptions) do
+  defp dispatch_to_matching_subscriptions(signal, subscriptions, jido) do
+    circuit_breaker_server = Names.circuit_breaker(jido: jido)
+
     Enum.each(subscriptions, fn {_id, subscription} ->
       if Router.matches?(signal.type, subscription.path) do
-        Dispatch.dispatch(signal, subscription.dispatch)
+        Dispatch.dispatch(signal, subscription.dispatch,
+          circuit_breaker_server: circuit_breaker_server
+        )
       end
     end)
   end

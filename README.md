@@ -76,7 +76,7 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - Synchronous and asynchronous delivery modes
 - Batch processing for high-throughput scenarios
 - Configurable timeout and retry mechanisms
-- Circuit breaker wrapper for fault isolation (using `:fuse`)
+- Circuit breaker wrapper for fault isolation
 
 ### **Causality & Conversation Tracking**
 - Complete signal relationship graphs
@@ -474,6 +474,10 @@ For multi-tenant applications or testing, create isolated signal infrastructure:
 {:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantA.Jido)
 {:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantB.Jido)
 ```
+
+Instance-scoped dispatch also uses instance-scoped circuit breaker state, so a failing
+HTTP or webhook target in `TenantA.Jido` does not open the corresponding circuit in
+`TenantB.Jido` or in the global instance.
 
 ## Use Cases
 

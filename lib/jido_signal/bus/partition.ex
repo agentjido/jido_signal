@@ -21,6 +21,7 @@ defmodule Jido.Signal.Bus.Partition do
               partition_id: Zoi.integer(),
               bus_name: Zoi.atom(),
               bus_pid: Zoi.any(),
+              circuit_breaker_server: Zoi.atom() |> Zoi.optional(),
               subscriptions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
               middleware: Zoi.default(Zoi.list(), []) |> Zoi.optional(),
               middleware_timeout_ms: Zoi.default(Zoi.integer(), 100) |> Zoi.optional(),
@@ -88,6 +89,12 @@ defmodule Jido.Signal.Bus.Partition do
       partition_id: Keyword.fetch!(opts, :partition_id),
       bus_name: Keyword.fetch!(opts, :bus_name),
       bus_pid: Keyword.fetch!(opts, :bus_pid),
+      circuit_breaker_server:
+        Keyword.get(
+          opts,
+          :circuit_breaker_server,
+          Names.circuit_breaker(jido: Keyword.get(opts, :jido))
+        ),
       middleware: Keyword.get(opts, :middleware, []),
       middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
       task_supervisor: Keyword.get(opts, :task_supervisor, Jido.Signal.TaskSupervisor),
@@ -247,7 +254,10 @@ defmodule Jido.Signal.Bus.Partition do
           {:error, :timeout}
       end
     else
-      Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: state.task_supervisor)
+      Dispatch.dispatch(signal, subscription.dispatch,
+        task_supervisor: state.task_supervisor,
+        circuit_breaker_server: state.circuit_breaker_server
+      )
     end
   end
 

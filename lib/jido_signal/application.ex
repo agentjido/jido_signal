@@ -30,6 +30,9 @@ defmodule Jido.Signal.Application do
       # Extension Registry for Signal extensions
       Jido.Signal.Ext.Registry,
 
+      # Shared dispatch circuit breaker state
+      Jido.Signal.Dispatch.CircuitBreaker.Server,
+
       # Exec Async Actions Task Supervisor
       {Task.Supervisor, name: Jido.Signal.TaskSupervisor}
     ]

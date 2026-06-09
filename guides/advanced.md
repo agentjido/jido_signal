@@ -157,6 +157,9 @@ case CircuitBreaker.run(:webhook, fn ->
 end
 ```
 
+Instance-scoped bus dispatch uses the breaker server started by `Jido.Signal.Instance`.
+Manual breaker calls can pass `server: MyBreakerServer` when using a non-default breaker server.
+
 See [Signals and Dispatch guide](signals-and-dispatch.md) for full circuit breaker documentation.
 
 ## Testing Approaches

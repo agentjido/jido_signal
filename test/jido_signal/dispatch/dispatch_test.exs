@@ -2,6 +2,8 @@ defmodule Jido.Signal.DispatchTest do
   use ExUnit.Case, async: false
 
   alias Jido.Signal.Dispatch
+  alias Jido.Signal.Dispatch.CircuitBreaker
+  alias Jido.Signal.Error
 
   setup do
     # Enable error normalization for all tests
@@ -156,6 +158,52 @@ defmodule Jido.Signal.DispatchTest do
       # Missing stream
       config = {MockBusAdapter, [target: :test_bus]}
       assert {:error, %Jido.Signal.Error.DispatchError{}} = Dispatch.dispatch(signal, config)
+    end
+  end
+
+  describe "http circuit breaker" do
+    setup do
+      signal = %Jido.Signal{
+        id: "test_signal",
+        type: "test",
+        source: "test",
+        time: DateTime.utc_now(),
+        data: %{}
+      }
+
+      server = :"#{__MODULE__}.CircuitBreakerServer#{System.unique_integer([:positive])}"
+      start_supervised!({CircuitBreaker.Server, name: server})
+
+      {:ok, signal: signal, server: server}
+    end
+
+    test "uses runtime breaker server without adapter scope options", %{
+      signal: signal,
+      server: server
+    } do
+      config = http_config()
+
+      assert :ok =
+               CircuitBreaker.install(:http,
+                 strategy: {:standard, 0, 5_000},
+                 refresh: 30_000,
+                 server: server
+               )
+
+      assert {:error, %Error.DispatchError{}} =
+               Dispatch.dispatch(signal, config, circuit_breaker_server: server)
+
+      assert CircuitBreaker.status(:http, server: server) == :blown
+
+      assert {:error, %Error.DispatchError{}} =
+               Dispatch.dispatch(signal, config, circuit_breaker_server: server)
+    end
+
+    test "reports missing runtime breaker server through dispatch errors", %{signal: signal} do
+      server = :"#{__MODULE__}.MissingCircuitBreakerServer#{System.unique_integer([:positive])}"
+
+      assert {:error, %Error.DispatchError{}} =
+               Dispatch.dispatch(signal, http_config(), circuit_breaker_server: server)
     end
   end
 
@@ -602,5 +650,14 @@ defmodule Jido.Signal.DispatchTest do
 
       assert Enum.sort(signals) == Enum.to_list(1..50)
     end
+  end
+
+  defp http_config do
+    {:http,
+     [
+       url: "http://localhost:1",
+       timeout: 10,
+       retry: %{max_attempts: 1, base_delay: 1, max_delay: 1}
+     ]}
   end
 end

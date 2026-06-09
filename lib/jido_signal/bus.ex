@@ -928,7 +928,8 @@ defmodule Jido.Signal.Bus do
 
   defp redrive_single_entry(state, entry, subscription, clear_on_success) do
     case Dispatch.dispatch(entry.signal, subscription.dispatch,
-           task_supervisor: Names.task_supervisor(jido: state.jido)
+           task_supervisor: Names.task_supervisor(jido: state.jido),
+           circuit_breaker_server: Names.circuit_breaker(jido: state.jido)
          ) do
       :ok ->
         if clear_on_success,
@@ -1055,7 +1056,8 @@ defmodule Jido.Signal.Bus do
       state: new_state,
       context: context,
       timeout_ms: timeout_ms,
-      task_supervisor: Names.task_supervisor(jido: new_state.jido)
+      task_supervisor: Names.task_supervisor(jido: new_state.jido),
+      circuit_breaker_server: Names.circuit_breaker(jido: new_state.jido)
     }
 
     {final_middleware, non_persistent_results} =
@@ -1117,7 +1119,8 @@ defmodule Jido.Signal.Bus do
              dispatch_to_subscription(
                processed_signal,
                current_subscription,
-               dispatch_ctx.task_supervisor
+               dispatch_ctx.task_supervisor,
+               dispatch_ctx.circuit_breaker_server
              )
            end,
            bus_name: dispatch_ctx.state.name
@@ -1136,9 +1139,13 @@ defmodule Jido.Signal.Bus do
   defp dispatch_to_subscription(
          signal,
          subscription,
-         task_supervisor
+         task_supervisor,
+         circuit_breaker_server
        ) do
-    Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: task_supervisor)
+    Dispatch.dispatch(signal, subscription.dispatch,
+      task_supervisor: task_supervisor,
+      circuit_breaker_server: circuit_breaker_server
+    )
   end
 
   defp validate_signals(signals) do

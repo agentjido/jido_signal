@@ -52,7 +52,6 @@ defmodule Jido.Signal.Dispatch.Http do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.CircuitBreaker
   alias Jido.Signal.Sanitizer
   alias Jido.Signal.Util
 
@@ -158,11 +157,7 @@ defmodule Jido.Signal.Dispatch.Http do
   @spec deliver(Jido.Signal.t(), delivery_opts()) :: :ok | {:error, delivery_error()}
   def deliver(signal, opts) do
     with {:ok, opts} <- validate_opts(opts) do
-      CircuitBreaker.install(:http)
-
-      CircuitBreaker.run(:http, fn ->
-        do_deliver(signal, opts)
-      end)
+      do_deliver(signal, opts)
     end
   end
 

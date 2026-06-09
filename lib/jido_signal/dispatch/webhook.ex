@@ -73,7 +73,6 @@ defmodule Jido.Signal.Dispatch.Webhook do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.CircuitBreaker
   alias Jido.Signal.Dispatch.Http
 
   @default_signature_header "x-webhook-signature"
@@ -162,11 +161,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
   @spec deliver(Jido.Signal.t(), webhook_opts()) :: :ok | {:error, webhook_error()}
   def deliver(signal, opts) do
     with {:ok, opts} <- validate_opts(opts) do
-      CircuitBreaker.install(:webhook)
-
-      CircuitBreaker.run(:webhook, fn ->
-        do_deliver(signal, opts)
-      end)
+      do_deliver(signal, opts)
     end
   end
 
