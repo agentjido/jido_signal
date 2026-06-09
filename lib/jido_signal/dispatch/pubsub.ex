@@ -51,8 +51,6 @@ defmodule Jido.Signal.Dispatch.PubSub do
 
   require Logger
 
-  @phoenix_pubsub Phoenix.PubSub
-
   @type delivery_target :: atom()
   @type delivery_opts :: [
           target: delivery_target(),
@@ -130,7 +128,7 @@ defmodule Jido.Signal.Dispatch.PubSub do
     topic = Keyword.fetch!(opts, :topic)
 
     try do
-      apply(@phoenix_pubsub, :broadcast, [target, topic, signal])
+      Phoenix.PubSub.broadcast(target, topic, signal)
       :ok
     rescue
       ArgumentError -> {:error, :pubsub_not_found}
@@ -141,7 +139,7 @@ defmodule Jido.Signal.Dispatch.PubSub do
   end
 
   defp ensure_phoenix_pubsub_loaded do
-    if Code.ensure_loaded?(@phoenix_pubsub) do
+    if Code.ensure_loaded?(Phoenix.PubSub) do
       :ok
     else
       Logger.warning(
