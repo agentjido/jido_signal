@@ -55,7 +55,7 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - CloudEvents v1.0.2 compliant message format
 - Custom signal types with data validation
 - Rich metadata and context tracking
-- Flexible serialization (JSON, MessagePack, Erlang Term Format)
+- Flexible serialization (JSON, optional MessagePack, Erlang Term Format)
 
 ### **High-Performance Signal Bus**
 - In-memory GenServer-based pub/sub system
@@ -528,7 +528,7 @@ workflow_signals = [
 - **[Signal Router](guides/signal-router.md)** - Pattern matching and routing
 - **[Signal Extensions](guides/signal-extensions.md)** - Custom Signal metadata extensions
 - **[Signal Journal](guides/signal-journal.md)** - Causality tracking and persistence
-- **[Serialization](guides/serialization.md)** - JSON, MessagePack, and Erlang Term formats
+- **[Serialization](guides/serialization.md)** - JSON, optional MessagePack, and Erlang Term formats
 - **[Advanced Topics](guides/advanced.md)** - Custom adapters, performance, and testing
 - **[API Reference](https://hexdocs.pm/jido_signal)** - Complete function documentation
 
