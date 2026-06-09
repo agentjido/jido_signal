@@ -3,12 +3,27 @@ defmodule JidoTest.Signal.IDTest do
 
   alias Jido.Signal.ID
 
+  @uuid7_regex ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
+
   describe "generate/0" do
     test "generates valid UUID7 and timestamp" do
+      before_ms = System.system_time(:millisecond)
       {uuid, timestamp} = ID.generate()
+      after_ms = System.system_time(:millisecond)
+
       assert is_binary(uuid)
+      assert uuid =~ @uuid7_regex
       assert is_integer(timestamp)
+      assert timestamp in before_ms..after_ms
       assert ID.valid?(uuid)
+
+      decoded = decode_uuid7(uuid)
+
+      assert decoded.timestamp == timestamp
+      assert decoded.version == 7
+      assert decoded.variant == 2
+      assert decoded.rand_a in 0..0xFFF
+      assert decoded.rand_b in 0..0x3FFFFFFFFFFFFFFF
     end
 
     test "generates chronologically ordered IDs across milliseconds" do
@@ -112,10 +127,26 @@ defmodule JidoTest.Signal.IDTest do
       assert ID.valid?(uuid)
     end
 
+    test "validates RFC 9562 UUID7 example and mixed-case input" do
+      uuid = "017f22e2-79b0-7cc3-98c4-dc0c0c07398f"
+
+      assert ID.valid?(uuid)
+      assert ID.valid?(String.upcase(uuid))
+    end
+
     test "rejects invalid formats" do
       refute ID.valid?("not-a-uuid")
+      refute ID.valid?("017f22e279b07cc398c4dc0c0c07398f")
+      refute ID.valid?("017f22e2-79b0-7cc3-98c4-dc0c0c07398")
+      refute ID.valid?("017f22e2-79b0-7cc3-98c4-dc0c0c07398fz")
       refute ID.valid?(123)
       refute ID.valid?(nil)
+    end
+
+    test "rejects UUIDs with non-UUID7 version or variant bits" do
+      refute ID.valid?("017f22e2-79b0-6cc3-98c4-dc0c0c07398f")
+      refute ID.valid?("017f22e2-79b0-7cc3-78c4-dc0c0c07398f")
+      refute ID.valid?("017f22e2-79b0-7cc3-c8c4-dc0c0c07398f")
     end
   end
 
@@ -145,12 +176,40 @@ defmodule JidoTest.Signal.IDTest do
     end
   end
 
+  describe "generate_sequential/2" do
+    test "encodes timestamp, version, sequence, and variant bits" do
+      timestamp = 0x017F22E279B0
+      sequence = 0x0CC3
+
+      uuid = ID.generate_sequential(timestamp, sequence)
+
+      assert ID.valid?(uuid)
+
+      decoded = decode_uuid7(uuid)
+
+      assert decoded.timestamp == timestamp
+      assert decoded.version == 7
+      assert decoded.rand_a == sequence
+      assert decoded.variant == 2
+    end
+
+    test "supports minimum and maximum representable timestamp values" do
+      min_uuid = ID.generate_sequential(0, 0)
+      max_uuid = ID.generate_sequential(0xFFFFFFFFFFFF, 0x0FFF)
+
+      assert ID.valid?(min_uuid)
+      assert ID.valid?(max_uuid)
+      assert String.starts_with?(min_uuid, "00000000-0000-7000-")
+      assert String.starts_with?(max_uuid, "ffffffff-ffff-7fff-")
+    end
+  end
+
   describe "format_sortable/1" do
     test "formats timestamp and sequence as sortable string" do
       {uuid, ts} = ID.generate()
       formatted = ID.format_sortable(uuid)
       assert is_binary(formatted)
-      assert String.starts_with?(formatted, "#{ts}-")
+      assert formatted == "#{ts}-#{ID.sequence_number(uuid)}"
     end
 
     test "maintains ordering in string format" do
@@ -239,5 +298,20 @@ defmodule JidoTest.Signal.IDTest do
       {ids, _ts} = ID.generate_batch(1000)
       assert length(Enum.uniq(ids)) == 1000
     end
+  end
+
+  defp decode_uuid7(uuid) do
+    {:ok, <<timestamp::48, version::4, rand_a::12, variant::2, rand_b::62>>} =
+      uuid
+      |> String.replace("-", "")
+      |> Base.decode16(case: :mixed)
+
+    %{
+      timestamp: timestamp,
+      version: version,
+      rand_a: rand_a,
+      variant: variant,
+      rand_b: rand_b
+    }
   end
 end
