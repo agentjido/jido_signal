@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+## [v2.2.2](https://github.com/agentjido/jido_signal/compare/v2.2.1...v2.2.2) (2026-06-09)
+
+
+
+
+### Bug Fixes:
+
+* make MessagePack support optional by mikehostetler
+
+* harden signal dispatch security boundaries by mikehostetler
+
 ## [v2.2.1](https://github.com/agentjido/jido_signal/compare/v2.2.0...v2.2.1) (2026-06-02)
 
 
