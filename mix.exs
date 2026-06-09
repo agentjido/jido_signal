@@ -60,7 +60,7 @@ defmodule Jido.Signal.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :mnesia],
+      extra_applications: [:crypto, :logger, :mnesia],
       mod: {Jido.Signal.Application, []}
     ]
   end
@@ -201,7 +201,6 @@ defmodule Jido.Signal.MixProject do
       {:nimble_options, "~> 1.1"},
       {:phoenix_pubsub, "~> 2.1", optional: true},
       {:telemetry, "~> 1.3"},
-      {:uniq, "~> 0.6.1"},
       {:splode, "~> 0.3.0"},
       {:zoi, "~> 0.18.1"},
       {:fuse, "~> 2.5"},

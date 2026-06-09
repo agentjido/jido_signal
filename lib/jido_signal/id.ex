@@ -11,8 +11,10 @@ defmodule Jido.Signal.ID do
 
   UUID7 Format:
   - First 48 bits: Unix timestamp in milliseconds
-  - Next 12 bits: Sequence number (monotonic counter within each millisecond)
-  - Remaining bits: Random data
+  - Next 4 bits: Version (7)
+  - Next 12 bits: Random data or sequence number for batch generation
+  - Next 2 bits: Variant (`0b10`)
+  - Remaining 62 bits: Random data
 
   This ensures that:
   1. IDs are globally ordered by timestamp
@@ -36,6 +38,9 @@ defmodule Jido.Signal.ID do
   @type timestamp :: non_neg_integer()
   @type comparison_result :: :lt | :eq | :gt
 
+  @max_unix_ts_ms 0xFFFFFFFFFFFF
+  @uuid7_regex ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i
+
   @doc """
   Generates a new signal ID using UUID7.
 
@@ -49,7 +54,7 @@ defmodule Jido.Signal.ID do
   """
   @spec generate() :: {uuid7(), timestamp()}
   def generate do
-    uuid = Uniq.UUID.uuid7()
+    uuid = uuid7()
     timestamp = extract_timestamp(uuid)
     {uuid, timestamp}
   end
@@ -177,7 +182,13 @@ defmodule Jido.Signal.ID do
   """
   @spec valid?(term()) :: boolean()
   def valid?(uuid) when is_binary(uuid) do
-    Uniq.UUID.valid?(uuid)
+    with true <- Regex.match?(@uuid7_regex, uuid),
+         {:ok, <<_timestamp::48, version::4, _rand_a::12, variant::2, _rand_b::62>>} <-
+           decode_uuid(uuid) do
+      version == 7 and variant == 2
+    else
+      _ -> false
+    end
   end
 
   def valid?(_), do: false
@@ -217,7 +228,7 @@ defmodule Jido.Signal.ID do
   def format_sortable(uuid) when is_binary(uuid) do
     raw = String.replace(uuid, "-", "")
     {:ok, binary} = Base.decode16(raw, case: :mixed)
-    <<timestamp::48, seq::12, _::68>> = binary
+    <<timestamp::48, _version::4, seq::12, _rest::64>> = binary
     "#{timestamp}-#{seq}"
   end
 
@@ -257,6 +268,23 @@ defmodule Jido.Signal.ID do
     do_generate_batch(count - 1, timestamp, seq + 1, [id | acc])
   end
 
+  @spec uuid7() :: uuid7()
+  defp uuid7 do
+    uuid7(System.system_time(:millisecond), :crypto.strong_rand_bytes(10))
+  end
+
+  @spec uuid7(non_neg_integer(), <<_::80>>) :: uuid7()
+  defp uuid7(timestamp_ms, random_bytes)
+       when is_integer(timestamp_ms) and timestamp_ms in 0..@max_unix_ts_ms and
+              byte_size(random_bytes) == 10 do
+    # UUIDv7 has 74 random bits; 10 random bytes provide those bits plus 6 discarded bits.
+    <<rand_a::12, rand_b::62, _unused::6>> = random_bytes
+
+    <<timestamp_ms::48, 7::4, rand_a::12, 2::2, rand_b::62>>
+    |> Base.encode16(case: :lower)
+    |> uuid7_format()
+  end
+
   @spec compare_sequence(uuid7(), uuid7()) :: comparison_result()
   defp compare_sequence(uuid1, uuid2) do
     seq1 = sequence_number(uuid1)
@@ -281,6 +309,12 @@ defmodule Jido.Signal.ID do
       raw1 > raw2 -> :gt
       true -> :eq
     end
+  end
+
+  defp decode_uuid(uuid) do
+    uuid
+    |> String.replace("-", "")
+    |> Base.decode16(case: :mixed)
   end
 
   # Format a raw hex string into UUID7 format with hyphens
