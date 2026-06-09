@@ -572,9 +572,6 @@ defmodule Jido.Signal.Dispatch do
     end
   end
 
-  # Validates options with the adapter module, handling nil adapter case
-  defp validate_adapter_opts(nil, opts, _adapter), do: {:ok, opts}
-
   defp validate_adapter_opts(adapter_module, opts, _adapter) do
     adapter_module.validate_opts(opts)
   end
@@ -633,9 +630,6 @@ defmodule Jido.Signal.Dispatch do
 
   defp do_dispatch_validated_single(signal, {adapter, opts}) do
     case resolve_adapter(adapter) do
-      {:ok, nil} ->
-        :ok
-
       {:ok, adapter_module} ->
         dispatch_deliver(signal, adapter_module, adapter, opts)
 
