@@ -1,6 +1,7 @@
 defmodule Jido.Signal.CustomTest do
   use ExUnit.Case, async: true
 
+  alias Jido.Signal.CustomTest, as: CustomTest
   alias Jido.Signal.ID
 
   # Define a test Signal module
@@ -267,7 +268,7 @@ defmodule Jido.Signal.CustomTest do
       create_module(
         module,
         quote do
-          use Jido.Signal, Jido.Signal.CustomTest.counted_options(unquote(counter))
+          use Jido.Signal, CustomTest.counted_options(unquote(counter))
         end
       )
 
@@ -286,7 +287,7 @@ defmodule Jido.Signal.CustomTest do
 
           use Jido.Signal,
             type: "counted.schema.signal",
-            schema: Jido.Signal.CustomTest.counted_schema(counter)
+            schema: CustomTest.counted_schema(counter)
         end
       )
 

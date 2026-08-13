@@ -310,14 +310,7 @@ defmodule Jido.Signal do
           with :ok <- Schema.validate_config_schema(validated_opts[:schema]),
                {:ok, extension_policy} <-
                  Signal.normalize_extension_policy(validated_opts[:extension_policy]) do
-            if Signal.storable_schema?(validated_opts[:schema]) do
-              Module.put_attribute(__MODULE__, :signal_data_schema, validated_opts[:schema])
-
-              @doc "Returns the data validation schema for the Signal."
-              def schema, do: @signal_data_schema
-            else
-              unquote(unstorable_schema_definition(schema_ast))
-            end
+            unquote(schema_definition(schema_ast))
 
             Module.put_attribute(
               __MODULE__,
@@ -343,6 +336,19 @@ defmodule Jido.Signal do
         {:error, error} ->
           message = Error.format_nimble_config_error(error, "Signal", __MODULE__)
           raise CompileError, description: message, file: __ENV__.file, line: __ENV__.line
+      end
+    end
+  end
+
+  defp schema_definition(schema_ast) do
+    quote location: :keep do
+      if Signal.storable_schema?(validated_opts[:schema]) do
+        Module.put_attribute(__MODULE__, :signal_data_schema, validated_opts[:schema])
+
+        @doc "Returns the data validation schema for the Signal."
+        def schema, do: @signal_data_schema
+      else
+        unquote(unstorable_schema_definition(schema_ast))
       end
     end
   end
