@@ -68,6 +68,22 @@ defmodule Jido.Signal.CustomTest do
       schema: Zoi.object(%{}) |> Zoi.transform(fn _data -> :invalid end)
   end
 
+  defmodule LazyZoiSignal do
+    use Jido.Signal,
+      type: "lazy.zoi.signal",
+      schema: Zoi.lazy({__MODULE__, :data_schema, []})
+
+    def data_schema, do: Zoi.object(%{value: Zoi.integer()})
+  end
+
+  defmodule ScalarLazyZoiSignal do
+    use Jido.Signal,
+      type: "scalar.lazy.zoi.signal",
+      schema: Zoi.lazy({__MODULE__, :data_schema, []})
+
+    def data_schema, do: Zoi.integer()
+  end
+
   # Define another test Signal module with minimal config
   defmodule SimpleSignal do
     use Jido.Signal,
@@ -340,6 +356,16 @@ defmodule Jido.Signal.CustomTest do
 
     test "rejects a non-map result from a Zoi transform" do
       assert {:error, error} = ScalarTransformSignal.validate_data(%{})
+      assert error =~ "Zoi schema validation must return a map"
+    end
+
+    test "defers a local lazy schema until its module is compiled" do
+      assert {:ok, %{value: 1}} = LazyZoiSignal.validate_data(%{value: 1})
+      assert %Zoi.Types.Lazy{} = LazyZoiSignal.schema()
+    end
+
+    test "rejects a non-map result from a lazy schema at runtime" do
+      assert {:error, error} = ScalarLazyZoiSignal.validate_data(1)
       assert error =~ "Zoi schema validation must return a map"
     end
   end

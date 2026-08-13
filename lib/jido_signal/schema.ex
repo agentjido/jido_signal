@@ -66,14 +66,7 @@ defmodule Jido.Signal.Schema do
   defp map_schema?(%Zoi.Types.Any{}), do: true
   defp map_schema?(%Zoi.Types.DiscriminatedUnion{}), do: true
 
-  defp map_schema?(%Zoi.Types.Lazy{} = schema) do
-    case resolve_lazy(schema) do
-      %Zoi.Types.Lazy{} -> false
-      resolved_schema -> map_schema?(resolved_schema)
-    end
-  rescue
-    _exception -> false
-  end
+  defp map_schema?(%Zoi.Types.Lazy{}), do: true
 
   defp map_schema?(%Zoi.Types.Literal{value: value}), do: is_map(value)
   defp map_schema?(%Zoi.Types.Default{inner: inner}), do: map_schema?(inner)
@@ -88,11 +81,6 @@ defmodule Jido.Signal.Schema do
     do: map_schema?(from) and map_schema?(to)
 
   defp map_schema?(_schema), do: false
-
-  defp resolve_lazy(%Zoi.Types.Lazy{fun: {module, function, args}}),
-    do: apply(module, function, args)
-
-  defp resolve_lazy(%Zoi.Types.Lazy{fun: function}), do: function.()
 
   defp zoi_schema?(schema) do
     is_struct(schema) and Zoi.Type.impl_for(schema) != nil
