@@ -208,6 +208,11 @@ trace_data = Jido.Signal.get_extension(deserialized_signal, "trace")
 - Only use `[a-z0-9]` characters (CloudEvents requirement)
 
 ### Schema Design
+
+This section applies to modules that use `Jido.Signal.Ext`. Extension schemas
+still use NimbleOptions. For custom Signal data schemas defined with
+`use Jido.Signal`, use Zoi as the preferred format.
+
 - Use NimbleOptions schema format
 - Mark required fields with `required: true`
 - Add documentation with `doc:` option

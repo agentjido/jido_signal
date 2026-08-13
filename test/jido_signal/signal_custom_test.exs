@@ -14,6 +14,59 @@ defmodule Jido.Signal.CustomTest do
       ]
   end
 
+  defmodule ZoiSignal do
+    use Jido.Signal,
+      type: "zoi.signal",
+      schema:
+        Zoi.object(%{
+          user_id: Zoi.string(),
+          email:
+            Zoi.string()
+            |> Zoi.refine(fn email ->
+              if String.contains?(email, "@"), do: :ok, else: {:error, "must contain @"}
+            end),
+          count: Zoi.integer() |> Zoi.default(1)
+        })
+  end
+
+  defmodule VariableZoiSignal do
+    field_schema = Zoi.string()
+
+    use Jido.Signal,
+      type: "variable.zoi.signal",
+      schema: Zoi.object(%{value: field_schema})
+  end
+
+  defmodule ScopedClosureSignal do
+    value = :outer
+    item = :outer
+    quoted_value = :outer
+
+    use Jido.Signal,
+      type: "scoped.closure.signal",
+      schema:
+        Zoi.object(%{
+          value:
+            Zoi.integer()
+            |> Zoi.refine(fn value ->
+              _quoted = quote(do: quoted_value)
+
+              if match?({:ok, item} when item > 0, {:ok, value}),
+                do: :ok,
+                else: {:error, "must be positive"}
+            end)
+        })
+
+    @outer_values {value, item, quoted_value}
+    def outer_values, do: @outer_values
+  end
+
+  defmodule ScalarTransformSignal do
+    use Jido.Signal,
+      type: "scalar.transform.signal",
+      schema: Zoi.object(%{}) |> Zoi.transform(fn _data -> :invalid end)
+  end
+
   # Define another test Signal module with minimal config
   defmodule SimpleSignal do
     use Jido.Signal,
@@ -125,16 +178,14 @@ defmodule Jido.Signal.CustomTest do
 
     test "exposes metadata functions" do
       assert TestSignal.type() == "test.signal"
-      # Schema is now a Zoi schema struct
       schema = TestSignal.schema()
-      assert schema != nil
+      assert is_list(schema)
       assert TestSignal.default_source() == nil
       assert TestSignal.extension_policy() == %{}
 
       metadata = TestSignal.to_json()
       assert metadata.type == "test.signal"
-      # Schema in metadata is also the Zoi schema
-      assert metadata.schema != nil
+      assert is_list(metadata.schema)
       assert metadata.extension_policy == %{}
     end
 
@@ -147,6 +198,148 @@ defmodule Jido.Signal.CustomTest do
       assert {:error, error} = TestSignal.validate_data(invalid_data)
       assert error =~ "user_id"
       assert error =~ "required"
+    end
+  end
+
+  describe "ZoiSignal" do
+    test "creates a Signal with valid data and applies defaults" do
+      assert {:ok, signal} =
+               ZoiSignal.new(%{user_id: "123", email: "user@example.com"})
+
+      assert signal.type == "zoi.signal"
+      assert signal.data == %{user_id: "123", email: "user@example.com", count: 1}
+      assert %Zoi.Types.Map{} = ZoiSignal.schema()
+      assert %Zoi.Types.Map{} = ZoiSignal.to_json().schema
+    end
+
+    test "returns a useful error for invalid data" do
+      assert {:error, error} = ZoiSignal.new(%{user_id: "123", email: "invalid"})
+
+      assert is_binary(error)
+      assert error =~ "Invalid parameters for Signal"
+      assert error =~ "email"
+      assert error =~ "must contain @"
+    end
+
+    test "preserves an inline refinement function" do
+      assert {:ok, validated} =
+               ZoiSignal.validate_data(%{user_id: "123", email: "user@example.com"})
+
+      assert validated.count == 1
+
+      assert {:error, error} =
+               ZoiSignal.validate_data(%{user_id: "123", email: "invalid"})
+
+      assert error =~ "must contain @"
+    end
+
+    test "uses the direct Zoi unknown-key behavior" do
+      assert {:ok, signal} =
+               ZoiSignal.new(%{
+                 user_id: "123",
+                 email: "user@example.com",
+                 extra: "removed"
+               })
+
+      refute Map.has_key?(signal.data, :extra)
+    end
+  end
+
+  describe "Zoi schema loading" do
+    test "stores a schema that contains a caller variable" do
+      assert {:ok, signal} = VariableZoiSignal.new(%{value: "stored"})
+      assert signal.data == %{value: "stored"}
+      assert %Zoi.Types.Map{} = VariableZoiSignal.schema()
+    end
+
+    test "keeps inline closure scope separate from caller variables" do
+      assert ScopedClosureSignal.outer_values() == {:outer, :outer, :outer}
+      assert {:ok, %{value: 1}} = ScopedClosureSignal.validate_data(%{value: 1})
+
+      assert {:error, error} = ScopedClosureSignal.validate_data(%{value: 0})
+      assert error =~ "must be positive"
+    end
+
+    test "evaluates non-literal options once" do
+      module = unique_module("CountedOptionsSignal")
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      create_module(
+        module,
+        quote do
+          use Jido.Signal, Jido.Signal.CustomTest.counted_options(unquote(counter))
+        end
+      )
+
+      assert Agent.get(counter, & &1) == 1
+      assert module.type() == "counted.options.signal"
+    end
+
+    test "builds a storable schema once" do
+      module = unique_module("CountedSchemaSignal")
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      create_module(
+        module,
+        quote do
+          counter = unquote(counter)
+
+          use Jido.Signal,
+            type: "counted.schema.signal",
+            schema: Jido.Signal.CustomTest.counted_schema(counter)
+        end
+      )
+
+      assert Agent.get(counter, & &1) == 1
+      assert %Zoi.Types.Map{} = module.schema()
+      assert %Zoi.Types.Map{} = module.schema()
+      assert {:ok, %{value: 1}} = module.validate_data(%{value: 1})
+      assert Agent.get(counter, & &1) == 1
+    end
+
+    test "reports a closure schema from dynamic options" do
+      module = unique_module("DynamicClosureSignal")
+
+      assert_raise CompileError,
+                   ~r/closure-based :schema must be declared inline without caller variables/,
+                   fn ->
+                     create_module(
+                       module,
+                       quote do
+                         opts = [
+                           type: "dynamic.closure.signal",
+                           schema:
+                             Zoi.object(%{
+                               value:
+                                 Zoi.integer()
+                                 |> Zoi.refine(fn value -> value > 0 end)
+                             })
+                         ]
+
+                         use Jido.Signal, opts
+                       end
+                     )
+                   end
+    end
+
+    test "rejects a Zoi schema that cannot accept map data" do
+      module = unique_module("ScalarSchemaSignal")
+
+      assert_raise CompileError, ~r/must accept map-shaped Signal data/, fn ->
+        create_module(
+          module,
+          quote do
+            use Jido.Signal,
+              type: "scalar.schema.signal",
+              schema: Zoi.integer()
+          end
+        )
+      end
+    end
+
+    test "rejects a non-map result from a Zoi transform" do
+      assert {:error, error} = ScalarTransformSignal.validate_data(%{})
+      assert error =~ "Zoi schema validation must return a map"
     end
   end
 
@@ -163,6 +356,10 @@ defmodule Jido.Signal.CustomTest do
       assert {:ok, signal} = SimpleSignal.new()
       assert signal.type == "simple.signal"
       assert signal.data == %{}
+    end
+
+    test "keeps no-schema payloads unchanged" do
+      assert {:ok, "anything"} = SimpleSignal.validate_data("anything")
     end
   end
 
@@ -358,6 +555,18 @@ defmodule Jido.Signal.CustomTest do
       assert error =~ "expected string"
     end
 
+    test "rejects unsupported schema formats at compile time" do
+      assert_raise CompileError,
+                   ~r/must be a Zoi schema or NimbleOptions keyword-list schema/,
+                   fn ->
+                     defmodule InvalidSchemaSignal do
+                       use Jido.Signal,
+                         type: "invalid.schema.signal",
+                         schema: :not_a_schema
+                     end
+                   end
+    end
+
     test "rejects invalid extension policy modes at compile time" do
       assert_raise CompileError, ~r/extension_policy.*must be one of/, fn ->
         defmodule InvalidPolicyModeSignal do
@@ -406,5 +615,23 @@ defmodule Jido.Signal.CustomTest do
                      end
                    end
     end
+  end
+
+  def counted_options(counter) do
+    Agent.update(counter, &(&1 + 1))
+    [type: "counted.options.signal", schema: Zoi.object(%{value: Zoi.integer()})]
+  end
+
+  def counted_schema(counter) do
+    Agent.update(counter, &(&1 + 1))
+    Zoi.object(%{value: Zoi.integer()})
+  end
+
+  defp unique_module(prefix) do
+    Module.concat(__MODULE__, "#{prefix}#{System.unique_integer([:positive])}")
+  end
+
+  defp create_module(module, quoted) do
+    Module.create(module, quoted, Macro.Env.location(__ENV__))
   end
 end

@@ -14,6 +14,7 @@ defmodule Jido.Signal.Using do
   alias __MODULE__, as: Using
   alias Jido.Signal.Error
   alias Jido.Signal.ID
+  alias Jido.Signal.Schema
 
   # Alias for internal use in macros
   @doc """
@@ -49,7 +50,6 @@ defmodule Jido.Signal.Using do
       def default_source, do: @validated_opts[:default_source]
       def datacontenttype, do: @validated_opts[:datacontenttype]
       def dataschema, do: @validated_opts[:dataschema]
-      def schema, do: @validated_opts[:schema]
       def extension_policy, do: @validated_opts[:extension_policy]
 
       def to_json do
@@ -58,7 +58,7 @@ defmodule Jido.Signal.Using do
           dataschema: @validated_opts[:dataschema],
           default_source: @validated_opts[:default_source],
           extension_policy: @validated_opts[:extension_policy],
-          schema: @validated_opts[:schema],
+          schema: schema(),
           type: @validated_opts[:type]
         }
       end
@@ -134,6 +134,7 @@ defmodule Jido.Signal.Using do
   defmacro define_validation_functions do
     quote location: :keep do
       alias Jido.Signal.Error
+      alias Jido.Signal.Schema
 
       @doc """
       Validates the data for the Signal according to its schema.
@@ -146,18 +147,20 @@ defmodule Jido.Signal.Using do
       """
       @spec validate_data(map()) :: {:ok, map()} | {:error, String.t()}
       def validate_data(data) do
-        do_validate_data(@validated_opts[:schema], data)
-      end
-
-      defp do_validate_data([], data), do: {:ok, data}
-
-      defp do_validate_data(schema, data) when is_list(schema) do
-        case NimbleOptions.validate(Enum.to_list(data), schema) do
+        case Schema.validate(schema(), data) do
           {:ok, validated_data} ->
-            {:ok, Map.new(validated_data)}
+            {:ok, validated_data}
 
           {:error, %NimbleOptions.ValidationError{} = error} ->
             reason = Error.format_nimble_validation_error(error, "Signal", __MODULE__)
+            {:error, reason}
+
+          {:error, errors} when is_list(errors) ->
+            reason = Error.format_zoi_validation_error(errors, "Signal", __MODULE__)
+            {:error, reason}
+
+          {:error, error} ->
+            reason = Error.format_zoi_validation_error(error, "Signal", __MODULE__)
             {:error, reason}
         end
       end
