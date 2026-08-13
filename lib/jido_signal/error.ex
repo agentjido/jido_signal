@@ -392,6 +392,23 @@ defmodule Jido.Signal.Error do
 
   def format_nimble_validation_error(error, _module_type, _module), do: inspect(error)
 
+  @doc """
+  Formats a Zoi validation error for runtime parameter validation.
+  """
+  @spec format_zoi_validation_error(list(Zoi.Error.t()) | any(), String.t(), module()) ::
+          String.t()
+  def format_zoi_validation_error(errors, module_type, module) when is_list(errors) do
+    "Invalid parameters for #{module_type} (#{module}): #{Zoi.prettify_errors(errors)}"
+  end
+
+  def format_zoi_validation_error(error, module_type, module) when is_binary(error) do
+    "Invalid parameters for #{module_type} (#{module}): #{error}"
+  end
+
+  def format_zoi_validation_error(error, module_type, module) do
+    "Invalid parameters for #{module_type} (#{module}): #{inspect(error)}"
+  end
+
   defp retryable_from_details?(details) do
     details = normalize_details(details)
 

@@ -73,10 +73,10 @@ defmodule Jido.Signal do
       type: "my.custom.signal",
       default_source: "/my/service",
       datacontenttype: "application/json",
-      schema: [
-        user_id: [type: :string, required: true],
-        message: [type: :string, required: true]
-      ]
+      schema: Zoi.object(%{
+        user_id: Zoi.string(),
+        message: Zoi.string()
+      })
   end
 
   # Create instances
@@ -143,6 +143,7 @@ defmodule Jido.Signal do
   alias Jido.Signal.Ext
   alias Jido.Signal.ID
   alias Jido.Signal.Sanitizer
+  alias Jido.Signal.Schema
   alias Jido.Signal.Serialization.Serializer
   alias Jido.Signal.Serialization.TypeProvider
   alias Jido.Signal.Using
@@ -176,10 +177,10 @@ defmodule Jido.Signal do
                             doc: "Schema URI for the data field (optional)"
                           ],
                           schema: [
-                            type: :keyword_list,
+                            type: :any,
                             default: [],
                             doc:
-                              "A NimbleOptions schema for validating the Signal's data parameters"
+                              "A map-shaped Zoi schema for validating the Signal's data parameters. NimbleOptions keyword-list schemas are supported for compatibility and will be deprecated"
                           ],
                           extension_policy: [
                             type: :keyword_list,
@@ -235,6 +236,24 @@ defmodule Jido.Signal do
   @doc "Returns the Zoi schema for Signal"
   def schema, do: @signal_schema
 
+  @doc false
+  @spec storable_schema?(term()) :: boolean()
+  def storable_schema?(schema) do
+    Macro.escape(schema)
+    true
+  rescue
+    ArgumentError -> false
+  end
+
+  @doc false
+  @spec raise_unstorable_schema!(Macro.Env.t()) :: no_return()
+  def raise_unstorable_schema!(env) do
+    raise CompileError,
+      description: "closure-based :schema must be declared inline without caller variables",
+      file: env.file,
+      line: env.line
+  end
+
   @doc """
   Defines a new Signal module.
 
@@ -251,46 +270,64 @@ defmodule Jido.Signal do
         use Jido.Signal,
           type: "my.custom.signal",
           default_source: "/my/service",
-          schema: [
-            user_id: [type: :string, required: true],
-            message: [type: :string, required: true]
-          ],
+          schema: Zoi.object(%{
+            user_id: Zoi.string(),
+            message: Zoi.string()
+          }),
           extension_policy: [
             {MyApp.Signal.Ext.Trace, :required},
             {MyApp.Signal.Ext.Dispatch, :forbidden}
           ]
       end
 
+  Zoi schemas with anonymous refinement functions must be declared inline. They
+  must not use caller variables. Use a named `{Module, :function, args}`
+  refinement when a schema must be stored in a variable, module attribute, or
+  dynamic options value.
+
   """
-  defmacro __using__(opts) do
+  defmacro __using__(opts_ast) do
     escaped_schema = Macro.escape(@signal_config_schema)
+
+    schema_ast =
+      if is_list(opts_ast) do
+        Keyword.get(opts_ast, :schema)
+      end
 
     quote location: :keep do
       alias Jido.Signal
       alias Jido.Signal.Error
       alias Jido.Signal.ID
+      alias Jido.Signal.Schema
       alias Jido.Signal.Using
 
       require Using
 
-      case NimbleOptions.validate(unquote(opts), unquote(escaped_schema)) do
+      raw_opts = unquote(opts_ast)
+
+      case NimbleOptions.validate(raw_opts, unquote(escaped_schema)) do
         {:ok, validated_opts} ->
-          case Signal.normalize_extension_policy(validated_opts[:extension_policy]) do
-            {:ok, extension_policy} ->
-              Module.put_attribute(
-                __MODULE__,
-                :extension_policy_modules,
-                Signal.build_extension_policy_modules(validated_opts[:extension_policy])
-              )
+          with :ok <- Schema.validate_config_schema(validated_opts[:schema]),
+               {:ok, extension_policy} <-
+                 Signal.normalize_extension_policy(validated_opts[:extension_policy]) do
+            unquote(schema_definition(schema_ast))
 
-              Module.put_attribute(
-                __MODULE__,
-                :validated_opts,
-                Keyword.put(validated_opts, :extension_policy, extension_policy)
-              )
+            Module.put_attribute(
+              __MODULE__,
+              :extension_policy_modules,
+              Signal.build_extension_policy_modules(validated_opts[:extension_policy])
+            )
 
-              Using.define_signal_functions()
+            Module.put_attribute(
+              __MODULE__,
+              :validated_opts,
+              validated_opts
+              |> Keyword.delete(:schema)
+              |> Keyword.put(:extension_policy, extension_policy)
+            )
 
+            Using.define_signal_functions()
+          else
             {:error, error} ->
               message = Error.format_nimble_config_error(error, "Signal", __MODULE__)
               raise CompileError, description: message, file: __ENV__.file, line: __ENV__.line
@@ -300,6 +337,45 @@ defmodule Jido.Signal do
           message = Error.format_nimble_config_error(error, "Signal", __MODULE__)
           raise CompileError, description: message, file: __ENV__.file, line: __ENV__.line
       end
+    end
+  end
+
+  defp schema_definition(schema_ast) do
+    quote location: :keep do
+      if Signal.storable_schema?(validated_opts[:schema]) do
+        Module.put_attribute(__MODULE__, :signal_data_schema, validated_opts[:schema])
+
+        @doc "Returns the data validation schema for the Signal."
+        def schema, do: @signal_data_schema
+      else
+        unquote(unstorable_schema_definition(schema_ast))
+      end
+    end
+  end
+
+  defp unstorable_schema_definition(nil) do
+    quote location: :keep do
+      Signal.raise_unstorable_schema!(__ENV__)
+    end
+  end
+
+  defp unstorable_schema_definition({:@, _meta, [_attribute]}) do
+    quote location: :keep do
+      Signal.raise_unstorable_schema!(__ENV__)
+    end
+  end
+
+  defp unstorable_schema_definition({_name, meta, context})
+       when is_list(meta) and is_atom(context) do
+    quote location: :keep do
+      Signal.raise_unstorable_schema!(__ENV__)
+    end
+  end
+
+  defp unstorable_schema_definition(schema_ast) do
+    quote location: :keep do
+      @doc "Returns the data validation schema for the Signal."
+      def schema, do: unquote(schema_ast)
     end
   end
 

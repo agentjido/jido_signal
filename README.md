@@ -216,11 +216,11 @@ defmodule UserCreated do
   use Jido.Signal,
     type: "user.created.v1",
     default_source: "/users",
-    schema: [
-      user_id: [type: :string, required: true],
-      email: [type: :string, required: true],
-      name: [type: :string, required: true]
-    ]
+    schema: Zoi.object(%{
+      user_id: Zoi.string(),
+      email: Zoi.string(),
+      name: Zoi.string()
+    })
 end
 
 # Usage
@@ -232,8 +232,17 @@ end
 
 # Validation errors
 {:error, reason} = UserCreated.new(%{user_id: "u_123"})
-# => {:error, "Invalid data for Signal: Required key :email not found"}
+# reason identifies the missing email field.
 ```
+
+Zoi is the preferred schema format for custom Signals. NimbleOptions keyword-list
+schemas remain supported for compatibility. NimbleOptions schema support will be
+deprecated in a later release after a migration period.
+
+Zoi schemas must accept and return map-shaped data. Anonymous refinement
+functions are supported when the schema is declared inline and does not use
+caller variables. Use a named `{Module, :function, args}` refinement for schemas
+stored in variables, module attributes, or dynamic options.
 
 Typed signals can also declare extension policy when you want constructor-time guarantees
 for known extensions without changing generic deserialization behavior:
@@ -242,9 +251,9 @@ for known extensions without changing generic deserialization behavior:
 defmodule UserCreated do
   use Jido.Signal,
     type: "user.created.v1",
-    schema: [
-      user_id: [type: :string, required: true]
-    ],
+    schema: Zoi.object(%{
+      user_id: Zoi.string()
+    }),
     extension_policy: [
       {MyApp.Signal.Ext.Trace, :required},
       {MyApp.Signal.Ext.Dispatch, :forbidden}

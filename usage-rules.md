@@ -7,6 +7,8 @@ Model domain events as validated signals and route them predictably through disp
 - Prefer positional constructor: `Signal.new(type, data, attrs)`.
 - Use dot-delimited event types (`user.created`, `order.shipped`).
 - Use **Zoi-first** signal schemas for new typed signal modules.
+- For typed Signal data, NimbleOptions keyword-list schemas are a compatibility format. Support will be deprecated after a migration period.
+- Signal extension schemas still use NimbleOptions.
 - Publish as a list (`Bus.publish(bus, [signal])`) and keep routing explicit.
 - Keep transport logic in dispatch adapters, not in signal payload modules.
 
