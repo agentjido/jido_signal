@@ -337,35 +337,23 @@ defmodule Jido.Signal.Error do
   end
 
   @doc """
-  Formats a NimbleOptions validation error for configuration validation.
+  Formats Zoi configuration errors for compile-time module definitions.
   """
-  @spec format_nimble_config_error(
-          NimbleOptions.ValidationError.t() | any(),
-          String.t(),
-          module()
-        ) :: String.t()
-  def format_nimble_config_error(
-        %NimbleOptions.ValidationError{keys_path: [], message: message},
-        module_type,
-        module
-      ) do
-    "Invalid configuration given to use Jido.#{module_type} (#{module}): #{message}"
+  @spec format_zoi_config_error(list(Zoi.Error.t()) | any(), String.t(), module()) ::
+          String.t()
+  def format_zoi_config_error(errors, module_type, module) when is_list(errors) do
+    "Invalid configuration given to use Jido.#{module_type} (#{module}): #{Zoi.prettify_errors(errors)}"
   end
 
-  def format_nimble_config_error(
-        %NimbleOptions.ValidationError{keys_path: keys_path, message: message},
-        module_type,
-        module
-      ) do
-    "Invalid configuration given to use Jido.#{module_type} (#{module}) for key #{inspect(keys_path)}: #{message}"
+  def format_zoi_config_error(error, module_type, module) when is_binary(error) do
+    "Invalid configuration given to use Jido.#{module_type} (#{module}): #{error}"
   end
 
-  def format_nimble_config_error(error, _module_type, _module) when is_binary(error), do: error
-  def format_nimble_config_error(error, _module_type, _module), do: inspect(error)
+  def format_zoi_config_error(error, module_type, module) do
+    "Invalid configuration given to use Jido.#{module_type} (#{module}): #{inspect(error)}"
+  end
 
-  @doc """
-  Formats a NimbleOptions validation error for runtime parameter validation.
-  """
+  @doc false
   @spec format_nimble_validation_error(
           NimbleOptions.ValidationError.t() | any(),
           String.t(),
@@ -386,11 +374,6 @@ defmodule Jido.Signal.Error do
       ) do
     "Invalid parameters for #{module_type} (#{module}) at #{inspect(keys_path)}: #{message}"
   end
-
-  def format_nimble_validation_error(error, _module_type, _module) when is_binary(error),
-    do: error
-
-  def format_nimble_validation_error(error, _module_type, _module), do: inspect(error)
 
   @doc """
   Formats a Zoi validation error for runtime parameter validation.

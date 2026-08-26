@@ -6,9 +6,6 @@ defmodule JidoTest.TestSignals do
 
     use Jido.Signal,
       type: "doc.example",
-      schema: [
-        user_id: [type: :string, required: true],
-        message: [type: :string, required: true]
-      ]
+      schema: Zoi.object(%{user_id: Zoi.string(), message: Zoi.string()})
   end
 end

@@ -155,39 +155,23 @@ defmodule Jido.Signal do
     datacontenttype dataschema data jido_dispatch extensions
   ]a
 
-  @signal_config_schema NimbleOptions.new!(
-                          type: [
-                            type: :string,
-                            required: true,
-                            doc: "The type of the Signal"
+  @default_data_schema Zoi.any()
+  @signal_config_schema Zoi.keyword(
+                          [
+                            type: Zoi.string() |> Zoi.required(),
+                            default_source: Zoi.string(),
+                            datacontenttype: Zoi.string(),
+                            dataschema: Zoi.string(),
+                            schema: Zoi.any() |> Zoi.default(@default_data_schema),
+                            extension_policy:
+                              Zoi.array(
+                                Zoi.tuple(
+                                  {Zoi.module(), Zoi.enum([:required, :optional, :forbidden])}
+                                )
+                              )
+                              |> Zoi.default([])
                           ],
-                          default_source: [
-                            type: :string,
-                            required: false,
-                            doc: "The default source of the Signal"
-                          ],
-                          datacontenttype: [
-                            type: :string,
-                            required: false,
-                            doc: "The content type of the data field"
-                          ],
-                          dataschema: [
-                            type: :string,
-                            required: false,
-                            doc: "Schema URI for the data field (optional)"
-                          ],
-                          schema: [
-                            type: :any,
-                            default: [],
-                            doc:
-                              "A map-shaped Zoi schema for validating the Signal's data parameters. NimbleOptions keyword-list schemas are supported for compatibility and will be deprecated"
-                          ],
-                          extension_policy: [
-                            type: :keyword_list,
-                            default: [],
-                            doc:
-                              "Typed-signal extension policy as `{ExtensionModule, :required | :optional | :forbidden}` entries"
-                          ]
+                          unrecognized_keys: :error
                         )
 
   @extension_policy_modes [:required, :optional, :forbidden]
@@ -262,7 +246,12 @@ defmodule Jido.Signal do
 
   ## Options
 
-  #{NimbleOptions.docs(@signal_config_schema)}
+  - `:type` - Required Signal type.
+  - `:default_source` - Default source for typed construction.
+  - `:datacontenttype` - Optional payload content type.
+  - `:dataschema` - Optional payload schema URI.
+  - `:schema` - A map-shaped Zoi schema for Signal data.
+  - `:extension_policy` - Extension module and policy mode pairs.
 
   ## Examples
 
@@ -305,7 +294,7 @@ defmodule Jido.Signal do
 
       raw_opts = unquote(opts_ast)
 
-      case NimbleOptions.validate(raw_opts, unquote(escaped_schema)) do
+      case Zoi.parse(unquote(escaped_schema), raw_opts) do
         {:ok, validated_opts} ->
           with :ok <- Schema.validate_config_schema(validated_opts[:schema]),
                {:ok, extension_policy} <-
@@ -329,12 +318,12 @@ defmodule Jido.Signal do
             Using.define_signal_functions()
           else
             {:error, error} ->
-              message = Error.format_nimble_config_error(error, "Signal", __MODULE__)
+              message = Error.format_zoi_config_error(error, "Signal", __MODULE__)
               raise CompileError, description: message, file: __ENV__.file, line: __ENV__.line
           end
 
         {:error, error} ->
-          message = Error.format_nimble_config_error(error, "Signal", __MODULE__)
+          message = Error.format_zoi_config_error(error, "Signal", __MODULE__)
           raise CompileError, description: message, file: __ENV__.file, line: __ENV__.line
       end
     end

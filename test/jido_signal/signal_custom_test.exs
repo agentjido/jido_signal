@@ -8,11 +8,12 @@ defmodule Jido.Signal.CustomTest do
   defmodule TestSignal do
     use Jido.Signal,
       type: "test.signal",
-      schema: [
-        user_id: [type: :string, required: true],
-        message: [type: :string, required: true],
-        count: [type: :integer, default: 1]
-      ]
+      schema:
+        Zoi.object(%{
+          user_id: Zoi.string(),
+          message: Zoi.string(),
+          count: Zoi.integer() |> Zoi.default(1)
+        })
   end
 
   defmodule ZoiSignal do
@@ -97,10 +98,11 @@ defmodule Jido.Signal.CustomTest do
       default_source: "/test/source",
       datacontenttype: "application/json",
       dataschema: "https://example.com/schema",
-      schema: [
-        action: [type: :string, required: true],
-        priority: [type: {:in, [:low, :medium, :high]}, default: :medium]
-      ]
+      schema:
+        Zoi.object(%{
+          action: Zoi.string(),
+          priority: Zoi.enum([:low, :medium, :high]) |> Zoi.default(:medium)
+        })
   end
 
   defmodule RequiredPolicyExtension do
@@ -130,9 +132,7 @@ defmodule Jido.Signal.CustomTest do
   defmodule PolicySignal do
     use Jido.Signal,
       type: "policy.signal",
-      schema: [
-        message: [type: :string, required: true]
-      ],
+      schema: Zoi.object(%{message: Zoi.string()}),
       extension_policy: [
         {RequiredPolicyExtension, :required},
         {OptionalPolicyExtension, :optional},
@@ -196,13 +196,13 @@ defmodule Jido.Signal.CustomTest do
     test "exposes metadata functions" do
       assert TestSignal.type() == "test.signal"
       schema = TestSignal.schema()
-      assert is_list(schema)
+      assert %Zoi.Types.Map{} = schema
       assert TestSignal.default_source() == nil
       assert TestSignal.extension_policy() == %{}
 
       metadata = TestSignal.to_json()
       assert metadata.type == "test.signal"
-      assert is_list(metadata.schema)
+      assert %Zoi.Types.Map{} = metadata.schema
       assert metadata.extension_policy == %{}
     end
 
@@ -584,7 +584,7 @@ defmodule Jido.Signal.CustomTest do
 
     test "rejects unsupported schema formats at compile time" do
       assert_raise CompileError,
-                   ~r/must be a Zoi schema or NimbleOptions keyword-list schema/,
+                   ~r/must be a Zoi schema/,
                    fn ->
                      defmodule InvalidSchemaSignal do
                        use Jido.Signal,
@@ -595,7 +595,7 @@ defmodule Jido.Signal.CustomTest do
     end
 
     test "rejects invalid extension policy modes at compile time" do
-      assert_raise CompileError, ~r/extension_policy.*must be one of/, fn ->
+      assert_raise CompileError, ~r/invalid enum value.*extension_policy\[0\]\[1\]/, fn ->
         defmodule InvalidPolicyModeSignal do
           use Jido.Signal,
             type: "invalid.policy.mode.signal",
@@ -607,7 +607,7 @@ defmodule Jido.Signal.CustomTest do
     end
 
     test "rejects non-module extension policy keys at compile time" do
-      assert_raise CompileError, ~r/extension_policy keys must be compiled modules/, fn ->
+      assert_raise CompileError, ~r/expected module.*extension_policy\[0\]\[0\]/, fn ->
         defmodule InvalidPolicyModuleSignal do
           use Jido.Signal,
             type: "invalid.policy.module.signal",

@@ -151,10 +151,6 @@ defmodule Jido.Signal.Using do
           {:ok, validated_data} ->
             {:ok, validated_data}
 
-          {:error, %NimbleOptions.ValidationError{} = error} ->
-            reason = Error.format_nimble_validation_error(error, "Signal", __MODULE__)
-            {:error, reason}
-
           {:error, errors} when is_list(errors) ->
             reason = Error.format_zoi_validation_error(errors, "Signal", __MODULE__)
             {:error, reason}
