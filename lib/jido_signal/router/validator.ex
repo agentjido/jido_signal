@@ -1,7 +1,5 @@
 defmodule Jido.Signal.Router.Validator do
-  @moduledoc """
-  Validates router configuration and normalizes route specifications.
-  """
+  @moduledoc false
 
   alias Jido.Signal
   alias Jido.Signal.Error

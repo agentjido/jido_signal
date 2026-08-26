@@ -163,15 +163,13 @@ defmodule Jido.Signal.Router do
   """
   alias Jido.Signal
   alias Jido.Signal.Error
-  alias Jido.Signal.Router.{Cache, Engine, Route, Validator}
+  alias Jido.Signal.Router.{Engine, Route, Validator}
   alias Jido.Signal.Telemetry
-
-  @type cache_id :: Cache.cache_id()
 
   @type t :: %{
           trie: __MODULE__.TrieNode.t(),
           route_count: non_neg_integer(),
-          cache_id: cache_id() | nil
+          cache_id: nil
         }
 
   @type path :: String.t()
@@ -207,7 +205,7 @@ defmodule Jido.Signal.Router do
   defdelegate normalize(input), to: Validator
 
   defmodule HandlerInfo do
-    @moduledoc "Router Helper struct to store handler metadata"
+    @moduledoc false
 
     @schema Zoi.struct(
               __MODULE__,
@@ -227,7 +225,7 @@ defmodule Jido.Signal.Router do
   end
 
   defmodule PatternMatch do
-    @moduledoc "Router Helper struct to store pattern match metadata"
+    @moduledoc false
 
     @schema Zoi.struct(
               __MODULE__,
@@ -248,7 +246,7 @@ defmodule Jido.Signal.Router do
   end
 
   defmodule NodeHandlers do
-    @moduledoc "Router Helper struct to store node handler metadata"
+    @moduledoc false
 
     @schema Zoi.struct(
               __MODULE__,
@@ -267,7 +265,7 @@ defmodule Jido.Signal.Router do
   end
 
   defmodule WildcardHandlers do
-    @moduledoc "Router Helper struct to store wildcard handler metadata"
+    @moduledoc false
 
     @schema Zoi.struct(
               __MODULE__,
@@ -286,7 +284,7 @@ defmodule Jido.Signal.Router do
   end
 
   defmodule TrieNode do
-    @moduledoc "Router Helper struct to store trie node metadata"
+    @moduledoc false
 
     @schema Zoi.struct(
               __MODULE__,
@@ -306,7 +304,7 @@ defmodule Jido.Signal.Router do
   end
 
   defmodule Route do
-    @moduledoc "Router Helper struct to store route metadata"
+    @moduledoc "A validated Signal routing rule."
 
     @schema Zoi.struct(
               __MODULE__,
@@ -327,7 +325,7 @@ defmodule Jido.Signal.Router do
   end
 
   defmodule Router do
-    @moduledoc "Router Helper struct to store router metadata"
+    @moduledoc false
 
     @schema Zoi.struct(
               __MODULE__,
@@ -346,56 +344,29 @@ defmodule Jido.Signal.Router do
     def schema, do: @schema
   end
 
-  @type new_opts :: [cache_id: cache_id()]
+  @type new_opts :: keyword()
 
   @doc """
   Creates a new router with the given routes.
 
-  ## Options
-  - `:cache_id` - Optional. When provided, the router's trie is cached in
-    `:persistent_term` for fast lookups. Use `Router.Cache.route/2` for
-    cached routing.
-
   ## Examples
 
-      # Without caching (default behavior)
       {:ok, router} = Router.new([{"user.created", MyHandler}])
-
-      # With caching for high-throughput scenarios
-      {:ok, router} = Router.new([{"user.created", MyHandler}], cache_id: :user_router)
-
-      # Later, route using the cache directly
-      {:ok, handlers} = Router.Cache.route(:user_router, signal)
   """
   @spec new(route_spec() | [route_spec()] | [Route.t()] | nil, new_opts()) ::
           {:ok, Router.t()} | {:error, term()}
   def new(routes \\ nil, opts \\ [])
 
-  def new(nil, opts) do
-    cache_id = Keyword.get(opts, :cache_id)
-    router = %Router{cache_id: cache_id}
-
-    if cache_id do
-      Cache.put(cache_id, router)
-    end
-
-    {:ok, router}
+  def new(nil, _opts) do
+    {:ok, %Router{}}
   end
 
-  def new(routes, opts) do
-    cache_id = Keyword.get(opts, :cache_id)
-
+  def new(routes, _opts) do
     with {:ok, normalized} <- Validator.normalize(routes),
          {:ok, validated} <- validate(normalized) do
       trie = Engine.build_trie(validated)
       route_count = count_targets(validated)
-      router = %Router{trie: trie, route_count: route_count, cache_id: cache_id}
-
-      if cache_id do
-        Cache.put(cache_id, router)
-      end
-
-      {:ok, router}
+      {:ok, %Router{trie: trie, route_count: route_count}}
     end
   end
 
@@ -442,10 +413,6 @@ defmodule Jido.Signal.Router do
       added_count = count_targets(validated)
       updated_router = %{router | trie: new_trie, route_count: router.route_count + added_count}
 
-      if router.cache_id do
-        Cache.put(router.cache_id, updated_router)
-      end
-
       {:ok, updated_router}
     end
   end
@@ -479,10 +446,6 @@ defmodule Jido.Signal.Router do
 
     route_count = max(router.route_count - total_removed, 0)
     updated_router = %{router | trie: new_trie, route_count: route_count}
-
-    if router.cache_id do
-      Cache.put(router.cache_id, updated_router)
-    end
 
     {:ok, updated_router}
   end
@@ -662,7 +625,7 @@ defmodule Jido.Signal.Router do
      )}
   end
 
-  def route(%Router{trie: trie, cache_id: cache_id}, %Signal{} = signal) do
+  def route(%Router{trie: trie}, %Signal{} = signal) do
     start_time = System.monotonic_time(:microsecond)
     results = Engine.route_signal(trie, signal)
     latency_us = System.monotonic_time(:microsecond) - start_time
@@ -672,7 +635,7 @@ defmodule Jido.Signal.Router do
         Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: 0},
-          %{signal_type: signal.type, cache_id: cache_id, matched: false}
+          %{signal_type: signal.type, matched: false}
         )
 
         {:error,
@@ -685,7 +648,7 @@ defmodule Jido.Signal.Router do
         Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: length(results)},
-          %{signal_type: signal.type, cache_id: cache_id, matched: true}
+          %{signal_type: signal.type, matched: true}
         )
 
         {:ok, results}

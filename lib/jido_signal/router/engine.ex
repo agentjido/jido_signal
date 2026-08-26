@@ -1,7 +1,5 @@
 defmodule Jido.Signal.Router.Engine do
-  @moduledoc """
-  The routing engine that matches signals to handlers.
-  """
+  @moduledoc false
 
   alias Jido.Signal
 
