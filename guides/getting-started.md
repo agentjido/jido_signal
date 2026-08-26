@@ -37,14 +37,14 @@ defmodule MyApp.Application do
 end
 ```
 
-For applications with multiple buses or custom middleware:
+For applications with multiple Buses or different replay bounds:
 
 ```elixir
 children = [
   {Jido.Signal.Bus, name: :events_bus},
-  {Jido.Signal.Bus, 
+  {Jido.Signal.Bus,
     name: :audit_bus,
-    middleware: [{Jido.Signal.Bus.Middleware.Logger, level: :info}]
+    max_log_size: 20_000
   }
 ]
 ```
@@ -158,5 +158,5 @@ See [Event Bus](event-bus.md#instance-isolation) for complete examples.
 ## Next Steps
 
 - [Signals and Dispatch](signals-and-dispatch.md) - Signal structure, dispatch adapters, and custom signal types
-- [Event Bus](event-bus.md) - Pub/sub messaging, persistent subscriptions, DLQ, Store, and instance isolation
+- [Event Bus](event-bus.md) - Pub/sub, durable subscriptions, replay, Store, and instance isolation
 - [Serialization](serialization.md) - Canonical maps and binary formats for application-owned storage

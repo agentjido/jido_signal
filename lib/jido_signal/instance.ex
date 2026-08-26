@@ -32,8 +32,7 @@ defmodule Jido.Signal.Instance do
   ## Child Processes
 
   Each instance starts:
-  - Registry (for managing signal subscriptions)
-  - TaskSupervisor (for Bus middleware callbacks)
+  - Registry (for named Signal Buses)
 
   """
 
@@ -109,10 +108,7 @@ defmodule Jido.Signal.Instance do
       name = Keyword.fetch!(validated_opts, :name)
       instance_opts = [jido: name]
 
-      children = [
-        {Registry, keys: :unique, name: Names.registry(instance_opts)},
-        {Task.Supervisor, name: Names.task_supervisor(instance_opts)}
-      ]
+      children = [{Registry, keys: :unique, name: Names.registry(instance_opts)}]
 
       supervisor_name = Names.supervisor(instance_opts)
       Supervisor.start_link(children, strategy: :one_for_one, name: supervisor_name)

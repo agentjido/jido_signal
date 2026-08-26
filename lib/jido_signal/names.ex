@@ -10,12 +10,6 @@ defmodule Jido.Signal.Names do
   end
 
   @doc false
-  @spec task_supervisor(opts()) :: atom()
-  def task_supervisor(opts) do
-    scoped(opts, Jido.Signal.TaskSupervisor)
-  end
-
-  @doc false
   @spec supervisor(opts()) :: atom()
   def supervisor(opts) do
     scoped(opts, Jido.Signal.Supervisor)

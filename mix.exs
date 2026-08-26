@@ -102,10 +102,9 @@ defmodule Jido.Signal.MixProject do
         ],
         "Event Bus": [
           Jido.Signal.Bus,
-          Jido.Signal.Bus.Middleware,
           Jido.Signal.Bus.RecordedSignal,
           Jido.Signal.Bus.Store,
-          Jido.Signal.Bus.Middleware.Logger
+          Jido.Signal.Bus.Store.Memory
         ],
         "Signal Dispatch": [
           Jido.Signal.Dispatch,

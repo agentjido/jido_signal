@@ -1,25 +1,31 @@
 defmodule Jido.Signal.Bus do
   @moduledoc """
-  Provides ordered, local publish and subscribe delivery for Signals.
+  Provides ordered local publish and subscribe delivery for Signals.
 
-  The Bus keeps its implementation state private. Its default memory store keeps
-  a bounded replay log, persistent-subscription checkpoints, and dead-letter
-  entries. Set `:store` to a module that implements `Jido.Signal.Bus.Store` when
-  retained data must survive a Bus restart.
+  A normal subscription receives `{:signal, signal}` messages while its target
+  process is alive.
 
-  Persistent subscriptions use at-least-once delivery. Acknowledgements advance
-  a numeric cursor only across a continuous set of handled records. Delivery
-  errors go to the Bus dead-letter queue without an internal retry loop.
+  A durable subscription has a stable string ID. It receives one
+  `{:signal, durable_id, recorded_signal}` message at a time. The target must
+  acknowledge the record cursor before the Bus sends the next record. If the
+  target exits, the Bus keeps the cursor and sends the unacknowledged record
+  again when a new process attaches with the same durable ID.
+
+  The Bus stores every record before it sends any message. Delivery is ordered
+  and at least once. The Bus does not own retry timers, dead-letter queues,
+  leases, or competing-consumer policy.
+
+  `Jido.Signal.Bus.Store.Memory` is the only included store. Its state does not
+  survive a Bus or VM restart. Applications that need restart durability can
+  provide a store that implements `Jido.Signal.Bus.Store`.
   """
 
   use GenServer
 
   alias Jido.Signal
-  alias Jido.Signal.Bus.MiddlewarePipeline
   alias Jido.Signal.Bus.RecordedSignal
   alias Jido.Signal.Bus.Store.Memory
   alias Jido.Signal.Bus.Subscriber
-  alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.ID
   alias Jido.Signal.Names
@@ -30,16 +36,21 @@ defmodule Jido.Signal.Bus do
           pid() | atom() | binary() | {name :: atom() | binary(), registry :: module()}
   @type path :: Router.path()
   @type subscription_id :: String.t()
+  @type durable_id :: String.t()
 
-  @removed_options [
+  @removed_start_options [
     :journal_adapter,
     :journal_adapter_opts,
     :journal_pid,
     :partition_count,
     :partition_rate_limit_per_sec,
     :partition_burst_size,
-    :log_ttl_ms
+    :log_ttl_ms,
+    :middleware,
+    :middleware_timeout_ms
   ]
+
+  @subscription_options [:target, :subscription_id, :durable, :start_from]
 
   @doc "Returns a child specification for a named Bus."
   @spec child_spec(keyword()) :: Supervisor.child_spec()
@@ -58,20 +69,15 @@ defmodule Jido.Signal.Bus do
   @doc """
   Starts a Bus linked to the caller.
 
-  Required option:
+  Options:
 
-  - `:name` is the Bus registration name.
-
-  Supported options:
-
-  - `:jido` selects an instance-scoped registry.
-  - `:middleware` is a list of `{module, options}` values.
-  - `:middleware_timeout_ms` sets each middleware callback timeout.
-  - `:store` selects a `Jido.Signal.Bus.Store` implementation.
+  - `:name` is required and sets the Registry name.
+  - `:jido` selects an instance-scoped Registry.
+  - `:store` selects a `Jido.Signal.Bus.Store` module.
   - `:store_opts` configures the selected store.
-  - `:max_log_size` sets the default memory-store bound.
+  - `:max_log_size` sets the memory-store record bound. The default is 100,000.
 
-  Removed Journal and partition options return a startup error.
+  Removed Journal, partition, and middleware options return a startup error.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -110,20 +116,32 @@ defmodule Jido.Signal.Bus do
   @doc """
   Adds a subscription for a signal-type path.
 
-  The default target is the calling process. Use `:persistent?` for retained
-  acknowledgements and reconnect. The v2 `:persistent` alias is also accepted.
+  The calling process is the default `:target`.
+
+  Set `durable: "stable-id"` to keep a cursor when the target exits. A new
+  durable subscription starts at the current cursor by default. Set
+  `start_from: :origin` or a retained cursor to read older records.
   """
   @spec subscribe(server(), path(), keyword()) ::
           {:ok, subscription_id()} | {:error, term()}
-  def subscribe(bus, path, opts \\ []) do
-    opts = normalize_subscription_options(opts)
+  def subscribe(bus, path, opts \\ [])
+
+  def subscribe(bus, path, opts) when is_list(opts) do
+    opts = Keyword.put_new(opts, :target, self())
 
     with {:ok, result} <- bus_call(bus, {:subscribe, path, opts}) do
       result
     end
   end
 
-  @doc "Removes a subscription."
+  def subscribe(_bus, _path, _opts), do: {:error, :invalid_options}
+
+  @doc """
+  Detaches a subscription target.
+
+  A normal subscription is removed. A durable subscription stays in the Store
+  and can attach again through `subscribe/3` with the same durable ID.
+  """
   @spec unsubscribe(server(), subscription_id(), keyword()) :: :ok | {:error, term()}
   def unsubscribe(bus, subscription_id, opts \\ []) do
     with {:ok, result} <- bus_call(bus, {:unsubscribe, subscription_id, opts}) do
@@ -131,7 +149,15 @@ defmodule Jido.Signal.Bus do
     end
   end
 
-  @doc "Publishes a list of Signals and returns their replay records."
+  @doc "Permanently removes a subscription and its durable cursor."
+  @spec delete_subscription(server(), subscription_id()) :: :ok | {:error, term()}
+  def delete_subscription(bus, subscription_id) do
+    with {:ok, result} <- bus_call(bus, {:delete_subscription, subscription_id}) do
+      result
+    end
+  end
+
+  @doc "Publishes Signals after the Store accepts all records."
   @spec publish(server(), [Signal.t()]) ::
           {:ok, [RecordedSignal.t()]} | {:error, term()}
   def publish(_bus, []), do: {:ok, []}
@@ -144,59 +170,24 @@ defmodule Jido.Signal.Bus do
 
   def publish(_bus, _signals), do: {:error, :invalid_signals}
 
-  @doc "Replays retained records that match a signal-type path."
-  @spec replay(server(), path(), non_neg_integer(), keyword()) ::
-          {:ok, [RecordedSignal.t()]} | {:error, term()}
-  def replay(bus, path \\ "*", start_timestamp \\ 0, opts \\ []) do
-    with {:ok, result} <- bus_call(bus, {:replay, path, start_timestamp, opts}) do
-      result
-    end
-  end
-
   @doc """
-  Acknowledges one or more pending records for a persistent subscription.
+  Reads retained records that match a signal-type path.
 
-  A stored record ID is the canonical identifier. The delivered Signal ID is
-  also accepted for v2 compatibility.
+  Use `:after` for an exclusive cursor and `:limit` for a positive record count
+  or `:infinity`.
   """
-  @spec ack(server(), subscription_id(), String.t() | [String.t()] | integer()) ::
-          :ok | {:error, term()}
-  def ack(bus, subscription_id, record_ids) do
-    with {:ok, result} <- bus_call(bus, {:ack, subscription_id, record_ids}) do
+  @spec replay(server(), path(), keyword()) ::
+          {:ok, [RecordedSignal.t()]} | {:error, term()}
+  def replay(bus, path \\ "**", opts \\ []) do
+    with {:ok, result} <- bus_call(bus, {:replay, path, opts}) do
       result
     end
   end
 
-  @doc "Reconnects a process to a persistent subscription."
-  @spec reconnect(server(), subscription_id(), pid()) ::
-          {:ok, non_neg_integer()} | {:error, term()}
-  def reconnect(bus, subscription_id, client_pid) do
-    with {:ok, result} <- bus_call(bus, {:reconnect, subscription_id, client_pid}) do
-      result
-    end
-  end
-
-  @doc "Lists dead-letter entries for a subscription."
-  @spec dlq_entries(server(), subscription_id()) :: {:ok, [map()]} | {:error, term()}
-  def dlq_entries(bus, subscription_id) do
-    with {:ok, result} <- bus_call(bus, {:dlq_entries, subscription_id}) do
-      result
-    end
-  end
-
-  @doc "Attempts delivery for dead-letter entries."
-  @spec redrive_dlq(server(), subscription_id(), keyword()) ::
-          {:ok, %{succeeded: non_neg_integer(), failed: non_neg_integer()}} | {:error, term()}
-  def redrive_dlq(bus, subscription_id, opts \\ []) do
-    with {:ok, result} <- bus_call(bus, {:redrive_dlq, subscription_id, opts}) do
-      result
-    end
-  end
-
-  @doc "Deletes all dead-letter entries for a subscription."
-  @spec clear_dlq(server(), subscription_id()) :: :ok | {:error, term()}
-  def clear_dlq(bus, subscription_id) do
-    with {:ok, result} <- bus_call(bus, {:clear_dlq, subscription_id}) do
+  @doc "Acknowledges the current record for a durable subscription."
+  @spec ack(server(), durable_id(), non_neg_integer()) :: :ok | {:error, term()}
+  def ack(bus, durable_id, cursor) do
+    with {:ok, result} <- bus_call(bus, {:ack, durable_id, cursor}) do
       result
     end
   end
@@ -204,104 +195,81 @@ defmodule Jido.Signal.Bus do
   @impl GenServer
   def init({name, opts}) do
     with :ok <- reject_removed_options(opts),
-         {:ok, middleware} <- init_middleware(opts),
-         {:ok, store_module, store_state} <- init_store(opts) do
+         {:ok, store_module, store_state} <- init_store(opts),
+         {:ok, definitions} <- store_read(store_module, store_state, :list_subscriptions, []),
+         {:ok, latest_cursor} <- store_read(store_module, store_state, :latest_cursor, []),
+         :ok <- validate_latest_cursor(latest_cursor),
+         {:ok, subscriptions, order, router} <- load_durable_subscriptions(definitions),
+         :ok <- validate_loaded_cursors(subscriptions, latest_cursor) do
       {:ok,
        %{
          name: name,
          jido: Keyword.get(opts, :jido),
-         router: Router.new!(),
-         subscriptions: %{},
-         subscription_order: [],
+         router: router,
+         subscriptions: subscriptions,
+         subscription_order: order,
          monitors: %{},
-         middleware: middleware,
-         middleware_timeout_ms: Keyword.get(opts, :middleware_timeout_ms, 100),
          store_module: store_module,
          store_state: store_state,
-         next_cursor: next_cursor(store_module, store_state)
+         next_cursor: latest_cursor + 1
        }}
     else
-      {:error, reason} -> {:stop, reason}
+      {:error, {:store_error, callback, reason}} ->
+        {:stop, {:store_init_failed, callback, reason}}
+
+      {:error, reason} ->
+        {:stop, reason}
     end
   end
 
   @impl GenServer
   def handle_call({:subscribe, path, opts}, _from, state) do
-    subscription_id = Keyword.get(opts, :subscription_id, ID.generate!())
-
-    with :ok <- validate_new_subscription(state, subscription_id, path),
-         {:ok, dispatch} <- Dispatch.validate_opts(Keyword.fetch!(opts, :dispatch)),
-         {:ok, checkpoint} <- initial_checkpoint(state, subscription_id, opts),
-         {:ok, subscriber, state} <-
-           build_subscriber(state, subscription_id, path, dispatch, checkpoint, opts),
-         {:ok, state} <- add_and_replay_subscriber(state, subscriber, checkpoint) do
-      {:reply, {:ok, subscription_id}, state}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+    case subscribe_target(state, path, opts) do
+      {:ok, id, state} -> {:reply, {:ok, id}, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call({:unsubscribe, subscription_id, opts}, _from, state) do
-    case Map.fetch(state.subscriptions, subscription_id) do
-      :error ->
-        {:reply, {:error, :subscription_not_found}, state}
+    case unsubscribe_target(state, subscription_id, opts) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 
-      {:ok, subscriber} ->
-        state = remove_subscriber(state, subscriber)
-
-        case maybe_delete_retained_subscription(state, subscriber, opts) do
-          {:ok, state} -> {:reply, :ok, state}
-          {:error, reason} -> {:reply, {:error, reason}, state}
-        end
+  def handle_call({:delete_subscription, subscription_id}, _from, state) do
+    case delete_subscription_state(state, subscription_id) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   def handle_call({:publish, signals}, _from, state) do
+    started_at = System.monotonic_time()
+
     case do_publish(state, signals) do
-      {:ok, records, state} -> {:reply, {:ok, records}, state}
-      {:error, reason, state} -> {:reply, {:error, reason}, state}
+      {:ok, records, state} ->
+        Telemetry.execute(
+          [:jido, :signal, :bus, :publish],
+          %{count: length(records), duration: System.monotonic_time() - started_at},
+          %{bus_name: state.name}
+        )
+
+        {:reply, {:ok, records}, state}
+
+      {:error, reason, state} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
-  def handle_call({:replay, path, start_timestamp, opts}, _from, state) do
-    reply = replay_records(state, path, start_timestamp, opts)
-    {:reply, reply, state}
+  def handle_call({:replay, path, opts}, _from, state) do
+    {:reply, replay_records(state, path, opts), state}
   end
 
-  def handle_call({:ack, subscription_id, record_ids}, _from, state) do
-    case acknowledge(state, subscription_id, record_ids) do
+  def handle_call({:ack, durable_id, cursor}, {caller, _tag}, state) do
+    case acknowledge(state, durable_id, cursor, caller) do
       {:ok, state} -> {:reply, :ok, state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:reconnect, subscription_id, client_pid}, _from, state) do
-    case reconnect_subscriber(state, subscription_id, client_pid) do
-      {:ok, checkpoint, state} -> {:reply, {:ok, checkpoint}, state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:dlq_entries, subscription_id}, _from, state) do
-    reply =
-      with {:ok, entries} <- store_read(state, :list_dlq, [subscription_id]) do
-        decode_dlq_entries(entries)
-      end
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:redrive_dlq, subscription_id, opts}, _from, state) do
-    case redrive(state, subscription_id, opts) do
-      {:ok, result, state} -> {:reply, {:ok, result}, state}
       {:error, reason, state} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:clear_dlq, subscription_id}, _from, state) do
-    case store_write(state, :clear_dlq, [subscription_id]) do
-      {:ok, state} -> {:reply, :ok, state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -312,207 +280,248 @@ defmodule Jido.Signal.Bus do
         {:noreply, state}
 
       {subscription_id, monitors} ->
-        subscriber = Map.get(state.subscriptions, subscription_id)
         state = %{state | monitors: monitors}
 
-        cond do
-          is_nil(subscriber) ->
+        case Map.get(state.subscriptions, subscription_id) do
+          nil ->
             {:noreply, state}
 
-          subscriber.persistent? ->
-            subscriber = %{
-              subscriber
-              | disconnected?: true,
-                client_pid: nil,
-                monitor_ref: nil
-            }
+          %Subscriber{durable?: true} = subscriber ->
+            subscriber = %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}
+            state = put_subscriber(state, subscriber)
+            emit_subscription(:detached, state, subscriber)
+            {:noreply, state}
 
-            {:noreply, put_subscriber(state, subscriber)}
-
-          true ->
+          %Subscriber{} = subscriber ->
             {:noreply, remove_subscriber(state, subscriber, false)}
         end
     end
   end
 
-  defp normalize_subscription_options(opts) do
-    opts =
-      cond do
-        Keyword.has_key?(opts, :persistent?) ->
-          Keyword.delete(opts, :persistent)
+  defp subscribe_target(state, path, opts) do
+    with :ok <- validate_subscription_options(opts),
+         :ok <- validate_path(path),
+         {:ok, target} <- validate_target(Keyword.get(opts, :target)),
+         {:ok, kind, id} <- subscription_identity(opts) do
+      case kind do
+        :ephemeral -> add_ephemeral(state, id, path, target)
+        :durable -> attach_durable(state, id, path, target, opts)
+      end
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
 
-        Keyword.has_key?(opts, :persistent) ->
-          opts
-          |> Keyword.put(:persistent?, Keyword.fetch!(opts, :persistent))
-          |> Keyword.delete(:persistent)
+  defp validate_subscription_options(opts) do
+    case Enum.find(Keyword.keys(opts), &(&1 not in @subscription_options)) do
+      nil ->
+        cond do
+          Keyword.has_key?(opts, :durable) and Keyword.has_key?(opts, :subscription_id) ->
+            {:error, {:conflicting_options, [:durable, :subscription_id]}}
+
+          Keyword.has_key?(opts, :start_from) and not Keyword.has_key?(opts, :durable) ->
+            {:error, {:requires_option, :start_from, :durable}}
+
+          true ->
+            :ok
+        end
+
+      option ->
+        {:error, {:unsupported_option, option}}
+    end
+  end
+
+  defp validate_path(path) do
+    case Router.normalize({path, :subscription}) do
+      {:ok, _routes} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_target(target) when is_pid(target) do
+    if Process.alive?(target), do: {:ok, target}, else: {:error, :target_not_alive}
+  end
+
+  defp validate_target(_target), do: {:error, :invalid_target}
+
+  defp subscription_identity(opts) do
+    case Keyword.fetch(opts, :durable) do
+      {:ok, id} when is_binary(id) and byte_size(id) > 0 ->
+        {:ok, :durable, id}
+
+      {:ok, _invalid} ->
+        {:error, {:invalid_option, :durable}}
+
+      :error ->
+        case Keyword.get(opts, :subscription_id, ID.generate!()) do
+          id when is_binary(id) and byte_size(id) > 0 -> {:ok, :ephemeral, id}
+          _invalid -> {:error, {:invalid_option, :subscription_id}}
+        end
+    end
+  end
+
+  defp add_ephemeral(state, id, path, target) do
+    if Map.has_key?(state.subscriptions, id) do
+      {:error, :subscription_already_exists, state}
+    else
+      {monitor_ref, state} = monitor_target(state, id, target)
+
+      subscriber = %Subscriber{
+        id: id,
+        path: path,
+        durable?: false,
+        target: target,
+        monitor_ref: monitor_ref,
+        cursor: 0,
+        in_flight: nil,
+        created_at: DateTime.utc_now()
+      }
+
+      state = insert_subscriber(state, subscriber)
+      emit_subscription(:attached, state, subscriber)
+      {:ok, id, state}
+    end
+  end
+
+  defp attach_durable(state, id, path, target, opts) do
+    case Map.get(state.subscriptions, id) do
+      nil -> create_durable(state, id, path, target, opts)
+      subscriber -> attach_existing_durable(state, subscriber, path, target)
+    end
+  end
+
+  defp create_durable(state, id, path, target, opts) do
+    with {:ok, cursor} <- initial_cursor(state, Keyword.get(opts, :start_from, :current)),
+         created_at <- DateTime.utc_now(),
+         definition <- durable_definition(id, path, cursor, created_at),
+         {:ok, state} <- store_write(state, :put_subscription, [definition]) do
+      {monitor_ref, state} = monitor_target(state, id, target)
+
+      subscriber = %Subscriber{
+        id: id,
+        path: path,
+        durable?: true,
+        target: target,
+        monitor_ref: monitor_ref,
+        cursor: cursor,
+        in_flight: nil,
+        created_at: created_at
+      }
+
+      state = insert_subscriber(state, subscriber)
+      emit_subscription(:attached, state, subscriber)
+
+      case deliver_next(state, subscriber) do
+        {:ok, state} ->
+          {:ok, id, state}
+
+        {:error, reason, state} ->
+          emit_store_delivery_error(state, subscriber, reason)
+          {:ok, id, state}
+      end
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  defp attach_existing_durable(state, %Subscriber{durable?: false}, _path, _target) do
+    {:error, :subscription_already_exists, state}
+  end
+
+  defp attach_existing_durable(state, subscriber, path, target) do
+    if subscriber.path != path do
+      {:error, :durable_subscription_conflict, state}
+    else
+      {state, subscriber} = drop_dead_target(state, subscriber)
+
+      cond do
+        subscriber.target == target ->
+          {:ok, subscriber.id, state}
+
+        is_pid(subscriber.target) ->
+          {:error, :subscription_in_use, state}
 
         true ->
-          opts
+          {monitor_ref, state} = monitor_target(state, subscriber.id, target)
+          subscriber = %{subscriber | target: target, monitor_ref: monitor_ref, in_flight: nil}
+          state = put_subscriber(state, subscriber)
+          emit_subscription(:attached, state, subscriber)
+
+          case deliver_next(state, subscriber) do
+            {:ok, state} ->
+              {:ok, subscriber.id, state}
+
+            {:error, reason, state} ->
+              emit_store_delivery_error(state, subscriber, reason)
+              {:ok, subscriber.id, state}
+          end
       end
-
-    dispatch =
-      case Keyword.get(opts, :dispatch) do
-        nil -> {:pid, target: self(), delivery_mode: :async}
-        {:pid, pid_opts} -> {:pid, Keyword.put(pid_opts, :delivery_mode, :async)}
-        target -> target
-      end
-
-    Keyword.put(opts, :dispatch, dispatch)
-  end
-
-  defp reject_removed_options(opts) do
-    case Enum.find(@removed_options, &Keyword.has_key?(opts, &1)) do
-      nil -> :ok
-      option -> {:error, {:unsupported_option, option}}
     end
   end
 
-  defp init_middleware(opts) do
-    case MiddlewarePipeline.init_middleware(Keyword.get(opts, :middleware, [])) do
-      {:ok, middleware} -> {:ok, middleware}
-      {:error, reason} -> {:error, {:middleware_init_failed, reason}}
-    end
-  end
-
-  defp init_store(opts) do
-    store_module = Keyword.get(opts, :store, Memory)
-
-    store_opts =
-      opts
-      |> Keyword.get(:store_opts, [])
-      |> Keyword.put_new(:max_records, Keyword.get(opts, :max_log_size, 100_000))
-
-    case safe_apply(store_module, :init, [store_opts]) do
-      {:ok, store_state} -> {:ok, store_module, store_state}
-      {:error, reason} -> {:error, {:store_init_failed, reason}}
-      other -> {:error, {:store_init_failed, {:invalid_return, other}}}
-    end
-  end
-
-  defp next_cursor(store_module, store_state) do
-    case safe_apply(store_module, :read, [[after_cursor: -1], store_state]) do
-      {:ok, []} ->
-        1
-
-      {:ok, records} ->
-        records |> Enum.map(&Map.fetch!(&1, "cursor")) |> Enum.max() |> Kernel.+(1)
-
-      _error ->
-        1
-    end
-  end
-
-  defp validate_new_subscription(state, subscription_id, path) do
-    if Map.has_key?(state.subscriptions, subscription_id) do
-      {:error, :subscription_already_exists}
+  defp drop_dead_target(state, %Subscriber{target: target} = subscriber) when is_pid(target) do
+    if Process.alive?(target) do
+      {state, subscriber}
     else
-      case Router.normalize({path, :subscription}) do
-        {:ok, _routes} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
+      state = demonitor_target(state, subscriber)
+      {state, %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}}
     end
   end
 
-  defp initial_checkpoint(state, subscription_id, opts) do
-    persistent? = Keyword.get(opts, :persistent?, false)
+  defp drop_dead_target(state, subscriber), do: {state, subscriber}
 
-    if persistent? do
-      persistent_initial_checkpoint(state, subscription_id, opts)
-    else
-      {:ok, state.next_cursor - 1}
-    end
-  end
+  defp initial_cursor(_state, :origin), do: {:ok, 0}
+  defp initial_cursor(state, :current), do: {:ok, state.next_cursor - 1}
 
-  defp persistent_initial_checkpoint(state, subscription_id, opts) do
-    with {:ok, stored} <-
-           store_read(state, :get_checkpoint, [checkpoint_key(state, subscription_id)]) do
-      normalize_initial_checkpoint(stored, Keyword.get(opts, :start_from, :origin), state)
-    end
-  end
-
-  defp normalize_initial_checkpoint(cursor, _start, _state) when is_integer(cursor),
-    do: {:ok, cursor}
-
-  defp normalize_initial_checkpoint(nil, :origin, _state), do: {:ok, 0}
-  defp normalize_initial_checkpoint(nil, :current, state), do: {:ok, state.next_cursor - 1}
-
-  defp normalize_initial_checkpoint(nil, cursor, _state)
-       when is_integer(cursor) and cursor >= 0,
+  defp initial_cursor(state, cursor)
+       when is_integer(cursor) and cursor >= 0 and cursor < state.next_cursor,
        do: {:ok, cursor}
 
-  defp normalize_initial_checkpoint(_stored, _start, _state),
-    do: {:error, {:invalid_option, :start_from}}
+  defp initial_cursor(_state, _start_from), do: {:error, {:invalid_option, :start_from}}
 
-  defp build_subscriber(state, id, path, dispatch, checkpoint, opts) do
-    client_pid = dispatch_pid(dispatch)
-    {monitor_ref, state} = monitor_subscriber(state, id, client_pid)
+  defp unsubscribe_target(state, subscription_id, []) do
+    case Map.get(state.subscriptions, subscription_id) do
+      nil ->
+        {:error, :subscription_not_found}
 
-    subscriber = %Subscriber{
-      id: id,
-      path: path,
-      dispatch: dispatch,
-      persistent?: Keyword.get(opts, :persistent?, false),
-      disconnected?: false,
-      client_pid: client_pid,
-      monitor_ref: monitor_ref,
-      created_at: DateTime.utc_now(),
-      pending: %{},
-      last_seen_cursor: checkpoint
-    }
+      %Subscriber{durable?: true} = subscriber ->
+        state = demonitor_target(state, subscriber)
+        subscriber = %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}
+        state = put_subscriber(state, subscriber)
+        emit_subscription(:detached, state, subscriber)
+        {:ok, state}
 
-    {:ok, subscriber, state}
-  end
-
-  defp add_and_replay_subscriber(state, subscriber, checkpoint) do
-    if subscriber.persistent? do
-      add_and_replay_persistent_subscriber(state, subscriber, checkpoint)
-    else
-      {:ok, insert_subscriber(state, subscriber)}
+      %Subscriber{} = subscriber ->
+        {:ok, remove_subscriber(state, subscriber)}
     end
   end
 
-  defp add_and_replay_persistent_subscriber(state, subscriber, checkpoint) do
-    with {:ok, state} <-
-           store_write(state, :put_checkpoint, [
-             checkpoint_key(state, subscriber.id),
-             checkpoint
-           ]),
-         state <- insert_subscriber(state, subscriber),
-         {:ok, records} <- store_read(state, :read, [[after_cursor: checkpoint]]) do
-      records
-      |> Enum.filter(&Router.matches?(record_type(&1), subscriber.path))
-      |> deliver_records_to_subscriber(state, subscriber.id)
-      |> normalize_delivery_result()
+  defp unsubscribe_target(_state, _subscription_id, _opts), do: {:error, :invalid_options}
+
+  defp delete_subscription_state(state, subscription_id) do
+    case Map.get(state.subscriptions, subscription_id) do
+      nil ->
+        {:error, :subscription_not_found}
+
+      %Subscriber{durable?: true} = subscriber ->
+        with {:ok, state} <- store_write(state, :delete_subscription, [subscription_id]) do
+          {:ok, remove_subscriber(state, subscriber)}
+        end
+
+      %Subscriber{} = subscriber ->
+        {:ok, remove_subscriber(state, subscriber)}
     end
   end
-
-  defp normalize_delivery_result({:ok, state}), do: {:ok, state}
-  defp normalize_delivery_result({:error, reason, _state}), do: {:error, reason}
 
   defp do_publish(state, signals) do
     with :ok <- validate_signals(signals),
-         {:ok, signals, middleware} <- before_publish(state, signals),
-         :ok <- validate_signals(signals),
-         {records, next_cursor} <- build_records(signals, state.next_cursor),
-         {:ok, state} <- store_write(%{state | middleware: middleware}, :append, [records]),
-         state <- %{state | next_cursor: next_cursor},
-         {:ok, state} <- dispatch_published_records(state, records) do
-      state = %{
-        state
-        | middleware:
-            MiddlewarePipeline.after_publish(
-              state.middleware,
-              signals,
-              middleware_context(state),
-              state.middleware_timeout_ms
-            ),
-          next_cursor: next_cursor
-      }
-
-      {:ok, Enum.map(records, &record_to_public!/1), state}
+         {stored_records, entries, next_cursor} <- build_records(signals, state.next_cursor),
+         {:ok, state} <- store_write(state, :append, [stored_records]) do
+      state = %{state | next_cursor: next_cursor}
+      state = Enum.reduce(entries, state, &deliver_published_entry/2)
+      {:ok, Enum.map(entries, &elem(&1, 2)), state}
     else
       {:error, reason} -> {:error, reason, state}
-      {:error, reason, failed_state} -> {:error, reason, failed_state}
     end
   end
 
@@ -524,403 +533,308 @@ defmodule Jido.Signal.Bus do
     end
   end
 
-  defp before_publish(state, signals) do
-    MiddlewarePipeline.before_publish(
-      state.middleware,
-      signals,
-      middleware_context(state),
-      state.middleware_timeout_ms
-    )
-  end
-
   defp build_records(signals, start_cursor) do
-    {records, next_cursor} =
+    {entries, next_cursor} =
       Enum.map_reduce(signals, start_cursor, fn signal, cursor ->
-        now = DateTime.utc_now()
+        created_at = DateTime.utc_now()
 
-        record = %{
+        stored = %{
           "format_version" => 1,
           "id" => ID.generate!(),
           "cursor" => cursor,
           "type" => signal.type,
-          "created_at" => DateTime.to_iso8601(now),
-          "timestamp_ms" => DateTime.to_unix(now, :millisecond),
+          "created_at" => DateTime.to_iso8601(created_at),
           "signal" => Signal.to_map(signal)
         }
 
-        {record, cursor + 1}
+        public = %RecordedSignal{
+          id: stored["id"],
+          cursor: cursor,
+          type: signal.type,
+          created_at: created_at,
+          signal: signal
+        }
+
+        {{stored, signal, public}, cursor + 1}
       end)
 
-    {records, next_cursor}
+    {Enum.map(entries, &elem(&1, 0)), entries, next_cursor}
   end
 
-  defp dispatch_published_records(state, records) do
-    Enum.reduce_while(records, {:ok, state}, fn record, {:ok, current_state} ->
-      case dispatch_record(current_state, record) do
-        {:ok, new_state} -> {:cont, {:ok, new_state}}
-        {:error, reason, new_state} -> {:halt, {:error, reason, new_state}}
-      end
-    end)
-  end
-
-  defp dispatch_record(state, record) do
-    signal = record_to_public!(record).signal
-
+  defp deliver_published_entry({_stored, signal, _public}, state) do
     case Router.route(state.router, signal) do
-      {:ok, subscription_ids} -> deliver_routed_record(state, record, subscription_ids)
-      {:error, _no_match} -> {:ok, state}
+      {:ok, subscription_ids} ->
+        Enum.reduce(subscription_ids, state, &deliver_to_subscription(&1, signal, &2))
+
+      {:error, _no_match} ->
+        state
     end
   end
 
-  defp deliver_routed_record(state, record, subscription_ids) do
-    Enum.reduce_while(subscription_ids, {:ok, state}, fn subscription_id, {:ok, current_state} ->
-      subscriber = Map.fetch!(current_state.subscriptions, subscription_id)
-
-      case deliver_record_to_subscriber(current_state, record, subscriber) do
-        {:ok, next_state} -> {:cont, {:ok, next_state}}
-        {:error, reason, next_state} -> {:halt, {:error, reason, next_state}}
-      end
-    end)
-  end
-
-  defp deliver_records_to_subscriber(records, state, subscription_id) do
-    Enum.reduce_while(records, {:ok, state}, fn record, {:ok, current_state} ->
-      subscriber = Map.fetch!(current_state.subscriptions, subscription_id)
-
-      case deliver_record_to_subscriber(current_state, record, subscriber) do
-        {:ok, next_state} -> {:cont, {:ok, next_state}}
-        {:error, reason, next_state} -> {:halt, {:error, reason, next_state}}
-      end
-    end)
-  end
-
-  defp deliver_record_to_subscriber(state, record, subscriber) do
-    cursor = Map.fetch!(record, "cursor")
-    subscriber = %{subscriber | last_seen_cursor: max(subscriber.last_seen_cursor, cursor)}
-
-    if subscriber.persistent? && subscriber.disconnected? do
-      pending = Map.put(subscriber.pending, Map.fetch!(record, "id"), pending_entry(record))
-      {:ok, put_subscriber(state, %{subscriber | pending: pending})}
-    else
-      case run_dispatch(state, record_to_public!(record).signal, subscriber) do
-        {:ok, state} -> handle_delivery_success(state, record, subscriber)
-        {:skip, state} -> handle_delivery_skip(state, subscriber)
-        {:error, reason, state} -> handle_delivery_error(state, record, subscriber, reason)
-      end
-    end
-  end
-
-  defp run_dispatch(state, signal, subscriber) do
-    emit_dispatch(:before_dispatch, state, signal, subscriber, %{outcome: :start})
-
-    case MiddlewarePipeline.before_dispatch(
-           state.middleware,
-           signal,
-           subscriber,
-           middleware_context(state),
-           state.middleware_timeout_ms
-         ) do
-      {:ok, signal, middleware} ->
-        result = Dispatch.dispatch(signal, subscriber.dispatch)
-        state = %{state | middleware: middleware}
-
-        middleware =
-          MiddlewarePipeline.after_dispatch(
-            state.middleware,
-            signal,
-            subscriber,
-            result,
-            middleware_context(state),
-            state.middleware_timeout_ms
-          )
-
-        state = %{state | middleware: middleware}
-
-        case result do
-          :ok ->
-            emit_dispatch(:after_dispatch, state, signal, subscriber, %{dispatch_result: :ok})
-            {:ok, state}
-
-          {:error, reason} ->
-            emit_dispatch(:dispatch_error, state, signal, subscriber, %{
-              outcome: :error,
-              error: reason
-            })
-
-            {:error, reason, state}
+  defp deliver_to_subscription(subscription_id, signal, state) do
+    case Map.fetch!(state.subscriptions, subscription_id) do
+      %Subscriber{durable?: true} = subscriber ->
+        case deliver_next(state, subscriber) do
+          {:ok, state} -> state
+          {:error, reason, state} -> emit_delivery_error(state, subscriber, signal, reason)
         end
 
-      :skip ->
-        emit_dispatch(:dispatch_skipped, state, signal, subscriber, %{
-          outcome: :skipped,
-          reason: :middleware_skip
-        })
-
-        {:skip, state}
-
-      {:error, reason} ->
-        emit_dispatch(:dispatch_error, state, signal, subscriber, %{
-          outcome: :error,
-          error: reason
-        })
-
-        {:error, reason, state}
+      %Subscriber{target: target} = subscriber ->
+        send(target, {:signal, signal})
+        emit_delivery(state, subscriber, signal, nil)
+        state
     end
   end
 
-  defp handle_delivery_success(state, record, subscriber) do
-    if subscriber.persistent? do
-      pending =
-        Map.put(subscriber.pending, Map.fetch!(record, "id"), pending_entry(record))
+  defp deliver_next(state, %Subscriber{target: nil}), do: {:ok, state}
 
-      {:ok, put_subscriber(state, %{subscriber | pending: pending})}
+  defp deliver_next(state, %Subscriber{in_flight: cursor}) when is_integer(cursor),
+    do: {:ok, state}
+
+  defp deliver_next(state, %Subscriber{} = subscriber) do
+    with {:ok, records} <-
+           store_read(state, :read, [
+             [after_cursor: subscriber.cursor, path: subscriber.path, limit: 1]
+           ]),
+         true <- is_list(records),
+         record when not is_nil(record) <- List.first(records),
+         {:ok, public} <- record_to_public(record) do
+      send(subscriber.target, {:signal, subscriber.id, public})
+      subscriber = %{subscriber | in_flight: public.cursor}
+      state = put_subscriber(state, subscriber)
+      emit_delivery(state, subscriber, public.signal, public.cursor)
+      {:ok, state}
     else
-      {:ok, put_subscriber(state, subscriber)}
+      nil -> {:ok, state}
+      false -> {:error, :invalid_store_records, state}
+      {:error, reason} -> {:error, reason, state}
     end
   end
 
-  defp handle_delivery_skip(state, subscriber) do
-    if subscriber.persistent? do
-      persist_subscriber_checkpoint(state, subscriber)
+  defp acknowledge(state, durable_id, cursor, caller)
+       when is_integer(cursor) and cursor >= 0 do
+    case Map.get(state.subscriptions, durable_id) do
+      nil ->
+        {:error, :subscription_not_found, state}
+
+      %Subscriber{durable?: false} ->
+        {:error, :subscription_not_durable, state}
+
+      %Subscriber{target: target} when target != caller ->
+        {:error, :not_subscription_owner, state}
+
+      %Subscriber{in_flight: nil} ->
+        {:error, :no_record_in_flight, state}
+
+      %Subscriber{in_flight: expected} when expected != cursor ->
+        {:error, {:unexpected_cursor, expected}, state}
+
+      %Subscriber{} = subscriber ->
+        definition = durable_definition(subscriber, cursor)
+
+        case store_write(state, :put_subscription, [definition]) do
+          {:ok, state} ->
+            subscriber = %{subscriber | cursor: cursor, in_flight: nil}
+            state = put_subscriber(state, subscriber)
+
+            Telemetry.execute(
+              [:jido, :signal, :bus, :ack],
+              %{cursor: cursor},
+              %{bus_name: state.name, subscription_id: durable_id}
+            )
+
+            case deliver_next(state, subscriber) do
+              {:ok, state} ->
+                {:ok, state}
+
+              {:error, reason, state} ->
+                emit_store_delivery_error(state, subscriber, reason)
+                {:ok, state}
+            end
+
+          {:error, reason} ->
+            {:error, reason, state}
+        end
+    end
+  end
+
+  defp acknowledge(state, _durable_id, _cursor, _caller),
+    do: {:error, :invalid_cursor, state}
+
+  defp replay_records(state, path, opts) when is_list(opts) do
+    after_cursor = Keyword.get(opts, :after, 0)
+    limit = Keyword.get(opts, :limit, :infinity)
+
+    with :ok <- validate_path(path),
+         :ok <- validate_replay_options(opts, after_cursor, limit),
+         {:ok, records} <-
+           store_read(state, :read, [[after_cursor: after_cursor, path: path, limit: limit]]),
+         true <- is_list(records),
+         {:ok, public} <- decode_records(records) do
+      {:ok, public}
     else
-      {:ok, put_subscriber(state, subscriber)}
+      false -> {:error, :invalid_store_records}
+      error -> error
     end
   end
 
-  defp handle_delivery_error(state, record, subscriber, reason) do
-    if subscriber.persistent? do
-      move_failed_delivery_to_dlq(state, record, subscriber, reason)
+  defp replay_records(_state, _path, _opts), do: {:error, :invalid_options}
+
+  defp validate_replay_options(opts, after_cursor, limit) do
+    unsupported = Enum.find(Keyword.keys(opts), &(&1 not in [:after, :limit]))
+
+    cond do
+      unsupported ->
+        {:error, {:unsupported_option, unsupported}}
+
+      not (is_integer(after_cursor) and after_cursor >= 0) ->
+        {:error, {:invalid_option, :after}}
+
+      limit != :infinity and not (is_integer(limit) and limit > 0) ->
+        {:error, {:invalid_option, :limit}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp decode_records(records) do
+    Enum.reduce_while(records, {:ok, []}, fn record, {:ok, decoded} ->
+      case record_to_public(record) do
+        {:ok, public} -> {:cont, {:ok, [public | decoded]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, decoded} -> {:ok, Enum.reverse(decoded)}
+      error -> error
+    end
+  end
+
+  defp record_to_public(%{
+         "format_version" => 1,
+         "id" => id,
+         "cursor" => cursor,
+         "type" => type,
+         "created_at" => created_at,
+         "signal" => signal_map
+       })
+       when is_binary(created_at) and is_map(signal_map) do
+    with true <- is_binary(id),
+         true <- is_integer(cursor) and cursor > 0,
+         true <- is_binary(type),
+         {:ok, datetime, _offset} <- DateTime.from_iso8601(created_at),
+         {:ok, signal} <- Signal.from_map(signal_map) do
+      {:ok,
+       %RecordedSignal{
+         id: id,
+         cursor: cursor,
+         type: type,
+         created_at: datetime,
+         signal: signal
+       }}
     else
-      {:ok, put_subscriber(state, subscriber)}
+      _invalid -> {:error, :invalid_store_record}
     end
   end
 
-  defp move_failed_delivery_to_dlq(state, record, subscriber, reason) do
-    entry = dlq_store_entry(subscriber.id, record, reason)
+  defp record_to_public(_record), do: {:error, :unsupported_store_record}
 
-    case store_write(state, :put_dlq, [subscriber.id, entry]) do
-      {:ok, state} -> persist_failed_delivery_checkpoint(state, subscriber)
-      {:error, store_reason} -> {:error, store_reason, state}
+  defp init_store(opts) do
+    store_module = Keyword.get(opts, :store, Memory)
+
+    store_opts = Keyword.get(opts, :store_opts, [])
+
+    store_opts =
+      if store_module == Memory do
+        Keyword.put_new(store_opts, :max_records, Keyword.get(opts, :max_log_size, 100_000))
+      else
+        store_opts
+      end
+
+    case safe_apply(store_module, :init, [store_opts]) do
+      {:ok, store_state} -> {:ok, store_module, store_state}
+      {:error, reason} -> {:error, {:store_init_failed, reason}}
+      other -> {:error, {:store_init_failed, {:invalid_return, other}}}
     end
   end
 
-  defp persist_failed_delivery_checkpoint(state, subscriber) do
-    case persist_subscriber_checkpoint(state, subscriber) do
-      {:ok, state} -> {:ok, state}
-      {:error, store_reason} -> {:error, store_reason, state}
+  defp validate_latest_cursor(cursor) when is_integer(cursor) and cursor >= 0, do: :ok
+  defp validate_latest_cursor(_cursor), do: {:error, :invalid_store_cursor}
+
+  defp validate_loaded_cursors(subscriptions, latest_cursor) do
+    if Enum.all?(subscriptions, fn {_id, subscriber} -> subscriber.cursor <= latest_cursor end),
+      do: :ok,
+      else: {:error, :invalid_store_subscription_cursor}
+  end
+
+  defp load_durable_subscriptions(definitions) when is_list(definitions) do
+    Enum.reduce_while(definitions, {:ok, %{}, [], Router.new!()}, fn definition,
+                                                                     {:ok, subscriptions, order,
+                                                                      router} ->
+      with {:ok, subscriber} <- subscriber_from_definition(definition),
+           false <- Map.has_key?(subscriptions, subscriber.id),
+           {:ok, router} <- Router.add(router, {subscriber.path, subscriber.id}) do
+        {:cont,
+         {:ok, Map.put(subscriptions, subscriber.id, subscriber), order ++ [subscriber.id],
+          router}}
+      else
+        _invalid -> {:halt, {:error, :invalid_store_subscription}}
+      end
+    end)
+  end
+
+  defp load_durable_subscriptions(_definitions), do: {:error, :invalid_store_subscriptions}
+
+  defp subscriber_from_definition(%{
+         "format_version" => 1,
+         "id" => id,
+         "path" => path,
+         "cursor" => cursor,
+         "created_at" => created_at
+       })
+       when is_binary(id) and byte_size(id) > 0 and is_binary(path) and is_integer(cursor) and
+              cursor >= 0 and is_binary(created_at) do
+    with :ok <- validate_path(path),
+         {:ok, datetime, _offset} <- DateTime.from_iso8601(created_at) do
+      {:ok,
+       %Subscriber{
+         id: id,
+         path: path,
+         durable?: true,
+         target: nil,
+         monitor_ref: nil,
+         cursor: cursor,
+         in_flight: nil,
+         created_at: datetime
+       }}
+    else
+      _invalid -> {:error, :invalid_store_subscription}
     end
   end
 
-  defp persist_subscriber_checkpoint(state, subscriber) do
-    checkpoint = continuous_checkpoint(subscriber)
+  defp subscriber_from_definition(_definition), do: {:error, :unsupported_store_subscription}
 
-    with {:ok, state} <-
-           store_write(state, :put_checkpoint, [checkpoint_key(state, subscriber.id), checkpoint]) do
-      {:ok, put_subscriber(state, subscriber)}
-    end
+  defp durable_definition(%Subscriber{} = subscriber, cursor) do
+    durable_definition(subscriber.id, subscriber.path, cursor, subscriber.created_at)
   end
 
-  defp continuous_checkpoint(%Subscriber{pending: pending, last_seen_cursor: last_seen}) do
-    case Map.values(pending) do
-      [] -> last_seen
-      entries -> max(entries |> Enum.map(& &1.cursor) |> Enum.min() |> Kernel.-(1), 0)
-    end
-  end
-
-  defp pending_entry(record) do
+  defp durable_definition(id, path, cursor, created_at) do
     %{
-      cursor: Map.fetch!(record, "cursor"),
-      signal_id: record |> Map.fetch!("signal") |> Map.fetch!("id")
+      "format_version" => 1,
+      "id" => id,
+      "path" => path,
+      "cursor" => cursor,
+      "created_at" => DateTime.to_iso8601(created_at)
     }
   end
 
-  defp replay_records(state, path, start_timestamp, opts)
-       when is_integer(start_timestamp) and start_timestamp >= 0 do
-    batch_size = Keyword.get(opts, :batch_size, :infinity)
-
-    with {:ok, _routes} <- Router.normalize({path, :replay}),
-         :ok <- validate_batch_size(batch_size),
-         {:ok, records} <- store_read(state, :read, [[after_cursor: -1]]) do
-      records =
-        records
-        |> Enum.filter(fn record ->
-          Map.fetch!(record, "timestamp_ms") >= start_timestamp &&
-            Router.matches?(record_type(record), path)
-        end)
-        |> maybe_take(batch_size)
-        |> Enum.map(&record_to_public!/1)
-
-      {:ok, records}
-    end
-  end
-
-  defp replay_records(_state, _path, _start_timestamp, _opts),
-    do: {:error, {:invalid_argument, :start_timestamp}}
-
-  defp validate_batch_size(:infinity), do: :ok
-  defp validate_batch_size(size) when is_integer(size) and size > 0, do: :ok
-  defp validate_batch_size(_size), do: {:error, {:invalid_option, :batch_size}}
-
-  defp maybe_take(records, :infinity), do: records
-  defp maybe_take(records, count), do: Enum.take(records, count)
-
-  defp acknowledge(state, subscription_id, ack_ids) do
-    with {:ok, subscriber} <- fetch_persistent_subscriber(state, subscription_id),
-         {:ok, identifiers} <- normalize_ack_ids(ack_ids),
-         {:ok, record_ids} <- resolve_pending_record_ids(subscriber, identifiers) do
-      subscriber = %{subscriber | pending: Map.drop(subscriber.pending, record_ids)}
-      persist_subscriber_checkpoint(state, subscriber)
-    end
-  end
-
-  defp normalize_ack_ids(id) when is_binary(id), do: {:ok, [id]}
-
-  defp normalize_ack_ids(ids) when is_list(ids) do
-    if ids != [] && Enum.all?(ids, &is_binary/1),
-      do: {:ok, Enum.uniq(ids)},
-      else: {:error, :invalid_ack_argument}
-  end
-
-  defp normalize_ack_ids(_ids), do: {:error, :invalid_ack_argument}
-
-  defp resolve_pending_record_ids(subscriber, identifiers) do
-    Enum.reduce_while(identifiers, {:ok, []}, fn identifier, {:ok, resolved} ->
-      case resolve_pending_record_id(subscriber.pending, identifier, resolved) do
-        {:ok, record_id} -> {:cont, {:ok, [record_id | resolved]}}
-        :error -> {:halt, {:error, :unknown_signal_id}}
-      end
-    end)
-  end
-
-  defp resolve_pending_record_id(pending, identifier, resolved) do
-    if Map.has_key?(pending, identifier) do
-      {:ok, identifier}
-    else
-      pending
-      |> Enum.reject(fn {record_id, _entry} -> record_id in resolved end)
-      |> Enum.filter(fn {_record_id, entry} -> entry.signal_id == identifier end)
-      |> Enum.min_by(fn {_record_id, entry} -> entry.cursor end, fn -> nil end)
-      |> case do
-        {record_id, _entry} -> {:ok, record_id}
-        nil -> :error
-      end
-    end
-  end
-
-  defp reconnect_subscriber(_state, _subscription_id, client_pid) when not is_pid(client_pid),
-    do: {:error, :invalid_client_pid}
-
-  defp reconnect_subscriber(state, subscription_id, client_pid) do
-    with {:ok, subscriber} <- fetch_persistent_subscriber(state, subscription_id),
-         {:ok, checkpoint} <-
-           store_read(state, :get_checkpoint, [checkpoint_key(state, subscription_id)]) do
-      state = demonitor_subscriber(state, subscriber)
-      {monitor_ref, state} = monitor_subscriber(state, subscription_id, client_pid)
-
-      subscriber = %{
-        subscriber
-        | dispatch: replace_dispatch_pid(subscriber.dispatch, client_pid),
-          client_pid: client_pid,
-          monitor_ref: monitor_ref,
-          disconnected?: false,
-          pending: %{},
-          last_seen_cursor: checkpoint || 0
-      }
-
-      state = put_subscriber(state, subscriber)
-
-      with {:ok, records} <- store_read(state, :read, [[after_cursor: checkpoint || 0]]),
-           {:ok, state} <-
-             records
-             |> Enum.filter(&Router.matches?(record_type(&1), subscriber.path))
-             |> deliver_records_to_subscriber(state, subscription_id) do
-        {:ok, checkpoint || 0, state}
-      else
-        {:error, reason, _state} -> {:error, reason}
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
-
-  defp redrive(state, subscription_id, opts) do
-    with {:ok, subscriber} <- fetch_subscriber(state, subscription_id),
-         :ok <- validate_batch_size(Keyword.get(opts, :limit, :infinity)),
-         {:ok, entries} <- store_read(state, :list_dlq, [subscription_id]) do
-      do_redrive(state, subscriber, entries, opts)
-    else
-      {:error, reason} -> {:error, reason, state}
-    end
-  end
-
-  defp do_redrive(state, subscriber, entries, opts) do
-    selected = maybe_take(entries, Keyword.get(opts, :limit, :infinity))
-
-    {succeeded, failed, successful_ids, state} =
-      Enum.reduce(selected, {0, 0, [], state}, &redrive_entry(&1, &2, subscriber))
-
-    clear_on_success? = Keyword.get(opts, :clear_on_success, true)
-
-    case maybe_delete_redriven(state, subscriber.id, successful_ids, clear_on_success?) do
-      {:ok, state} -> finish_redrive(state, subscriber.id, succeeded, failed)
-      {:error, reason} -> {:error, reason, state}
-    end
-  end
-
-  defp redrive_entry(entry, {succeeded, failed, ids, state}, subscriber) do
-    signal = entry |> Map.fetch!("record") |> record_to_public!() |> Map.fetch!(:signal)
-
-    case run_dispatch(state, signal, subscriber) do
-      {:ok, state} -> {succeeded + 1, failed, [Map.fetch!(entry, "id") | ids], state}
-      {:skip, state} -> {succeeded + 1, failed, [Map.fetch!(entry, "id") | ids], state}
-      {:error, _reason, state} -> {succeeded, failed + 1, ids, state}
-    end
-  end
-
-  defp finish_redrive(state, subscription_id, succeeded, failed) do
-    result = %{succeeded: succeeded, failed: failed}
-
-    Telemetry.execute(
-      [:jido, :signal, :bus, :dlq, :redrive],
-      result,
-      %{bus_name: state.name, subscription_id: subscription_id}
-    )
-
-    {:ok, result, state}
-  end
-
-  defp maybe_delete_redriven(state, _subscription_id, _ids, false), do: {:ok, state}
-
-  defp maybe_delete_redriven(state, subscription_id, ids, true),
-    do: store_write(state, :delete_dlq, [subscription_id, ids])
-
-  defp fetch_subscriber(state, id) do
-    case Map.fetch(state.subscriptions, id) do
-      {:ok, subscriber} -> {:ok, subscriber}
-      :error -> {:error, :subscription_not_found}
-    end
-  end
-
-  defp fetch_persistent_subscriber(state, id) do
-    with {:ok, subscriber} <- fetch_subscriber(state, id) do
-      if subscriber.persistent?,
-        do: {:ok, subscriber},
-        else: {:error, :subscription_not_persistent}
-    end
-  end
-
-  defp maybe_delete_retained_subscription(state, subscriber, opts) do
-    if subscriber.persistent? && Keyword.get(opts, :delete_persistence, false) do
-      case store_write(state, :delete_checkpoint, [checkpoint_key(state, subscriber.id)]) do
-        {:ok, state} -> store_write(state, :clear_dlq, [subscriber.id])
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      {:ok, state}
-    end
-  end
-
   defp store_read(state, callback, args) do
-    case safe_apply(state.store_module, callback, args ++ [state.store_state]) do
+    store_read(state.store_module, state.store_state, callback, args)
+  end
+
+  defp store_read(store_module, store_state, callback, args) do
+    case safe_apply(store_module, callback, args ++ [store_state]) do
       {:ok, value} -> {:ok, value}
       {:error, reason} -> {:error, {:store_error, callback, reason}}
       other -> {:error, {:store_error, callback, {:invalid_return, other}}}
@@ -943,108 +857,16 @@ defmodule Jido.Signal.Bus do
     kind, reason -> {:error, {kind, reason}}
   end
 
-  defp record_to_public!(record) do
-    {:ok, signal} = Signal.from_map(Map.fetch!(record, "signal"))
-    {:ok, created_at, _offset} = DateTime.from_iso8601(Map.fetch!(record, "created_at"))
-
-    %RecordedSignal{
-      id: Map.fetch!(record, "id"),
-      cursor: Map.fetch!(record, "cursor"),
-      type: Map.fetch!(record, "type"),
-      created_at: created_at,
-      signal: signal
-    }
+  defp monitor_target(state, subscription_id, target) do
+    monitor_ref = Process.monitor(target)
+    {monitor_ref, %{state | monitors: Map.put(state.monitors, monitor_ref, subscription_id)}}
   end
 
-  defp dlq_store_entry(subscription_id, record, reason) do
-    %{
-      "format_version" => 1,
-      "id" => ID.generate!(),
-      "subscription_id" => subscription_id,
-      "record" => record,
-      "reason" => Error.to_map(Error.normalize(reason)),
-      "metadata" => %{
-        "signal_log_id" => Map.fetch!(record, "id"),
-        "attempt_count" => 1
-      },
-      "inserted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-    }
-  end
+  defp demonitor_target(state, %Subscriber{monitor_ref: nil}), do: state
 
-  defp decode_dlq_entries(entries) do
-    decoded =
-      Enum.map(entries, fn entry ->
-        {:ok, inserted_at, _offset} = DateTime.from_iso8601(Map.fetch!(entry, "inserted_at"))
-
-        %{
-          id: Map.fetch!(entry, "id"),
-          subscription_id: Map.fetch!(entry, "subscription_id"),
-          signal: entry |> Map.fetch!("record") |> record_to_public!() |> Map.fetch!(:signal),
-          reason: Map.fetch!(entry, "reason"),
-          metadata: Map.fetch!(entry, "metadata"),
-          inserted_at: inserted_at
-        }
-      end)
-
-    {:ok, decoded}
-  end
-
-  defp record_type(record), do: Map.fetch!(record, "type")
-
-  defp checkpoint_key(state, subscription_id), do: "#{state.name}:#{subscription_id}"
-
-  defp dispatch_pid({:pid, opts}), do: Keyword.get(opts, :target)
-
-  defp dispatch_pid(targets) when is_list(targets) do
-    Enum.find_value(targets, fn
-      {:pid, opts} -> Keyword.get(opts, :target)
-      _target -> nil
-    end)
-  end
-
-  defp dispatch_pid(_dispatch), do: nil
-
-  defp replace_dispatch_pid({:pid, opts}, pid), do: {:pid, Keyword.put(opts, :target, pid)}
-
-  defp replace_dispatch_pid(targets, pid) when is_list(targets) do
-    Enum.map(targets, fn
-      {:pid, opts} -> {:pid, Keyword.put(opts, :target, pid)}
-      target -> target
-    end)
-  end
-
-  defp replace_dispatch_pid(_dispatch, pid),
-    do: {:pid, target: pid, delivery_mode: :async}
-
-  defp monitor_subscriber(state, _id, nil), do: {nil, state}
-
-  defp monitor_subscriber(state, id, pid) when is_pid(pid) do
-    monitor_ref = Process.monitor(pid)
-    {monitor_ref, %{state | monitors: Map.put(state.monitors, monitor_ref, id)}}
-  end
-
-  defp demonitor_subscriber(state, %Subscriber{monitor_ref: nil}), do: state
-
-  defp demonitor_subscriber(state, %Subscriber{monitor_ref: monitor_ref}) do
+  defp demonitor_target(state, %Subscriber{monitor_ref: monitor_ref}) do
     Process.demonitor(monitor_ref, [:flush])
     %{state | monitors: Map.delete(state.monitors, monitor_ref)}
-  end
-
-  defp remove_subscriber(state, subscriber, demonitor? \\ true) do
-    state = if demonitor?, do: demonitor_subscriber(state, subscriber), else: state
-    subscriptions = Map.delete(state.subscriptions, subscriber.id)
-    subscription_order = Enum.reject(state.subscription_order, &(&1 == subscriber.id))
-
-    %{
-      state
-      | subscriptions: subscriptions,
-        subscription_order: subscription_order,
-        router: rebuild_subscription_router(subscriptions, subscription_order)
-    }
-  end
-
-  defp put_subscriber(state, subscriber) do
-    %{state | subscriptions: Map.put(state.subscriptions, subscriber.id, subscriber)}
   end
 
   defp insert_subscriber(state, subscriber) do
@@ -1058,23 +880,93 @@ defmodule Jido.Signal.Bus do
     }
   end
 
-  defp rebuild_subscription_router(subscriptions, subscription_order) do
-    routes =
-      Enum.map(subscription_order, fn subscription_id ->
-        subscriber = Map.fetch!(subscriptions, subscription_id)
-        {subscriber.path, subscriber.id}
-      end)
-
-    Router.new!(routes)
+  defp put_subscriber(state, subscriber) do
+    %{state | subscriptions: Map.put(state.subscriptions, subscriber.id, subscriber)}
   end
 
-  defp middleware_context(state) do
+  defp remove_subscriber(state, subscriber, demonitor? \\ true) do
+    state = if demonitor?, do: demonitor_target(state, subscriber), else: state
+    subscriptions = Map.delete(state.subscriptions, subscriber.id)
+    order = Enum.reject(state.subscription_order, &(&1 == subscriber.id))
+
+    routes =
+      Enum.map(order, fn id ->
+        current = Map.fetch!(subscriptions, id)
+        {current.path, current.id}
+      end)
+
     %{
-      bus_name: state.name,
-      timestamp: DateTime.utc_now(),
-      metadata: %{},
-      task_supervisor: Names.task_supervisor(jido: state.jido)
+      state
+      | subscriptions: subscriptions,
+        subscription_order: order,
+        router: Router.new!(routes)
     }
+  end
+
+  defp emit_subscription(event, state, subscriber) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :subscription, event],
+      %{system_time: System.system_time()},
+      %{
+        bus_name: state.name,
+        subscription_id: subscriber.id,
+        subscription_path: subscriber.path,
+        durable: subscriber.durable?
+      }
+    )
+  end
+
+  defp emit_delivery(state, subscriber, signal, cursor) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :deliver],
+      %{system_time: System.system_time()},
+      %{
+        bus_name: state.name,
+        subscription_id: subscriber.id,
+        subscription_path: subscriber.path,
+        durable: subscriber.durable?,
+        cursor: cursor,
+        signal_id: signal.id,
+        signal_type: signal.type
+      },
+      signal
+    )
+  end
+
+  defp emit_delivery_error(state, subscriber, signal, reason) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :delivery_error],
+      %{system_time: System.system_time()},
+      %{
+        bus_name: state.name,
+        subscription_id: subscriber.id,
+        signal_id: signal.id,
+        signal_type: signal.type,
+        reason: reason
+      },
+      signal
+    )
+
+    state
+  end
+
+  defp emit_store_delivery_error(state, subscriber, reason) do
+    Telemetry.execute(
+      [:jido, :signal, :bus, :delivery_error],
+      %{system_time: System.system_time()},
+      %{
+        bus_name: state.name,
+        subscription_id: subscriber.id,
+        reason: reason
+      }
+    )
+  end
+
+  defp reject_removed_options(opts) do
+    case Enum.find(@removed_start_options, &Keyword.has_key?(opts, &1)) do
+      nil -> :ok
+      option -> {:error, {:unsupported_option, option}}
+    end
   end
 
   defp registry(opts) do
@@ -1096,29 +988,6 @@ defmodule Jido.Signal.Bus do
     ArgumentError -> {:error, :not_found}
   catch
     :exit, _reason -> {:error, :not_found}
-  end
-
-  defp emit_dispatch(event, state, signal, subscriber, extra) do
-    metadata =
-      Map.merge(
-        %{
-          bus_name: state.name,
-          signal_id: signal.id,
-          signal_type: signal.type,
-          subscription_id: subscriber.id,
-          subscription_path: subscriber.path,
-          signal: signal,
-          subscription: subscriber
-        },
-        extra
-      )
-
-    Telemetry.execute(
-      [:jido, :signal, :bus, event],
-      %{timestamp: System.monotonic_time(:microsecond)},
-      metadata,
-      signal
-    )
   end
 
   defp bus_call(bus, message) do

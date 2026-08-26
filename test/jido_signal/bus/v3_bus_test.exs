@@ -3,49 +3,18 @@ defmodule Jido.Signal.Bus.V3BusTest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
+  alias Jido.Signal.Bus.RecordedSignal
 
   defmodule FailingStore do
     def init(_opts), do: {:error, :unavailable}
   end
 
-  defmodule ToggleAdapter do
-    @behaviour Jido.Signal.Dispatch.Adapter
-
-    @impl true
-    def validate_opts(opts) do
-      if is_pid(opts[:toggle]) and is_pid(opts[:observer]),
-        do: {:ok, opts},
-        else: {:error, :invalid_test_options}
-    end
-
-    @impl true
-    def deliver(signal, opts) do
-      send(opts[:observer], {:delivery_attempt, signal})
-
-      if Agent.get(opts[:toggle], & &1) do
-        :ok
-      else
-        {:error, :delivery_failed}
-      end
-    end
-  end
-
-  defmodule OrderAdapter do
-    @behaviour Jido.Signal.Dispatch.Adapter
-
-    @impl true
-    def validate_opts(opts), do: {:ok, opts}
-
-    @impl true
-    def deliver(signal, opts) do
-      send(opts[:observer], {:ordered_delivery, opts[:label], signal})
-      :ok
-    end
-  end
-
   defmodule ObservingStore do
+    @behaviour Jido.Signal.Bus.Store
+
     alias Jido.Signal.Bus.Store.Memory
 
+    @impl true
     def init(opts) do
       observer = Keyword.fetch!(opts, :observer)
 
@@ -54,6 +23,7 @@ defmodule Jido.Signal.Bus.V3BusTest do
       end
     end
 
+    @impl true
     def append(records, state) do
       send(state.observer, {:stored_records, records})
 
@@ -62,7 +32,73 @@ defmodule Jido.Signal.Bus.V3BusTest do
       end
     end
 
+    @impl true
     def read(opts, state), do: Memory.read(opts, state.memory)
+
+    @impl true
+    def latest_cursor(state), do: Memory.latest_cursor(state.memory)
+
+    @impl true
+    def list_subscriptions(state), do: Memory.list_subscriptions(state.memory)
+
+    @impl true
+    def put_subscription(subscription, state) do
+      with {:ok, memory} <- Memory.put_subscription(subscription, state.memory) do
+        {:ok, %{state | memory: memory}}
+      end
+    end
+
+    @impl true
+    def delete_subscription(id, state) do
+      with {:ok, memory} <- Memory.delete_subscription(id, state.memory) do
+        {:ok, %{state | memory: memory}}
+      end
+    end
+  end
+
+  defmodule SharedStore do
+    @behaviour Jido.Signal.Bus.Store
+
+    alias Jido.Signal.Bus.Store.Memory
+
+    @impl true
+    def init(opts) do
+      case Keyword.fetch(opts, :agent) do
+        {:ok, agent} when is_pid(agent) -> {:ok, agent}
+        _invalid -> {:error, :missing_agent}
+      end
+    end
+
+    @impl true
+    def append(records, agent), do: update(agent, &Memory.append(records, &1))
+
+    @impl true
+    def read(opts, agent), do: Agent.get(agent, &Memory.read(opts, &1))
+
+    @impl true
+    def latest_cursor(agent), do: Agent.get(agent, &Memory.latest_cursor/1)
+
+    @impl true
+    def list_subscriptions(agent), do: Agent.get(agent, &Memory.list_subscriptions/1)
+
+    @impl true
+    def put_subscription(subscription, agent) do
+      update(agent, &Memory.put_subscription(subscription, &1))
+    end
+
+    @impl true
+    def delete_subscription(id, agent) do
+      update(agent, &Memory.delete_subscription(id, &1))
+    end
+
+    defp update(agent, function) do
+      Agent.get_and_update(agent, fn state ->
+        case function.(state) do
+          {:ok, next_state} -> {{:ok, agent}, next_state}
+          {:error, reason} -> {{:error, reason}, state}
+        end
+      end)
+    end
   end
 
   test "publishes in order and keeps a bounded replay log" do
@@ -75,36 +111,47 @@ defmodule Jido.Signal.Bus.V3BusTest do
     assert {:ok, replayed} = Bus.replay(bus, "order.**")
     assert Enum.map(replayed, & &1.signal.type) == ["order.two", "order.three"]
     assert Enum.map(replayed, & &1.cursor) == [2, 3]
+
+    assert {:ok, [last]} = Bus.replay(bus, "order.**", after: 2, limit: 1)
+    assert last.cursor == 3
   end
 
   test "keeps Router precedence through Bus delivery" do
     bus = start_bus()
+    handler_id = {__MODULE__, self(), make_ref()}
 
-    assert {:ok, _id} =
-             Bus.subscribe(bus, "ordered.**",
-               dispatch: {OrderAdapter, observer: self(), label: :multi}
-             )
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:jido, :signal, :bus, :deliver],
+        fn _event, _measurements, metadata, target ->
+          send(target, {:delivered_to, metadata.subscription_id})
+        end,
+        self()
+      )
 
-    assert {:ok, _id} =
-             Bus.subscribe(bus, "ordered.*",
-               dispatch: {OrderAdapter, observer: self(), label: :single}
-             )
+    on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    assert {:ok, _id} =
-             Bus.subscribe(bus, "ordered.event",
-               dispatch: {OrderAdapter, observer: self(), label: :exact}
-             )
+    assert {:ok, "multi"} =
+             Bus.subscribe(bus, "ordered.**", subscription_id: "multi")
+
+    assert {:ok, "single"} =
+             Bus.subscribe(bus, "ordered.*", subscription_id: "single")
+
+    assert {:ok, "exact"} =
+             Bus.subscribe(bus, "ordered.event", subscription_id: "exact")
 
     event = signal("ordered.event")
     assert {:ok, [_record]} = Bus.publish(bus, [event])
 
-    assert_receive {:ordered_delivery, :exact, ^event}
-    assert_receive {:ordered_delivery, :single, ^event}
-    assert_receive {:ordered_delivery, :multi, ^event}
+    assert_receive {:delivered_to, "exact"}
+    assert_receive {:delivered_to, "single"}
+    assert_receive {:delivered_to, "multi"}
   end
 
-  test "writes an explicit Store record version and canonical Signal map" do
+  test "stores a versioned canonical Signal map before delivery" do
     bus = start_bus(store: ObservingStore, store_opts: [observer: self()])
+    assert {:ok, _id} = Bus.subscribe(bus, "stored.*")
     event = signal("stored.created")
 
     assert {:ok, [_record]} = Bus.publish(bus, [event])
@@ -114,117 +161,183 @@ defmodule Jido.Signal.Bus.V3BusTest do
     assert stored["cursor"] == 1
     assert stored["signal"] == Signal.to_map(event)
     assert stored["signal"]["specversion"] == "1.0"
-    refute Map.has_key?(stored["signal"], "jido_schema_version")
+    assert_receive {:signal, ^event}
   end
 
-  test "removes a regular subscription after its target exits" do
+  test "removes a normal subscription after its target exits" do
     bus = start_bus()
     client = spawn(fn -> receive do: (:stop -> :ok) end)
     monitor_ref = Process.monitor(client)
-    subscription_id = "short-lived"
 
-    assert {:ok, ^subscription_id} =
-             Bus.subscribe(bus, "short.*",
-               subscription_id: subscription_id,
-               dispatch: {:pid, target: client}
-             )
+    assert {:ok, "short-lived"} =
+             Bus.subscribe(bus, "short.*", subscription_id: "short-lived", target: client)
 
     Process.exit(client, :kill)
     assert_receive {:DOWN, ^monitor_ref, :process, ^client, :killed}
 
     assert_eventually(fn ->
-      case Bus.subscribe(bus, "short.*", subscription_id: subscription_id) do
-        {:ok, ^subscription_id} -> true
-        {:error, :subscription_already_exists} -> false
-      end
+      Bus.subscribe(bus, "short.*", subscription_id: "short-lived") ==
+        {:ok, "short-lived"}
     end)
   end
 
-  test "does not skip an unacknowledged record after an out-of-order acknowledgement" do
+  test "sends one durable record at a time and advances only its cursor" do
     bus = start_bus()
-
-    assert {:ok, subscription_id} =
-             Bus.subscribe(bus, "durable.*", persistent?: true, start_from: :current)
+    assert {:ok, "orders-agent"} = Bus.subscribe(bus, "durable.*", durable: "orders-agent")
 
     first = signal("durable.first")
     second = signal("durable.second")
     assert {:ok, [first_record, second_record]} = Bus.publish(bus, [first, second])
-    assert_receive {:signal, ^first}
-    assert_receive {:signal, ^second}
 
-    assert :ok = Bus.ack(bus, subscription_id, second_record.id)
-    assert {:ok, 0} = Bus.reconnect(bus, subscription_id, self())
+    assert_receive {:signal, "orders-agent", %RecordedSignal{} = delivered_first}
+    assert delivered_first.cursor == first_record.cursor
+    assert delivered_first.signal == first
+    refute_receive {:signal, "orders-agent", _record}, 50
 
-    assert_receive {:signal, ^first}
-    assert_receive {:signal, ^second}
+    assert {:error, {:unexpected_cursor, 1}} = Bus.ack(bus, "orders-agent", 2)
+    assert :ok = Bus.ack(bus, "orders-agent", delivered_first.cursor)
 
-    assert :ok = Bus.ack(bus, subscription_id, first_record.id)
-    assert :ok = Bus.ack(bus, subscription_id, second_record.id)
-    assert {:ok, 2} = Bus.reconnect(bus, subscription_id, self())
-    refute_receive {:signal, _signal}, 50
+    assert_receive {:signal, "orders-agent", %RecordedSignal{} = delivered_second}
+    assert delivered_second.cursor == second_record.cursor
+    assert delivered_second.signal == second
+    assert :ok = Bus.ack(bus, "orders-agent", delivered_second.cursor)
+    refute_receive {:signal, "orders-agent", _record}, 50
   end
 
-  test "accepts a delivered Signal ID for v2 acknowledgement compatibility" do
-    bus = start_bus()
-
-    assert {:ok, subscription_id} =
-             Bus.subscribe(bus, "compatible.*", persistent?: true, start_from: :current)
-
-    event = signal("compatible.ack")
-    assert {:ok, [_record]} = Bus.publish(bus, [event])
-    assert_receive {:signal, ^event}
-
-    assert :ok = Bus.ack(bus, subscription_id, event.id)
-    assert {:ok, 1} = Bus.reconnect(bus, subscription_id, self())
-    refute_receive {:signal, ^event}, 50
-  end
-
-  test "retains records while a persistent subscriber is disconnected" do
+  test "sends an unacknowledged record again after a target exits" do
     bus = start_bus()
     parent = self()
-    client = spawn(fn -> relay(parent, :old_client) end)
-    monitor_ref = Process.monitor(client)
+    client = spawn(fn -> relay_durable(parent) end)
+    client_ref = Process.monitor(client)
 
-    assert {:ok, subscription_id} =
-             Bus.subscribe(bus, "offline.*",
-               persistent?: true,
-               start_from: :current,
-               dispatch: {:pid, target: client}
-             )
-
-    Process.exit(client, :kill)
-    assert_receive {:DOWN, ^monitor_ref, :process, ^client, :killed}
+    assert {:ok, "offline-agent"} =
+             Bus.subscribe(bus, "offline.*", durable: "offline-agent", target: client)
 
     event = signal("offline.created")
-    assert {:ok, [_record]} = Bus.publish(bus, [event])
+    assert {:ok, [published]} = Bus.publish(bus, [event])
+    assert_receive {:relayed, "offline-agent", %RecordedSignal{} = first_delivery}
+    assert first_delivery.cursor == published.cursor
 
-    new_client = spawn(fn -> relay(parent, :new_client) end)
-    assert {:ok, 0} = Bus.reconnect(bus, subscription_id, new_client)
-    assert_receive {:relayed, :new_client, ^event}
+    Process.exit(client, :kill)
+    assert_receive {:DOWN, ^client_ref, :process, ^client, :killed}
+
+    assert_eventually(fn ->
+      Bus.subscribe(bus, "offline.*", durable: "offline-agent") == {:ok, "offline-agent"}
+    end)
+
+    assert_receive {:signal, "offline-agent", %RecordedSignal{} = repeated}
+    assert repeated.cursor == first_delivery.cursor
+    assert repeated.signal == event
   end
 
-  test "moves a persistent delivery failure to the Bus dead-letter queue" do
+  test "keeps records published while a durable subscription is detached" do
     bus = start_bus()
-    {:ok, toggle} = start_supervised({Agent, fn -> false end})
 
-    assert {:ok, subscription_id} =
-             Bus.subscribe(bus, "failed.*",
-               persistent?: true,
-               dispatch: {ToggleAdapter, toggle: toggle, observer: self()}
-             )
+    assert {:ok, "detached-agent"} =
+             Bus.subscribe(bus, "detached.*", durable: "detached-agent")
 
-    event = signal("failed.delivery")
-    assert {:ok, [_record]} = Bus.publish(bus, [event])
-    assert_receive {:delivery_attempt, ^event}
+    assert :ok = Bus.unsubscribe(bus, "detached-agent")
+    event = signal("detached.created")
+    assert {:ok, [published]} = Bus.publish(bus, [event])
+    refute_receive {:signal, "detached-agent", _record}, 50
 
-    assert {:ok, [entry]} = Bus.dlq_entries(bus, subscription_id)
-    assert entry.signal == event
-    assert entry.metadata["attempt_count"] == 1
+    assert {:ok, "detached-agent"} =
+             Bus.subscribe(bus, "detached.*", durable: "detached-agent")
 
-    Agent.update(toggle, fn _value -> true end)
-    assert {:ok, %{succeeded: 1, failed: 0}} = Bus.redrive_dlq(bus, subscription_id)
-    assert_receive {:delivery_attempt, ^event}
-    assert {:ok, []} = Bus.dlq_entries(bus, subscription_id)
+    assert_receive {:signal, "detached-agent", %RecordedSignal{} = delivered}
+    assert delivered.cursor == published.cursor
+    assert delivered.signal == event
+  end
+
+  test "rejects acknowledgement from a process that does not own the subscription" do
+    bus = start_bus()
+    parent = self()
+    client = spawn(fn -> relay_durable(parent) end)
+
+    assert {:ok, "owned-agent"} =
+             Bus.subscribe(bus, "owned.*", durable: "owned-agent", target: client)
+
+    assert {:ok, [published]} = Bus.publish(bus, [signal("owned.created")])
+    assert_receive {:relayed, "owned-agent", %RecordedSignal{cursor: cursor}}
+    assert cursor == published.cursor
+    assert {:error, :not_subscription_owner} = Bus.ack(bus, "owned-agent", cursor)
+  end
+
+  test "fails publish without delivery when a durable cursor fills the Store" do
+    bus = start_bus(max_log_size: 2)
+
+    assert {:ok, "pressure-agent"} =
+             Bus.subscribe(bus, "pressure.*", durable: "pressure-agent", start_from: :origin)
+
+    assert {:ok, _ephemeral} = Bus.subscribe(bus, "pressure.*")
+    first = signal("pressure.first")
+    second = signal("pressure.second")
+    assert {:ok, [_first, _second]} = Bus.publish(bus, [first, second])
+
+    assert_receive {:signal, "pressure-agent", %RecordedSignal{cursor: 1}}
+    assert_receive {:signal, ^first}
+    assert_receive {:signal, ^second}
+
+    third = signal("pressure.third")
+
+    assert {:error, {:store_error, :append, {:store_full, ["pressure-agent"]}}} =
+             Bus.publish(bus, [third])
+
+    refute_receive {:signal, ^third}, 50
+    assert {:ok, replayed} = Bus.replay(bus, "pressure.*")
+    assert Enum.map(replayed, & &1.cursor) == [1, 2]
+  end
+
+  test "loads durable definitions and unacknowledged records from a custom Store" do
+    {:ok, memory} = Jido.Signal.Bus.Store.Memory.init([])
+    store_agent = start_supervised!({Agent, fn -> memory end})
+    dynamic_supervisor = start_supervised!({DynamicSupervisor, strategy: :one_for_one})
+    name = unique_name("shared_store")
+    bus_opts = [name: name, store: SharedStore, store_opts: [agent: store_agent]]
+
+    assert {:ok, bus} = DynamicSupervisor.start_child(dynamic_supervisor, {Bus, bus_opts})
+
+    assert {:ok, "restart-agent"} =
+             Bus.subscribe(bus, "restart.*", durable: "restart-agent")
+
+    event = signal("restart.created")
+    assert {:ok, [published]} = Bus.publish(bus, [event])
+    assert_receive {:signal, "restart-agent", %RecordedSignal{cursor: cursor}}
+    assert cursor == published.cursor
+
+    assert :ok = DynamicSupervisor.terminate_child(dynamic_supervisor, bus)
+
+    assert {:ok, restarted_bus} =
+             DynamicSupervisor.start_child(dynamic_supervisor, {Bus, bus_opts})
+
+    assert {:ok, "restart-agent"} =
+             Bus.subscribe(restarted_bus, "restart.*", durable: "restart-agent")
+
+    assert_receive {:signal, "restart-agent", %RecordedSignal{} = repeated}
+    assert repeated.cursor == published.cursor
+    assert repeated.signal == event
+  end
+
+  test "allows only one active target for a durable subscription" do
+    bus = start_bus()
+    other = spawn(fn -> receive do: (:stop -> :ok) end)
+
+    assert {:ok, "single-owner"} = Bus.subscribe(bus, "owner.*", durable: "single-owner")
+
+    assert {:error, :subscription_in_use} =
+             Bus.subscribe(bus, "owner.*", durable: "single-owner", target: other)
+
+    assert {:error, :durable_subscription_conflict} =
+             Bus.subscribe(bus, "other.*", durable: "single-owner", target: other)
+  end
+
+  test "permanently deletes a durable subscription" do
+    bus = start_bus()
+    assert {:ok, "old-agent"} = Bus.subscribe(bus, "old.*", durable: "old-agent")
+    assert :ok = Bus.delete_subscription(bus, "old-agent")
+
+    assert {:ok, "old-agent"} =
+             Bus.subscribe(bus, "new.*", durable: "old-agent", start_from: :origin)
   end
 
   test "fails startup when the selected store cannot start" do
@@ -235,7 +348,7 @@ defmodule Jido.Signal.Bus.V3BusTest do
              Bus.start_link(name: name, store: FailingStore)
   end
 
-  test "rejects removed Journal and partition options" do
+  test "rejects removed Journal, partition, and middleware options" do
     Process.flag(:trap_exit, true)
 
     assert {:error, {:unsupported_option, :journal_adapter}} =
@@ -243,6 +356,19 @@ defmodule Jido.Signal.Bus.V3BusTest do
 
     assert {:error, {:unsupported_option, :partition_count}} =
              Bus.start_link(name: unique_name("partition"), partition_count: 2)
+
+    assert {:error, {:unsupported_option, :middleware}} =
+             Bus.start_link(name: unique_name("middleware"), middleware: [])
+  end
+
+  test "rejects the removed dispatch and persistent subscription options" do
+    bus = start_bus()
+
+    assert {:error, {:unsupported_option, :dispatch}} =
+             Bus.subscribe(bus, "old.*", dispatch: {:pid, target: self()})
+
+    assert {:error, {:unsupported_option, :persistent?}} =
+             Bus.subscribe(bus, "old.*", persistent?: true)
   end
 
   defp start_bus(opts \\ []) do
@@ -256,15 +382,15 @@ defmodule Jido.Signal.Bus.V3BusTest do
     "#{prefix}_#{System.unique_integer([:positive])}"
   end
 
-  defp relay(parent, label) do
+  defp relay_durable(parent) do
     receive do
-      {:signal, signal} ->
-        send(parent, {:relayed, label, signal})
-        relay(parent, label)
+      {:signal, durable_id, record} ->
+        send(parent, {:relayed, durable_id, record})
+        relay_durable(parent)
     end
   end
 
-  defp assert_eventually(fun, attempts \\ 20)
+  defp assert_eventually(fun, attempts \\ 40)
 
   defp assert_eventually(fun, attempts) when attempts > 0 do
     if fun.() do

@@ -7,18 +7,15 @@ defmodule Jido.Signal.InstanceTest do
   describe "internal name resolution" do
     test "returns default when no jido option" do
       assert Names.registry([]) == Jido.Signal.Registry
-      assert Names.task_supervisor([]) == Jido.Signal.TaskSupervisor
       assert Names.supervisor([]) == Jido.Signal.Supervisor
     end
 
     test "returns default when jido is nil" do
       assert Names.registry(jido: nil) == Jido.Signal.Registry
-      assert Names.task_supervisor(jido: nil) == Jido.Signal.TaskSupervisor
     end
 
     test "scopes names when jido instance provided" do
       assert Names.registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Registry
-      assert Names.task_supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.TaskSupervisor
       assert Names.supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.Supervisor
     end
 
@@ -36,10 +33,9 @@ defmodule Jido.Signal.InstanceTest do
 
       instance_opts = [jido: instance]
 
-      # Verify all child processes are running
+      # Verify the supervisor and Registry are running.
       assert Process.whereis(Names.supervisor(instance_opts)) == pid
       assert Process.whereis(Names.registry(instance_opts)) |> is_pid()
-      assert Process.whereis(Names.task_supervisor(instance_opts)) |> is_pid()
 
       # Cleanup
       Instance.stop(instance)

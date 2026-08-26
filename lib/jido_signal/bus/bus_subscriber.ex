@@ -6,14 +6,12 @@ defmodule Jido.Signal.Bus.Subscriber do
             %{
               id: Zoi.string(),
               path: Zoi.string(),
-              dispatch: Zoi.any(),
-              persistent?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
-              disconnected?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
-              client_pid: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
+              durable?: Zoi.default(Zoi.boolean(), false) |> Zoi.optional(),
+              target: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
               monitor_ref: Zoi.any() |> Zoi.nullable() |> Zoi.optional(),
-              created_at: Zoi.any(),
-              pending: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
-              last_seen_cursor: Zoi.default(Zoi.integer(), 0) |> Zoi.optional()
+              cursor: Zoi.integer() |> Zoi.min(0),
+              in_flight: Zoi.integer() |> Zoi.min(1) |> Zoi.nullable() |> Zoi.optional(),
+              created_at: Zoi.any()
             }
           )
 

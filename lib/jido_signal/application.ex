@@ -5,8 +5,7 @@ defmodule Jido.Signal.Application do
   @doc """
   Starts the Jido Signal application.
 
-  Initializes the supervision tree with the Registry for named Buses and a Task
-  Supervisor for Bus middleware callbacks.
+  Initializes the Registry for named Buses.
 
   ## Parameters
 
@@ -19,11 +18,7 @@ defmodule Jido.Signal.Application do
   """
   @spec start(Application.start_type(), term()) :: {:ok, pid()} | {:error, term()}
   def start(_type, _args) do
-    children = [
-      {Registry, keys: :unique, name: Jido.Signal.Registry},
-      # Middleware callback Task Supervisor
-      {Task.Supervisor, name: Jido.Signal.TaskSupervisor}
-    ]
+    children = [{Registry, keys: :unique, name: Jido.Signal.Registry}]
 
     opts = [strategy: :one_for_one, name: Jido.Signal.Supervisor]
     Supervisor.start_link(children, opts)

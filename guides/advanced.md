@@ -114,26 +114,28 @@ case Task.yield(task, 5000) do
 end
 ```
 
-### Persistent Subscriptions and DLQ
+### Durable Subscriptions
 
-Persistent subscriptions provide:
+Durable subscriptions provide:
 
-- **Continuous checkpoints**: An out-of-order acknowledgement cannot skip an older record.
-- **Retained reconnect**: The Bus sends unacknowledged retained records again.
-- **Dead Letter Queue**: A failed delivery is kept for inspection and manual redrive.
+- **Stable identity**: A replacement process attaches with the same string ID.
+- **One record in flight**: The next record waits for a cursor acknowledgement.
+- **At-least-once delivery**: An unacknowledged record is sent again.
 
 ```elixir
-{:ok, sub_id} = Bus.subscribe(:my_bus, "critical.*",
-  persistent?: true,
-  start_from: :current,
-  dispatch: {:pid, target: self()}
-)
+{:ok, "critical-agent"} =
+  Bus.subscribe(:my_bus, "critical.*", durable: "critical-agent")
 
-{:ok, [_recorded]} = Bus.publish(:my_bus, [signal])
-:ok = Bus.ack(:my_bus, sub_id, signal.id)
+{:ok, [_published]} = Bus.publish(:my_bus, [signal])
+
+receive do
+  {:signal, "critical-agent", recorded} ->
+    :ok = handle_signal(recorded.signal)
+    :ok = Bus.ack(:my_bus, "critical-agent", recorded.cursor)
+end
 ```
 
-See [Event Bus guide](event-bus.md) for DLQ management APIs.
+See the [Event Bus guide](event-bus.md) for detach, reattach, and Store rules.
 
 Direct Dispatch does not own circuit breakers. Apply this policy in the calling
 application. The Bus also does not run retries or circuit breakers.
@@ -165,7 +167,7 @@ defmodule MyApp.SignalTest do
 
   test "isolated bus operations", %{instance: instance} do
     {:ok, bus} = Bus.start_link(name: :test_bus, jido: instance)
-    {:ok, _} = Bus.subscribe(bus, "test.*", dispatch: {:pid, target: self()})
+    {:ok, _} = Bus.subscribe(bus, "test.*")
     
     signal = Jido.Signal.new!("test.event", %{value: 42})
     {:ok, _} = Bus.publish(bus, [signal])
@@ -302,18 +304,16 @@ required.
 
 ### Bus Subscription Optimization
 
-Optimize bus subscriptions for high-throughput scenarios:
+Use specific Bus paths for high-throughput scenarios:
 
 ```elixir
 # Use specific patterns instead of wildcards
-{:ok, _} = Bus.subscribe(bus, "user.profile.*",
-  dispatch: {:pid, target: self(), delivery_mode: :async}
-)  # Better
+{:ok, _} = Bus.subscribe(bus, "user.profile.*")
 
 # Batch subscription management
 patterns = ["user.created", "user.updated", "user.deleted"]
 subscriptions = Enum.map(patterns, fn pattern ->
-  Bus.subscribe(bus, pattern, dispatch: {:pid, target: self(), delivery_mode: :async})
+  Bus.subscribe(bus, pattern)
 end)
 ```
 

@@ -9,7 +9,7 @@ Enum.each(
 )
 
 # Keep default logging volume low so async stress tests don't overload Logger
-# and introduce timing-dependent failures in middleware timeouts.
+# and introduce timing-dependent failures in process tests.
 #
 # Tests that assert on debug output should use `capture_log/2` with `level: :debug`
 # (or configure Logger level locally) rather than requiring a global debug level.

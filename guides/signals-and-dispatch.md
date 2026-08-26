@@ -283,5 +283,5 @@ policies at the application boundary where ownership and failure handling are cl
 
 ## Next Steps
 
-- [Event Bus](event-bus.md) - Publish/subscribe messaging with middleware hooks and persistent subscriptions
+- [Event Bus](event-bus.md) - Publish/subscribe messaging with durable cursors and replay
 - [Signal Router](signal-router.md) - Deterministic routing with pattern matching

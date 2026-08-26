@@ -78,8 +78,8 @@ The v3 writer uses string keys, omits nil optional fields, and flattens valid
 CloudEvents context attributes. It does not add a Jido-specific wire marker.
 The reader accepts legacy `jido_schema_version` 1 and 2 payloads.
 
-The removed `jido_dispatch` field is not Signal metadata. Move dispatch targets
-to Bus subscriptions or pass them directly to `Jido.Signal.Dispatch`.
+The removed `jido_dispatch` field is not Signal metadata. Use `target: pid` for
+a local Bus subscription or pass adapter targets to `Jido.Signal.Dispatch`.
 
 You can use the Serialization entry module:
 
@@ -225,15 +225,16 @@ application APIs.
 
 `Jido.Signal.Instance` validates its options with Zoi. Use a fixed module or
 atom from application code as its name. Do not make instance atoms from tenant
-IDs or other runtime values. Instance-scoped Bus middleware runs under the
-instance Task Supervisor.
+IDs or other runtime values. An instance now starts only its supervisor and
+Registry. The middleware Task Supervisor is removed.
 
 ### Replay and Storage
 
 Replay stays behind the Bus-owned Store boundary:
 
 ```elixir
-{:ok, records} = Jido.Signal.Bus.replay(:events, "user.**", 0, batch_size: 100)
+{:ok, records} =
+  Jido.Signal.Bus.replay(:events, "user.**", after: 0, limit: 100)
 ```
 
 The default memory Store has a bounded log and does not survive a Bus restart.
@@ -248,39 +249,56 @@ Jido.Signal.Bus.start_link(
 )
 ```
 
-Store records use `"format_version" => 1`. Store startup failures stop Bus
+Store records and durable subscription definitions use `"format_version" =>
+1`. The Store also owns the latest cursor. Store startup failures stop Bus
 startup. The Bus does not silently use memory storage.
 
-### Persistent Subscriptions and Acknowledgements
+### Durable Subscriptions and Acknowledgements
 
-Persistent subscriptions stay, with a smaller contract:
+Replace `persistent?` with a stable durable string ID:
 
 ```elixir
-{:ok, subscription_id} =
+{:ok, "payments-agent"} =
   Jido.Signal.Bus.subscribe(:events, "payment.*",
-    persistent?: true,
-    start_from: :current,
-    dispatch: {:pid, target: self()}
+    durable: "payments-agent"
   )
 
-{:ok, [recorded]} = Jido.Signal.Bus.publish(:events, [payment_signal])
-:ok = Jido.Signal.Bus.ack(:events, subscription_id, recorded.id)
+{:ok, [_published]} = Jido.Signal.Bus.publish(:events, [payment_signal])
+
+receive do
+  {:signal, "payments-agent", recorded} ->
+    :ok = handle_payment(recorded.signal)
+    :ok = Jido.Signal.Bus.ack(:events, "payments-agent", recorded.cursor)
+end
 ```
 
-Acknowledge the `RecordedSignal.id` when the caller has it. A live subscriber
-can acknowledge the delivered Signal envelope ID for v2 compatibility. The Bus
-does not advance a checkpoint past an older unacknowledged record. Reconnect
-gives at-least-once delivery, so consumers must handle duplicates.
+A durable subscription has one active process and one record in flight. Only
+that process can acknowledge the current cursor. The Bus stores the record
+before delivery. If the process exits before acknowledgement, call
+`subscribe/3` from the replacement process with the same durable ID and path.
+The Bus sends the record again, so handlers must be idempotent.
 
-The v2 options `max_in_flight`, `max_pending`, `max_attempts`, and
-`retry_interval` have no v3 effect and must be removed. The Bus has no internal
-retry or backpressure worker.
+`unsubscribe/3` detaches a durable target but keeps its definition.
+`delete_subscription/2` permanently removes the definition and cursor.
 
-### DLQ
+The old `persistent?`, `persistent`, `reconnect/3`, record-ID and Signal-ID
+acknowledgement, `max_in_flight`, `max_pending`, `max_attempts`, and
+`retry_interval` contracts are removed.
 
-A failed persistent delivery moves directly to the Bus DLQ. Use
-`dlq_entries/2`, `redrive_dlq/3`, and `clear_dlq/2`. A redrive is explicit. The
-Bus does not run retry waves.
+### Bus Targets and Runtime Policy
+
+Bus subscriptions now accept only a local process target:
+
+```elixir
+Jido.Signal.Bus.subscribe(:events, "user.*", target: handler_pid)
+```
+
+Subscription `dispatch:` targets and multi-target lists are removed. Use
+`Jido.Signal.Dispatch` directly for HTTP, PubSub, Logger, or other adapters.
+
+Bus middleware, retry timers, negative acknowledgement, dead-letter queues,
+leases, and competing-consumer policy are removed. The application that owns
+the work must provide these policies.
 
 ### Removed Bus Features
 
@@ -289,11 +307,13 @@ Remove these startup options and calls:
 - `journal_adapter`, `journal_adapter_opts`, and `journal_pid`;
 - `partition_count` and partition rate-limit options;
 - snapshot create, read, list, and delete functions;
+- Bus middleware and its Task Supervisor;
+- `dlq_entries/2`, `redrive_dlq/3`, and `clear_dlq/2`;
 - public Bus state and persistent worker access.
 
 Old Journal and partition startup options return
 `{:unsupported_option, option}`. Use separate Bus processes for workload
-isolation. Use `replay/4` instead of snapshots.
+isolation. Use cursor-based `replay/3` instead of snapshots.
 
 ## Replace the Standalone Journal
 
@@ -309,7 +329,8 @@ data to an application-owned database before you upgrade. Keep Signal IDs and
 the old cause and conversation fields as explicit columns or records in that
 database.
 
-Use a custom Bus Store only for Bus replay records, checkpoints, and DLQ data.
+Use a custom Bus Store only for Bus replay records, the latest cursor, and
+durable subscription definitions.
 Do not use the Bus Store as a general causal graph API.
 
 ## Replace the Pure Registry API
@@ -333,7 +354,7 @@ events directly:
 ```elixir
 :telemetry.attach(
   "my-test-handler",
-  [:jido, :signal, :bus, :after_dispatch],
+  [:jido, :signal, :bus, :deliver],
   fn event, measurements, metadata, test_pid ->
     send(test_pid, {event, measurements, metadata})
   end,
@@ -351,5 +372,5 @@ Before deployment:
 2. Remove all NimbleOptions, Fuse, Journal, partition, and snapshot references.
 3. Test exact, `*`, and `**` route precedence.
 4. Test each Dispatch tuple that your application uses.
-5. Test Bus target exit, reconnect, replay bound, acknowledgement order, and DLQ.
+5. Test Bus target exit, durable reattachment, replay bounds, and cursor acknowledgement order.
 6. Confirm that a selected durable Store fails startup clearly when unavailable.

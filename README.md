@@ -65,10 +65,10 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 
 ### **High-Performance Signal Bus**
 - In-memory GenServer-based pub/sub system
-- Persistent subscriptions with continuous checkpoints and a Dead Letter Queue (DLQ)
-- Middleware pipeline for cross-cutting concerns with timeout protection
+- Stable durable subscriptions with one-record cursor acknowledgement
+- Stored-before-send, ordered, at-least-once durable delivery
 - Bounded replay through a Bus-owned Store boundary
-- Application-owned retry, rate-limit, and workload-isolation policy
+- Application-owned retry, dead-letter, rate-limit, and workload-isolation policy
 - Instance isolation for fixed application domains
 
 ### **Advanced Routing Engine**
@@ -152,7 +152,7 @@ alias Jido.Signal
 
 # Start subscriber and subscribe to user events
 {:ok, sub_pid} = MySubscriber.start_link([])
-{:ok, _sub_id} = Bus.subscribe(:my_app_bus, "user.*", dispatch: {:pid, target: sub_pid})
+{:ok, _sub_id} = Bus.subscribe(:my_app_bus, "user.*", target: sub_pid)
 
 # Create and publish a signal
 # Preferred: positional constructor (type, data, attrs)
@@ -314,8 +314,8 @@ dispatch_configs = [
 ```
 
 Dispatch is ordered and synchronous. Start a Task in the calling application if
-delivery must run asynchronously. Retry and circuit-breaking policy also belongs
-to the calling application or the Bus.
+delivery must run asynchronously. Retry and circuit-breaking policy belongs to
+the calling application.
 
 The HTTP adapter uses OTP `:httpc`; it needs no external HTTP client. It sends
 structured JSON with `application/cloudevents+json`, does not follow redirects,
@@ -332,60 +332,35 @@ custom adapter for untrusted targets or a strict response size limit.
 
 ## Advanced Features
 
-### Persistent Subscriptions
+### Durable Subscriptions
 
-Track signal acknowledgments for reliable processing:
+Keep accepted Signals while an agent process is unavailable:
 
 ```elixir
-# Create a persistent subscription
-{:ok, sub_id} = Bus.subscribe(:my_app_bus, "payment.*",
-  persistent?: true,
-  start_from: :current,
-  dispatch: {:pid, target: self()},
-)
+# Create a durable subscription with a stable ID.
+{:ok, "payments-agent"} =
+  Bus.subscribe(:my_app_bus, "payment.*", durable: "payments-agent")
 
 # Receive and acknowledge signals
 {:ok, [_recorded]} = Bus.publish(:my_app_bus, [payment_signal])
 
 receive do
-  {:signal, ^payment_signal} ->
-    process_payment(payment_signal)
-
-    # A live consumer can acknowledge the delivered Signal ID.
-    Bus.ack(:my_app_bus, sub_id, payment_signal.id)
+  {:signal, "payments-agent", recorded} ->
+    process_payment(recorded.signal)
+    Bus.ack(:my_app_bus, "payments-agent", recorded.cursor)
 end
 
-# Reconnect a replacement target. Unacknowledged retained records are sent again.
-{:ok, checkpoint} = Bus.reconnect(:my_app_bus, sub_id, replacement_pid)
+# Attach a replacement process with the same ID and path.
+{:ok, "payments-agent"} =
+  Bus.subscribe(:my_app_bus, "payment.*",
+    durable: "payments-agent",
+    target: replacement_pid
+  )
 ```
 
-The Bus does not retry delivery. A failed persistent delivery moves directly to
-the DLQ. The consumer must be able to process duplicate delivery.
-
-### Middleware Pipeline
-
-Add cross-cutting concerns with middleware:
-
-```elixir
-middleware = [
-  # Built-in logging middleware
-  {Jido.Signal.Bus.Middleware.Logger, [
-    level: :info,
-    include_signal_data: true
-  ]},
-  
-  # Custom middleware
-  {MyApp.AuthMiddleware, []},
-  {MyApp.MetricsMiddleware, []}
-]
-
-{:ok, _pid} = Jido.Signal.Bus.start_link(
-  name: :my_bus, 
-  middleware: middleware
-)
-```
-
-Middleware callbacks (`before_publish`, `after_publish`, `before_dispatch`, `after_dispatch`) use timeout protection (default 100ms, configurable with `middleware_timeout_ms`). A `before_publish` timeout fails publication. A later callback timeout does not undo an already stored Signal. See `Jido.Signal.Bus.Middleware.Logger` for an example.
+The Bus sends one durable record at a time. If the target exits before it
+acknowledges the cursor, the replacement receives the record again. The Bus has
+no retry timer or dead-letter queue. The application owns these policies.
 
 ### Observability
 
@@ -422,13 +397,11 @@ Jido.Signal.Error.to_map(error)
 
 ### Retained Replay
 
-Read the bounded Bus log:
+Read the bounded Bus log by cursor:
 
 ```elixir
-one_hour_ago = System.system_time(:millisecond) - 3_600_000
-
 {:ok, records} =
-  Bus.replay(:my_app_bus, "user.*", one_hour_ago, batch_size: 100)
+  Bus.replay(:my_app_bus, "user.*", after: 100, limit: 100)
 ```
 
 The default memory Store keeps the newest 100,000 records and does not survive a
@@ -448,7 +421,7 @@ durability:
 For fixed application domains or tests, create isolated signal infrastructure:
 
 ```elixir
-# Start an isolated instance with its own Registry and middleware TaskSupervisor.
+# Start an isolated instance with its own Registry.
 {:ok, _} = Jido.Signal.Instance.start_link(name: MyApp.Jido)
 
 # Start buses scoped to the instance
@@ -519,7 +492,7 @@ workflow_signals = [
 
 - **[Getting Started Guide](guides/getting-started.md)** - Quick setup and first signal
 - **[Signals & Dispatch](guides/signals-and-dispatch.md)** - Signal structure and dispatch adapters
-- **[Event Bus](guides/event-bus.md)** - Pub/sub messaging with middleware
+- **[Event Bus](guides/event-bus.md)** - Pub/sub, durable cursors, replay, and Store adapters
 - **[Signal Router](guides/signal-router.md)** - Pattern matching and routing
 - **[Signal Extensions](guides/signal-extensions.md)** - Custom Signal metadata extensions
 - **[Serialization](guides/serialization.md)** - Canonical Signal maps, JSON, and Erlang Term Format

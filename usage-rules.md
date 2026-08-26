@@ -23,20 +23,22 @@ Model domain events as validated signals and route them predictably through disp
 - Use Router management functions. Do not inspect Router implementation fields.
 - For fanout workflows, route through `Jido.Signal.Bus`; for single targets, use direct dispatch.
 - Use the HTTP adapter only for structured CloudEvents JSON `POST` delivery. Use a custom adapter for strict single-attempt delivery, request signing, or transport policy.
-- For durable consumers, select a durable Bus Store and use explicit acknowledgements.
-- Acknowledge `RecordedSignal.id`, not the Signal envelope ID.
+- Give each durable consumer a stable string ID and one active process.
+- Acknowledge the delivered `RecordedSignal.cursor`, not either record ID.
+- Expect at-least-once delivery and make durable handlers idempotent.
 - Keep retry, concurrency, and rate-limit policy in the calling application.
 - Keep domain fields in Signal `data`, not in context attributes.
 - Use fixed application modules or atoms as `Jido.Signal.Instance` names. Never create them from runtime tenant data.
 
 ## QA Patterns
 - Test route precedence and wildcard matching (`exact`, `*`, `**`).
-- Test subscriber lifecycle, continuous checkpoints, replay bounds, and DLQ redrive.
+- Test target exit, durable reattachment, ordered acknowledgement, and replay bounds.
 
 ## Avoid
 - Generic type names (`event`, `message`) that hide domain intent.
 - Ad-hoc process messaging where signal routing/observability is required.
 - Implicit persistence/replay assumptions.
+- Bus middleware, subscription dispatch targets, retry timers, and dead-letter policy.
 - Journal, partition, and snapshot options removed in v3.
 - Schema-backed Signal extension modules and Signal-owned dispatch metadata.
 - General term serializers, dynamic type providers, and MessagePack.

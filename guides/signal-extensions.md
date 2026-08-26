@@ -125,9 +125,7 @@ Select a dispatch target at the delivery boundary:
 :ok = Jido.Signal.Dispatch.dispatch(signal, {:logger, level: :info})
 
 {:ok, subscription_id} =
-  Jido.Signal.Bus.subscribe(:events, "user.*",
-    dispatch: {:pid, target: handler_pid}
-  )
+  Jido.Signal.Bus.subscribe(:events, "user.*", target: handler_pid)
 ```
 
 This keeps transport state out of the core event data structure.

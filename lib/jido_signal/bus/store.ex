@@ -1,35 +1,35 @@
 defmodule Jido.Signal.Bus.Store do
   @moduledoc """
-  Defines the storage boundary that the Signal Bus owns.
+  Defines the small storage boundary that the Signal Bus owns.
 
-  A store keeps the bounded replay log, persistent-subscription checkpoints,
-  and dead-letter entries. The Bus passes the returned store state to the next
-  callback. A store can use this state directly or keep an external resource in
-  it.
+  A store keeps ordered Bus records and durable subscription definitions. A
+  durable definition contains its stable ID, path, cursor, creation time, and
+  `format_version: 1`. Records also use `format_version: 1`.
 
-  Stored records are maps with `format_version: 1`. A custom store must keep
-  these maps unchanged so that a later Bus version can migrate them.
+  `list_subscriptions/1` must return definitions in creation order. `append/2`
+  must accept all records or none. The Bus stores the returned state and passes
+  it to the next callback.
+
+  Only `Jido.Signal.Bus.Store.Memory` is included. A custom adapter can keep an
+  external resource in its state when records must survive a Bus restart.
   """
 
   @type state :: term()
-  @type record :: map()
-  @type checkpoint_key :: String.t()
+  @type record :: %{required(String.t()) => term()}
+  @type subscription :: %{required(String.t()) => term()}
   @type subscription_id :: String.t()
 
   @callback init(keyword()) :: {:ok, state()} | {:error, term()}
   @callback append([record()], state()) :: {:ok, state()} | {:error, term()}
+  @doc """
+  Reads records after an exclusive `:after_cursor`.
+
+  The optional `:path` filters Signal types. The optional `:limit` is a positive
+  integer or `:infinity`.
+  """
   @callback read(keyword(), state()) :: {:ok, [record()]} | {:error, term()}
-
-  @callback get_checkpoint(checkpoint_key(), state()) ::
-              {:ok, non_neg_integer() | nil} | {:error, term()}
-  @callback put_checkpoint(checkpoint_key(), non_neg_integer(), state()) ::
-              {:ok, state()} | {:error, term()}
-  @callback delete_checkpoint(checkpoint_key(), state()) :: {:ok, state()} | {:error, term()}
-
-  @callback put_dlq(subscription_id(), record(), state()) ::
-              {:ok, state()} | {:error, term()}
-  @callback list_dlq(subscription_id(), state()) :: {:ok, [record()]} | {:error, term()}
-  @callback delete_dlq(subscription_id(), [String.t()], state()) ::
-              {:ok, state()} | {:error, term()}
-  @callback clear_dlq(subscription_id(), state()) :: {:ok, state()} | {:error, term()}
+  @callback latest_cursor(state()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @callback list_subscriptions(state()) :: {:ok, [subscription()]} | {:error, term()}
+  @callback put_subscription(subscription(), state()) :: {:ok, state()} | {:error, term()}
+  @callback delete_subscription(subscription_id(), state()) :: {:ok, state()} | {:error, term()}
 end
