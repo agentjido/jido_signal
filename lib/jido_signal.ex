@@ -44,7 +44,7 @@ defmodule Jido.Signal do
 
   alias Jido.Signal.Context
   alias Jido.Signal.ID
-  alias Jido.Signal.MapCodec
+  alias Jido.Signal.Codec
   alias Jido.Signal.Serialization
 
   @wire_version 3
@@ -105,7 +105,7 @@ defmodule Jido.Signal do
     |> stringify_keys()
     |> Map.put_new("id", ID.generate!())
     |> Map.put_new("specversion", "1.0")
-    |> MapCodec.from_map()
+    |> Codec.from_map()
   end
 
   def new(_attrs), do: {:error, "parse error: expected a map or keyword list"}
@@ -147,11 +147,11 @@ defmodule Jido.Signal do
 
   @doc "Parses a complete CloudEvents structured-mode map."
   @spec from_map(map()) :: {:ok, t()} | {:error, String.t()}
-  defdelegate from_map(map), to: MapCodec
+  defdelegate from_map(map), to: Codec
 
   @doc "Returns the canonical CloudEvents structured-mode map."
   @spec to_map(t()) :: map()
-  defdelegate to_map(signal), to: MapCodec
+  defdelegate to_map(signal), to: Codec
 
   @doc "Adds a CloudEvents extension context attribute."
   @spec put_context(t(), atom() | String.t(), Context.value()) ::

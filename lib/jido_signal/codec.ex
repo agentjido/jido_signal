@@ -1,4 +1,4 @@
-defmodule Jido.Signal.MapCodec do
+defmodule Jido.Signal.Codec do
   @moduledoc false
 
   alias Jido.Signal
