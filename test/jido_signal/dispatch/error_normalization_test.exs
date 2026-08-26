@@ -192,6 +192,16 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     refute error_text =~ "adapter-secret"
   end
 
+  test "invalid dispatch configuration errors contain only the input shape" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+
+    assert {:error, %Error.InvalidInputError{} = error} =
+             Dispatch.validate_opts(%{authorization: "Bearer config-secret"})
+
+    assert error.value == %{type: :map, size: 1}
+    refute inspect(error) =~ "config-secret"
+  end
+
   test "dispatch leaves raw adapter reasons unchanged by default" do
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
     config = {:named, [target: {:name, :nonexistent_process}, delivery_mode: :async]}
@@ -207,12 +217,35 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert {:error, %Error.DispatchError{}} = Dispatch.dispatch(signal, config)
   end
 
-  test "adapter crashes still escape the dispatch boundary" do
+  test "adapter crashes emit safe telemetry and still escape the dispatch boundary" do
     Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+
+    test_pid = self()
+    handler_id = {__MODULE__, :adapter_crash, test_pid}
+    Process.put(:test_pid, test_pid)
+
+    :telemetry.attach(
+      handler_id,
+      [:jido, :dispatch, :exception],
+      &__MODULE__.handle_telemetry_event/4,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
 
     assert_raise RuntimeError, "adapter crashed", fn ->
       Dispatch.dispatch(signal, {CrashingAdapter, []})
     end
+
+    assert_receive {:telemetry, [:jido, :dispatch, :exception], measurements, metadata}
+    assert is_integer(measurements.latency_ms)
+    assert metadata.outcome == :raised
+    assert metadata.success? == false
+    assert metadata.error_type == :dispatch_error
+    assert metadata.retryable? == false
+    assert metadata.exception_kind == :error
+    assert metadata.exception_module == RuntimeError
+    refute inspect(metadata) =~ "adapter crashed"
   end
 end

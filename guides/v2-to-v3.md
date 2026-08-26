@@ -190,6 +190,11 @@ custom adapter when strict single-attempt delivery is required. The old
 proprietary Webhook adapter is also removed; use a custom adapter when an
 endpoint needs request signing.
 
+Treat HTTP URLs as trusted application configuration. The built-in adapter
+permits private network targets and does not protect against DNS rebinding.
+OTP 27 `:httpc` has no response body size limit for these requests. Use a
+custom adapter for untrusted targets or a strict response size limit.
+
 ## Update Bus Configuration
 
 The common Bus boundary stays:

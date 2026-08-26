@@ -144,8 +144,29 @@ defmodule Jido.Signal.Dispatch do
     metadata = dispatch_telemetry_metadata(signal, target)
     Telemetry.execute([:jido, :dispatch, :start], %{}, metadata, signal)
 
-    result = fun.()
-    measurements = %{latency_ms: System.monotonic_time(:millisecond) - start_time}
+    result =
+      try do
+        fun.()
+      catch
+        kind, reason ->
+          Telemetry.execute(
+            [:jido, :dispatch, :exception],
+            dispatch_latency(start_time),
+            Map.merge(metadata, %{
+              outcome: :raised,
+              success?: false,
+              error_type: :dispatch_error,
+              retryable?: false,
+              exception_kind: kind,
+              exception_module: exception_module(reason)
+            }),
+            signal
+          )
+
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+
+    measurements = dispatch_latency(start_time)
 
     case result do
       :ok ->
@@ -174,6 +195,15 @@ defmodule Jido.Signal.Dispatch do
 
     result
   end
+
+  defp dispatch_latency(start_time) do
+    %{latency_ms: System.monotonic_time(:millisecond) - start_time}
+  end
+
+  defp exception_module(%{__exception__: true, __struct__: module}) when is_atom(module),
+    do: module
+
+  defp exception_module(_reason), do: :unknown
 
   defp dispatch_telemetry_metadata(signal, target) do
     %{
@@ -266,13 +296,29 @@ defmodule Jido.Signal.Dispatch do
       {:error,
        Error.validation_error("Invalid dispatch configuration", %{
          field: "dispatch_config",
-         value: invalid_config,
+         value: dispatch_config_shape(invalid_config),
          reason: :invalid_dispatch_config
        })}
     else
       {:error, :invalid_dispatch_config}
     end
   end
+
+  defp dispatch_config_shape(value) when is_map(value),
+    do: %{type: :map, size: map_size(value)}
+
+  defp dispatch_config_shape(value) when is_list(value),
+    do: %{type: :list, count: length(value)}
+
+  defp dispatch_config_shape(value) when is_tuple(value),
+    do: %{type: :tuple, size: tuple_size(value)}
+
+  defp dispatch_config_shape(value) when is_binary(value),
+    do: %{type: :binary, bytes: byte_size(value)}
+
+  defp dispatch_config_shape(value) when is_atom(value), do: %{type: :atom}
+  defp dispatch_config_shape(value) when is_number(value), do: %{type: :number}
+  defp dispatch_config_shape(_value), do: %{type: :other}
 
   defp normalize_error(reason, adapter, config) do
     if should_normalize_errors?() do

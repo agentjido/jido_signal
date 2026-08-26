@@ -5,8 +5,9 @@ defmodule Jido.Signal.Serialization do
   JSON is the default format. Use `format: :erlang_term` for trusted
   Erlang/Elixir systems.
 
-  The maximum input size is 10 MB. Set `:max_payload_bytes` for one call, or
-  configure `:max_payload_bytes` for the `:jido_signal` application.
+  The maximum encoded or decoded payload size is 10 MB. Set
+  `:max_payload_bytes` for one call, or configure `:max_payload_bytes` for the
+  `:jido_signal` application.
   """
 
   alias Jido.Signal
@@ -22,8 +23,10 @@ defmodule Jido.Signal.Serialization do
 
   def serialize(signal_or_signals, opts) when is_list(opts) do
     with {:ok, format} <- format(opts),
-         {:ok, wire_data} <- to_wire_data(signal_or_signals) do
-      encode(wire_data, format)
+         {:ok, wire_data} <- to_wire_data(signal_or_signals),
+         {:ok, binary} <- encode(wire_data, format),
+         :ok <- check_payload_size(binary, opts) do
+      {:ok, binary}
     end
   rescue
     exception -> {:error, {:serialization_failed, Exception.message(exception)}}

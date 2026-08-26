@@ -98,11 +98,13 @@ Use the known custom Signal module to validate data after routing:
 This keeps module selection explicit. It also keeps Zoi as the only custom data
 validation path.
 
-## Input Size
+## Payload Size
 
-The default maximum input size is 10 MB. Set a limit for one call:
+The default maximum encoded or decoded payload size is 10 MB. Set a limit for
+one call:
 
 ```elixir
+Jido.Signal.serialize(signal, max_payload_bytes: 1_000_000)
 Jido.Signal.deserialize(binary, max_payload_bytes: 1_000_000)
 ```
 
@@ -112,7 +114,7 @@ Or configure the application limit:
 config :jido_signal, max_payload_bytes: 1_000_000
 ```
 
-The limit applies before JSON or Erlang term decoding.
+The limit applies after encoding and before decoding.
 
 ## Errors
 

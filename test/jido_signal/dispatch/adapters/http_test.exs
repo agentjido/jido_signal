@@ -31,17 +31,41 @@ defmodule Jido.Signal.Dispatch.HttpTest do
   end
 
   test "rejects unsafe URLs and headers" do
-    assert {:error, _reason} = Http.validate_opts(url: "https://user:pass@example.com")
-    assert {:error, _reason} = Http.validate_opts(url: "https://example.com/a b")
+    for url <- [
+          "https://user:pass@example.com",
+          "https://example.com/a b",
+          "https://example.com/events#private",
+          "https://example.com:0/events",
+          "https://example.com/über",
+          <<"https://example.com/", 255>>,
+          "https://example.com/" <> String.duplicate("a", 8_193)
+        ] do
+      assert {:error, _reason} = Http.validate_opts(url: url)
+    end
 
     for header <- [
           {"x-test", "bad\nvalue"},
           {"content-type", "application/json"},
+          {"connection", "keep-alive"},
+          {"x-test", <<"bad", 255>>},
+          {"x-test", String.duplicate("a", 8_193)},
           {"ce-type", "forged.event"}
         ] do
       assert {:error, _reason} =
                Http.validate_opts(url: "https://example.com", headers: [header])
     end
+
+    assert {:error, _reason} =
+             Http.validate_opts(
+               url: "https://example.com",
+               headers: [{"authorization", "one"}, {"Authorization", "two"}]
+             )
+
+    too_many_headers =
+      Enum.map(1..33, fn number -> {"x-test-#{number}", Integer.to_string(number)} end)
+
+    assert {:error, _reason} =
+             Http.validate_opts(url: "https://example.com", headers: too_many_headers)
   end
 
   test "posts canonical structured CloudEvents JSON through OTP httpc" do

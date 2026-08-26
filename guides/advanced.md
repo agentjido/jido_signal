@@ -291,6 +291,12 @@ Use a custom Dispatch adapter when the application needs a dedicated connection
 pool, custom transport policy, or response processing. The application owns
 that adapter and its process life cycle.
 
+The built-in adapter accepts only trusted target configuration. It permits
+private network targets and does not protect against DNS rebinding. OTP 27
+`:httpc` has no response body size limit for these requests. Use a custom
+adapter when the target is not trusted or a strict response size limit is
+required.
+
 ### Bus Subscription Optimization
 
 Optimize bus subscriptions for high-throughput scenarios:

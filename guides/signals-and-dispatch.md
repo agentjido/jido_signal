@@ -137,6 +137,11 @@ does not add a retry loop. OTP `:httpc` can honor `Retry-After` on a 503
 response, and OTP 27 has no option to disable that client behavior. Use a
 custom adapter when strict single-attempt delivery is required.
 
+Treat each URL as trusted application configuration. The built-in adapter
+permits private network targets and does not protect against DNS rebinding.
+OTP 27 `:httpc` has no response body size limit for these requests. Use a
+custom adapter for untrusted targets or a strict response size limit.
+
 The HTTP target accepts only `url`, `headers`, and `timeout`. Its content type,
 TLS verification, and HTTP method cannot be changed. Use a custom Dispatch
 adapter when an integration needs request signing, another method, custom TLS

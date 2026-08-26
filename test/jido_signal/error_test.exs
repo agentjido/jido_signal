@@ -38,5 +38,18 @@ defmodule Jido.Signal.ErrorTest do
       assert Error.retryable?(Error.timeout_error("timed out", %{timeout: 1000}))
       refute Error.retryable?(Error.validation_error("bad input", %{field: :type}))
     end
+
+    test "classifies HTTP status and transport failures" do
+      assert Error.retryable?(dispatch_error({:http_status, 503}))
+      assert Error.retryable?(dispatch_error({:http_status, 429}))
+      assert Error.retryable?(dispatch_error({:transport, {:failed_connect, :econnrefused}}))
+
+      refute Error.retryable?(dispatch_error({:http_status, 400}))
+      refute Error.retryable?(dispatch_error({:transport, :certificate_expired}))
+    end
+  end
+
+  defp dispatch_error(reason) do
+    Error.dispatch_error("dispatch failed", %{reason: reason})
   end
 end

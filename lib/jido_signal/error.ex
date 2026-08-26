@@ -397,12 +397,18 @@ defmodule Jido.Signal.Error do
   defp retryable_reason?(:queue_full), do: true
   defp retryable_reason?(:subscription_not_available), do: true
   defp retryable_reason?(:circuit_open), do: true
+  defp retryable_reason?({:http_status, status}) when status in [408, 425, 429], do: true
+
+  defp retryable_reason?({:http_status, status}) when status >= 500 and status <= 599,
+    do: true
+
   defp retryable_reason?({:status_error, status, _body}) when status in [408, 425, 429], do: true
 
   defp retryable_reason?({:status_error, status, _body}) when status >= 500 and status <= 599,
     do: true
 
   defp retryable_reason?({:failed_connect, _}), do: true
+  defp retryable_reason?({:transport, reason}), do: retryable_reason?(reason)
   defp retryable_reason?({:exception, _}), do: false
   defp retryable_reason?(_reason), do: false
 

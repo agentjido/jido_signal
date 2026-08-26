@@ -113,17 +113,24 @@ defmodule Jido.Signal.SerializationTest do
       assert {:error, {:unsupported_format, :msgpack}} = Signal.serialize([], format: :msgpack)
     end
 
-    test "enforces the payload size for each call" do
+    test "enforces the payload size for encode and decode" do
       signal = Signal.new!(type: "test.created", source: "/test")
       assert {:ok, json} = Signal.serialize(signal)
+
+      assert {:error, {:payload_too_large, encode_size, 10}} =
+               Signal.serialize(signal, max_payload_bytes: 10)
 
       assert {:error, {:payload_too_large, size, 10}} =
                Signal.deserialize(json, max_payload_bytes: 10)
 
+      assert encode_size == byte_size(json)
       assert size == byte_size(json)
     end
 
     test "reads the application payload limit" do
+      signal = Signal.new!(type: "test.created", source: "/test")
+      assert {:ok, json} = Signal.serialize(signal)
+
       previous = Application.get_env(:jido_signal, :max_payload_bytes)
       Application.put_env(:jido_signal, :max_payload_bytes, 10)
 
@@ -135,8 +142,7 @@ defmodule Jido.Signal.SerializationTest do
         end
       end)
 
-      signal = Signal.new!(type: "test.created", source: "/test")
-      assert {:ok, json} = Signal.serialize(signal)
+      assert {:error, {:payload_too_large, _size, 10}} = Signal.serialize(signal)
       assert {:error, {:payload_too_large, _size, 10}} = Signal.deserialize(json)
     end
 

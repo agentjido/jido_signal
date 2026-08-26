@@ -325,6 +325,11 @@ client behavior cannot be disabled on OTP 27. Use a custom adapter for strict
 single-attempt delivery, request signing, other methods, custom TLS policy, or
 response data.
 
+Treat each HTTP URL as trusted application configuration. The built-in adapter
+permits private network targets and does not protect against DNS rebinding.
+OTP 27 `:httpc` also has no response body size limit for these requests. Use a
+custom adapter for untrusted targets or a strict response size limit.
+
 ## Advanced Features
 
 ### Persistent Subscriptions
