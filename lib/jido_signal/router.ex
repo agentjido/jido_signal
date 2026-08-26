@@ -166,11 +166,7 @@ defmodule Jido.Signal.Router do
   alias Jido.Signal.Router.{Engine, Route, Validator}
   alias Jido.Signal.Telemetry
 
-  @type t :: %{
-          trie: __MODULE__.TrieNode.t(),
-          route_count: non_neg_integer(),
-          cache_id: nil
-        }
+  @opaque t :: map()
 
   @type path :: String.t()
   @type match :: (Signal.t() -> boolean())
@@ -354,7 +350,7 @@ defmodule Jido.Signal.Router do
       {:ok, router} = Router.new([{"user.created", MyHandler}])
   """
   @spec new(route_spec() | [route_spec()] | [Route.t()] | nil, new_opts()) ::
-          {:ok, Router.t()} | {:error, term()}
+          {:ok, t()} | {:error, term()}
   def new(routes \\ nil, opts \\ [])
 
   def new(nil, _opts) do
@@ -375,7 +371,7 @@ defmodule Jido.Signal.Router do
 
   See `new/2` for options.
   """
-  @spec new!(route_spec() | [route_spec()] | [Route.t()] | nil, new_opts()) :: Router.t()
+  @spec new!(route_spec() | [route_spec()] | [Route.t()] | nil, new_opts()) :: t()
   def new!(routes \\ nil, opts \\ []) do
     case new(routes, opts) do
       {:ok, router} ->
@@ -404,8 +400,8 @@ defmodule Jido.Signal.Router do
   ## Returns
   `{:ok, updated_router}` or `{:error, reason}`
   """
-  @spec add(Router.t(), route_spec() | Route.t() | [route_spec()] | [Route.t()]) ::
-          {:ok, Router.t()} | {:error, term()}
+  @spec add(t(), route_spec() | Route.t() | [route_spec()] | [Route.t()]) ::
+          {:ok, t()} | {:error, term()}
   def add(%Router{} = router, routes) when is_list(routes) do
     with {:ok, normalized} <- Validator.normalize(routes),
          {:ok, validated} <- validate(normalized) do
@@ -436,7 +432,7 @@ defmodule Jido.Signal.Router do
       {:ok, router} = Router.remove(router, "metrics.collected")
       {:ok, router} = Router.remove(router, ["user.created", "user.updated"])
   """
-  @spec remove(Router.t(), String.t() | [String.t()]) :: {:ok, Router.t()}
+  @spec remove(t(), String.t() | [String.t()]) :: {:ok, t()}
   def remove(%Router{} = router, paths) when is_list(paths) do
     {new_trie, total_removed} =
       Enum.reduce(paths, {router.trie, 0}, fn path, {trie, count} ->
@@ -476,7 +472,7 @@ defmodule Jido.Signal.Router do
       # Merge router2's routes into router1
       {:ok, merged} = Router.merge(router1, routes2)
   """
-  @spec merge(Router.t(), [Route.t()]) :: {:ok, Router.t()} | {:error, term()}
+  @spec merge(t(), [Route.t()]) :: {:ok, t()} | {:error, term()}
   def merge(%Router{} = router, routes) when is_list(routes) do
     # Convert Route structs back to route specs for add/2
     route_specs =
@@ -532,7 +528,7 @@ defmodule Jido.Signal.Router do
         }
       ]
   """
-  @spec list(Router.t()) :: {:ok, [Route.t()]}
+  @spec list(t()) :: {:ok, [Route.t()]}
   def list(%Router{} = router) do
     routes = Engine.collect_routes(router.trie)
     {:ok, routes}
@@ -616,7 +612,7 @@ defmodule Jido.Signal.Router do
         data: %{amount: 100}
       })
   """
-  @spec route(Router.t(), Signal.t()) :: {:ok, [term()]} | {:error, term()}
+  @spec route(t(), Signal.t()) :: {:ok, [term()]} | {:error, term()}
   def route(%Router{trie: _trie}, %Signal{type: nil}) do
     {:error,
      Error.routing_error(
@@ -872,7 +868,7 @@ defmodule Jido.Signal.Router do
   - `true` if the route exists
   - `false` otherwise
   """
-  @spec has_route?(Router.t(), String.t()) :: boolean()
+  @spec has_route?(t(), String.t()) :: boolean()
   def has_route?(%Router{} = router, path) when is_binary(path) do
     case Validator.validate_path(path) do
       {:ok, _} ->
