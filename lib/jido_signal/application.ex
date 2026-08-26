@@ -1,10 +1,5 @@
 defmodule Jido.Signal.Application do
-  @moduledoc """
-  The main application module for Jido Signal.
-
-  This module handles the initialization and supervision of the signal processing
-  infrastructure, including the Registry and Task Supervisor.
-  """
+  @moduledoc false
   use Application
 
   @doc """
@@ -30,7 +25,7 @@ defmodule Jido.Signal.Application do
       # Extension Registry for Signal extensions
       Jido.Signal.Ext.Registry,
 
-      # Exec Async Actions Task Supervisor
+      # Middleware callback Task Supervisor
       {Task.Supervisor, name: Jido.Signal.TaskSupervisor}
     ]
 

@@ -1,15 +1,5 @@
 defmodule Jido.Signal.Using do
-  @moduledoc """
-  Helper module containing macro code for `use Jido.Signal`.
-
-  This module provides the `define_signal_functions/0` macro that generates
-  all the necessary functions for a custom Signal module, including:
-
-  - Accessor functions (`type/0`, `default_source/0`, etc.)
-  - Constructor functions (`new/0`, `new/1`, `new/2`, `new!/0`, `new!/1`, `new!/2`)
-  - Validation functions (`validate_data/1`)
-  - Serialization helpers (`to_json/0`, `__signal_metadata__/0`)
-  """
+  @moduledoc false
 
   alias __MODULE__, as: Using
   alias Jido.Signal.Error

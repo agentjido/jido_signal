@@ -14,7 +14,7 @@ defmodule Jido.Signal.Dispatch.Http do
   * `:timeout` - (optional) Request timeout in milliseconds, defaults to 5000
   * `:ssl_options` - (optional) Additional TLS options. Certificate and hostname
     verification are always enforced for HTTPS requests.
-  The adapter makes one request. The caller or Bus owns retry policy.
+  The adapter makes one request. The calling application owns retry policy.
 
   ## Examples
 

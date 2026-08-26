@@ -1,7 +1,7 @@
 defmodule Jido.Signal.MixProject do
   use Mix.Project
 
-  @version "2.2.2"
+  @version "3.0.0"
   @source_url "https://github.com/agentjido/jido_signal"
   @description "Agent Communication Envelope and Utilities"
 
@@ -79,6 +79,7 @@ defmodule Jido.Signal.MixProject do
         "guides/getting-started.md",
         "guides/signals-and-dispatch.md",
         "guides/event-bus.md",
+        "guides/v2-to-v3.md",
         "guides/signal-router.md",
         "guides/signal-extensions.md",
         "guides/serialization.md",
@@ -98,16 +99,7 @@ defmodule Jido.Signal.MixProject do
         ],
         "Signal Routing": [
           Jido.Signal.Router,
-          Jido.Signal.Router.Engine,
-          Jido.Signal.Router.HandlerInfo,
-          Jido.Signal.Router.Inspect,
-          Jido.Signal.Router.NodeHandlers,
-          Jido.Signal.Router.PatternMatch,
-          Jido.Signal.Router.Route,
-          Jido.Signal.Router.Router,
-          Jido.Signal.Router.TrieNode,
-          Jido.Signal.Router.Validator,
-          Jido.Signal.Router.WildcardHandlers
+          Jido.Signal.Router.Route
         ],
         "Event Bus": [
           Jido.Signal.Bus,
@@ -129,6 +121,7 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Dispatch.Webhook
         ],
         Serialization: [
+          Jido.Signal.Serialization,
           Jido.Signal.Serialization.Config,
           Jido.Signal.Serialization.ErlangTermSerializer,
           Jido.Signal.Serialization.JsonDecoder,
@@ -139,9 +132,8 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Serialization.TypeProvider
         ],
         "System Infrastructure": [
-          Jido.Signal.Application,
-          Jido.Signal.Registry,
-          Jido.Signal.Registry.Subscription
+          Jido.Signal.Instance,
+          Jido.Signal.Names
         ],
         "Errors & Exceptions": [
           Jido.Signal.Error.DispatchError,

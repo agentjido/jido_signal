@@ -58,7 +58,6 @@ defmodule Jido.Signal.Ext do
 
   ## See Also
 
-  - `Jido.Signal.Ext.Registry` - Extension registration and lookup
   - `Jido.Signal` - Core Signal functionality
   """
 

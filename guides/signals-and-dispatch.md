@@ -132,7 +132,7 @@ config = {:http, [
 ]}
 ```
 
-The HTTP adapter makes one request. The caller or Bus owns retry policy.
+The HTTP adapter makes one request. The calling application owns retry policy.
 
 ## Dispatch Execution
 

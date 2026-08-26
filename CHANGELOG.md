@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+### Added
+
+- Add `Jido.Signal.Serialization` as the serialization entry module.
+- Add canonical version-2 Signal maps with version-1 and unversioned readers.
+- Add Zoi schemas for package-owned boundaries.
+- Add a Bus-owned Store behavior for bounded replay, checkpoints, and DLQ data.
+
+### Changed
+
+- Make Router precedence explicit: exact, `*`, `**`, specificity, priority, then registration.
+- Make Dispatch ordered and synchronous. Applications now own retry, concurrency, and circuit breakers.
+- Simplify Bus persistence to at-least-once delivery with continuous numeric checkpoints.
+- Require Elixir 1.18 or later and OTP 27 or later.
+
+### Removed
+
+- Remove NimbleOptions, Fuse, and installation tooling.
+- Remove direct Dispatch async, batch, retry, and circuit-breaker APIs.
+- Remove Bus partitions, snapshots, retry workers, and public state.
+- Remove the standalone Signal Journal and all Journal adapters.
+- Remove the pure Signal Registry API and BusSpy test utility.
+
 ## [v2.2.2](https://github.com/agentjido/jido_signal/compare/v2.2.1...v2.2.2) (2026-06-09)
 
 

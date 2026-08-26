@@ -145,20 +145,10 @@ defmodule Jido.Signal.Router do
   - Malformed signals
   - Invalid dispatch configurations
 
-  ## Implementation Details
-
-  The router uses several specialized structs:
-  - `Route` - Defines a single routing rule
-  - `TrieNode` - Internal trie structure node
-  - `HandlerInfo` - Stores handler metadata
-  - `PatternMatch` - Encapsulates pattern matching rules
-
-  See the corresponding typespecs for detailed field information.
-
   ## See Also
 
   - `Jido.Signal` - Signal structure and validation
-  - `Jido.Signal.Errors` - Error types and handling
+  - `Jido.Signal.Error` - Error types and handling
   - `Jido.Signal.Dispatch` - Dispatch adapter interface
   """
   alias Jido.Signal

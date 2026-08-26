@@ -12,6 +12,10 @@
 
 _`Jido.Signal` is part of the [Jido](https://github.com/agentjido/jido) project. Learn more about Jido at [jido.run](https://jido.run)._
 
+The v3 public API has five primary areas: `Jido.Signal`,
+`Jido.Signal.Serialization`, `Jido.Signal.Router`, `Jido.Signal.Dispatch`, and
+`Jido.Signal.Bus`.
+
 ## Overview
 
 `Jido.Signal` is a sophisticated toolkit for building event-driven and agent-based systems in Elixir. It provides a complete ecosystem for defining, routing, dispatching, and tracking signals throughout your application, built on the CloudEvents v1.0.2 specification with powerful Jido-specific extensions.
@@ -84,7 +88,7 @@ Add `jido_signal` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:jido_signal, "~> 2.0"}
+    {:jido_signal, "~> 3.0"}
   ]
 end
 ```
@@ -94,7 +98,7 @@ If you use `:pubsub` dispatch, also add Phoenix.PubSub to your application:
 ```elixir
 def deps do
   [
-    {:jido_signal, "~> 2.0"},
+    {:jido_signal, "~> 3.0"},
     {:phoenix_pubsub, "~> 2.1"}
   ]
 end
@@ -497,6 +501,7 @@ workflow_signals = [
 - **[Signal Extensions](guides/signal-extensions.md)** - Custom Signal metadata extensions
 - **[Serialization](guides/serialization.md)** - JSON, optional MessagePack, and Erlang Term formats
 - **[Advanced Topics](guides/advanced.md)** - Custom adapters, performance, and testing
+- **[v2 to v3 Migration](guides/v2-to-v3.md)** - Removed APIs and replacement patterns
 - **[API Reference](https://hexdocs.pm/jido_signal)** - Complete function documentation
 
 ## Development

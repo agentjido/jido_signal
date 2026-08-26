@@ -4,6 +4,7 @@
 Model domain events as validated signals and route them predictably through dispatch and bus infrastructure.
 
 ## Core Contracts
+- Use the five primary areas: Signal, Serialization, Router, Dispatch, and Bus.
 - Prefer positional constructor: `Signal.new(type, data, attrs)`.
 - Use dot-delimited event types (`user.created`, `order.shipped`).
 - Use Zoi schemas for typed signal modules and extensions.
@@ -30,6 +31,7 @@ Model domain events as validated signals and route them predictably through disp
 
 ## References
 - `README.md`
+- `guides/v2-to-v3.md`
 - `guides/`
 - `AGENTS.md`
 - https://hexdocs.pm/jido_signal
