@@ -112,7 +112,7 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
 
   describe "Bus basic pub/sub contract" do
     test "starts, subscribes, publishes, delivers, and unsubscribes" do
-      name = String.to_atom("compat_bus_#{System.unique_integer([:positive])}")
+      name = "compat_bus_#{System.unique_integer([:positive])}"
       start_supervised!({Bus, name: name})
 
       assert {:ok, subscription_id} = Bus.subscribe(name, "compat.*")
