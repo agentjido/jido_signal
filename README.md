@@ -16,25 +16,8 @@ The v3 public API has five primary areas: `Jido.Signal`,
 `Jido.Signal.Serialization`, `Jido.Signal.Router`, `Jido.Signal.Dispatch`, and
 `Jido.Signal.Bus`.
 
-## From v2 to v3
-
-v3 starts from the [v2.2.2 release](https://github.com/agentjido/jido_signal/tree/v2.2.2).
-It keeps the Signal envelope, Router precedence, Dispatch target tuples, and
-the main Bus calls. It removes package-owned runtime policy and duplicate
-schema and serialization systems.
-
-| Area | v2.2.2 | v3 |
-| --- | --- | --- |
-| Signal schemas | NimbleOptions and duplicate validation paths | Zoi only, with MFA callback values in schemas |
-| Wire format | Serializer framework, custom markers, and MessagePack | Canonical CloudEvents 1.0 maps, JSON, and safe Erlang terms |
-| Router | Large routing engine and cache | Exact-path map and compact wildcard trie |
-| Dispatch | Async, batch, retry, Fuse, and many adapters | Ordered delivery and a small adapter set |
-| Bus | Journal, partitions, middleware, snapshots, and dead-letter policy | Local ordered delivery, retained replay, durable cursors, and a Store seam |
-| Trace and extensions | Nested trace state and a schema extension registry | Explicit Trace values and flat CloudEvents context attributes |
-
-The v3 reader accepts supported v2 wire maps. New writes use only the v3
-canonical form. Read the [v2 to v3 migration guide](guides/v2-to-v3.md) before
-you convert stored Signals or Bus subscriptions.
+If you use v2, see [From v2 to v3](#from-v2-to-v3) for the progression and
+migration guide.
 
 ## Overview
 
@@ -509,6 +492,26 @@ workflow_signals = [
   Signal.new!("workflow.completed", %{workflow_id: "wf_123"}, source: "/workflow")
 ]
 ```
+
+## From v2 to v3
+
+v3 starts from the [v2.2.2 release](https://github.com/agentjido/jido_signal/tree/v2.2.2).
+It keeps the Signal envelope, Router precedence, Dispatch target tuples, and
+the main Bus calls. It removes package-owned runtime policy and duplicate
+schema and serialization systems.
+
+| Area | v2.2.2 | v3 |
+| --- | --- | --- |
+| Signal schemas | NimbleOptions and duplicate validation paths | Zoi only, with MFA callback values in schemas |
+| Wire format | Serializer framework, custom markers, and MessagePack | Canonical CloudEvents 1.0 maps, JSON, and safe Erlang terms |
+| Router | Large routing engine and cache | Exact-path map and compact wildcard trie |
+| Dispatch | Async, batch, retry, Fuse, and many adapters | Ordered delivery and a small adapter set |
+| Bus | Journal, partitions, middleware, snapshots, and dead-letter policy | Local ordered delivery, retained replay, durable cursors, and a Store seam |
+| Trace and extensions | Nested trace state and a schema extension registry | Explicit Trace values and flat CloudEvents context attributes |
+
+The v3 reader accepts supported v2 wire maps. New writes use only the v3
+canonical form. Read the [v2 to v3 migration guide](guides/v2-to-v3.md) before
+you convert stored Signals or Bus subscriptions.
 
 ## Documentation
 
