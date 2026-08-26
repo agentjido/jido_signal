@@ -5,158 +5,168 @@ defmodule Jido.Signal.Sanitizer do
 
   @type profile :: :telemetry | :transport
 
-  @telemetry_opts %{max_depth: 3, max_items: 10, max_binary: 160}
-  @transport_opts %{max_depth: 6, max_items: 50, max_binary: 1024}
+  @profiles %{
+    telemetry: %{max_depth: 3, max_items: 10, max_binary: 160, preview: 240},
+    transport: %{max_depth: 6, max_items: 50, max_binary: 1024, preview: 512}
+  }
 
   @redacted "[REDACTED]"
-  @sensitive_keys MapSet.new([
-                    "access_token",
-                    "api_key",
-                    "authorization",
-                    "client_secret",
-                    "cookie",
-                    "credential",
-                    "passphrase",
-                    "password",
-                    "private_key",
-                    "proxy_authorization",
-                    "refresh_token",
-                    "secret",
-                    "signature",
-                    "set_cookie",
-                    "token",
-                    "webhook_secret",
-                    "webhook_signature",
-                    "x_api_key",
-                    "x_webhook_signature"
-                  ])
+  @sensitive_keys MapSet.new(~w[
+    access_token api_key authorization client_secret cookie credential passphrase password
+    private_key proxy_authorization refresh_token secret set_cookie signature token
+    webhook_secret webhook_signature x_api_key x_webhook_signature
+  ])
 
-  @doc """
-  Sanitizes a value for the requested boundary profile.
-  """
+  @doc "Sanitizes a value for a telemetry or transport boundary."
   @spec sanitize(term(), profile()) :: term()
   def sanitize(value, profile) when profile in [:telemetry, :transport] do
-    do_sanitize(value, profile, profile_opts(profile), 0)
+    sanitize(value, profile, Map.fetch!(@profiles, profile), 0)
   end
 
-  @doc """
-  Returns an inspect-safe, bounded preview string for logs.
-  """
+  @doc "Returns a bounded and safe preview for a log message."
   @spec preview(term(), profile(), keyword()) :: String.t()
   def preview(value, profile \\ :telemetry, opts \\ [])
       when profile in [:telemetry, :transport] do
+    profile_opts = Map.fetch!(@profiles, profile)
+
     max_length =
-      case Keyword.get(opts, :max_length, default_preview_length(profile)) do
+      case Keyword.get(opts, :max_length, profile_opts.preview) do
         length when is_integer(length) and length >= 0 -> length
-        _invalid -> default_preview_length(profile)
+        _invalid -> profile_opts.preview
       end
 
     value
     |> sanitize(profile)
-    |> Kernel.inspect(pretty: false, limit: :infinity, printable_limit: :infinity)
-    |> truncate_binary(max_length)
+    |> inspect(pretty: false, limit: :infinity, printable_limit: :infinity)
+    |> truncate(max_length)
   end
 
-  defp do_sanitize(value, _profile, _opts, _depth)
-       when is_nil(value) or is_boolean(value) or is_integer(value) or is_float(value) do
-    value
-  end
+  defp sanitize(value, _profile, _opts, _depth)
+       when is_nil(value) or is_boolean(value) or is_integer(value) or is_float(value),
+       do: value
 
-  defp do_sanitize(value, :telemetry, _opts, _depth) when is_atom(value), do: value
+  defp sanitize(value, :telemetry, _opts, _depth) when is_atom(value), do: value
+  defp sanitize(value, :transport, _opts, _depth) when is_atom(value), do: Atom.to_string(value)
 
-  defp do_sanitize(value, :transport, _opts, _depth) when is_atom(value),
-    do: Atom.to_string(value)
-
-  defp do_sanitize(value, profile, %{max_binary: max_binary}, _depth) when is_binary(value) do
-    case profile do
-      :telemetry ->
-        if String.valid?(value) do
-          truncate_binary(value, max_binary)
-        else
-          %{
-            __type__: :binary,
-            bytes: byte_size(value),
-            preview: value |> Base.encode64() |> truncate_binary(max_binary)
-          }
-        end
-
-      :transport ->
-        if String.valid?(value) do
-          truncate_binary(value, max_binary)
-        else
-          %{
-            "__type__" => "binary",
-            "bytes" => byte_size(value),
-            "preview" => value |> Base.encode64() |> truncate_binary(max_binary)
-          }
-        end
+  defp sanitize(value, profile, opts, _depth) when is_binary(value) do
+    if String.valid?(value) do
+      truncate(value, opts.max_binary)
+    else
+      binary_summary(value, profile, opts.max_binary)
     end
   end
 
-  defp do_sanitize(value, profile, opts, depth) when is_list(value) do
-    cond do
-      value != [] and Keyword.keyword?(value) ->
-        sanitize_map(Map.new(value), profile, opts, depth)
+  defp sanitize(%Date{} = value, _profile, _opts, _depth), do: Date.to_iso8601(value)
+  defp sanitize(%DateTime{} = value, _profile, _opts, _depth), do: DateTime.to_iso8601(value)
 
-      key_value_list?(value) ->
-        sanitize_map(Map.new(value), profile, opts, depth)
-
-      depth >= opts.max_depth ->
-        summarize_collection(value, profile)
-
-      true ->
-        {items, truncated?} = take_bounded(value, opts.max_items)
-
-        sanitized_items =
-          Enum.map(items, &do_sanitize(&1, profile, opts, depth + 1))
-
-        append_list_truncation_marker(sanitized_items, truncated?, length(value), profile)
-    end
-  end
-
-  defp do_sanitize(%Date{} = value, _profile, _opts, _depth), do: Date.to_iso8601(value)
-  defp do_sanitize(%DateTime{} = value, _profile, _opts, _depth), do: DateTime.to_iso8601(value)
-
-  defp do_sanitize(%NaiveDateTime{} = value, _profile, _opts, _depth),
+  defp sanitize(%NaiveDateTime{} = value, _profile, _opts, _depth),
     do: NaiveDateTime.to_iso8601(value)
 
-  defp do_sanitize(%Time{} = value, _profile, _opts, _depth), do: Time.to_iso8601(value)
+  defp sanitize(%Time{} = value, _profile, _opts, _depth), do: Time.to_iso8601(value)
 
-  defp do_sanitize(%URI{} = value, _profile, _opts, _depth) do
+  defp sanitize(%URI{} = value, _profile, _opts, _depth) do
     value
-    |> Map.put(:userinfo, nil)
-    |> Map.put(:query, nil)
-    |> Map.put(:fragment, nil)
+    |> Map.merge(%{userinfo: nil, query: nil, fragment: nil})
     |> URI.to_string()
   end
 
-  defp do_sanitize(%Signal{} = value, profile, opts, depth),
-    do: sanitize_signal(value, profile, opts, depth)
+  defp sanitize(%Signal{} = value, profile, opts, depth) do
+    base =
+      %{
+        id: value.id,
+        type: value.type,
+        source: value.source,
+        subject: value.subject,
+        datacontenttype: value.datacontenttype,
+        extensions: Map.keys(value.extensions || %{})
+      }
+      |> Map.reject(fn {_key, item} -> is_nil(item) end)
 
-  defp do_sanitize(value, profile, opts, depth) when is_exception(value),
-    do: sanitize_exception(value, profile, opts, depth)
+    case profile do
+      :telemetry ->
+        base
 
-  defp do_sanitize(value, profile, opts, depth) when is_struct(value),
-    do: sanitize_struct(value, profile, opts, depth)
-
-  defp do_sanitize(value, profile, opts, depth) when is_map(value),
-    do: sanitize_map(value, profile, opts, depth)
-
-  defp do_sanitize(value, :telemetry, _opts, _depth) when is_pid(value) or is_reference(value) do
-    inspect(value)
+      :transport ->
+        base
+        |> Map.put(:data, sanitize(value.data, profile, opts, depth + 1))
+        |> string_keys()
+        |> Map.put("__struct__", inspect(Signal))
+    end
   end
 
-  defp do_sanitize(value, :transport, _opts, _depth) when is_pid(value) or is_reference(value) do
-    %{"__type__" => value_type(value), "value" => inspect(value)}
-  end
+  defp sanitize(value, profile, opts, depth) when is_exception(value) do
+    fields = value |> Map.from_struct() |> Map.drop([:__exception__, :__struct__, :message])
+    base = boundary_map(profile, module: inspect(value.__struct__))
 
-  defp do_sanitize(value, profile, opts, depth) when is_tuple(value) do
-    if depth >= opts.max_depth do
-      summarize_collection(value, profile)
+    if map_size(fields) == 0 do
+      base
     else
-      {items, truncated?} = value |> Tuple.to_list() |> take_bounded(opts.max_items)
-      items = Enum.map(items, &do_sanitize(&1, profile, opts, depth + 1))
-      items = append_list_truncation_marker(items, truncated?, tuple_size(value), profile)
+      Map.put(base, boundary_key(profile, :details), sanitize(fields, profile, opts, depth + 1))
+    end
+  end
+
+  defp sanitize(value, profile, opts, depth) when is_struct(value) do
+    module = value.__struct__
+    fields = Map.from_struct(value)
+
+    condensed =
+      fields
+      |> Enum.filter(fn {key, item} ->
+        scalar?(item) or key in [:id, :name, :path, :type, :source, :target, :status]
+      end)
+      |> Map.new()
+
+    base =
+      if map_size(condensed) == 0,
+        do: %{summary: %{summary: :list, count: map_size(fields)}},
+        else: condensed
+
+    base
+    |> sanitize(profile, opts, depth + 1)
+    |> Map.put(boundary_key(profile, :__struct__), inspect(module))
+  end
+
+  defp sanitize(value, profile, opts, depth) when is_map(value) do
+    if depth >= opts.max_depth do
+      collection_summary(value, profile)
+    else
+      entries = value |> Map.to_list() |> Enum.sort_by(fn {key, _item} -> key_token(key) end)
+      {entries, truncated?} = bounded(entries, opts.max_items)
+
+      sanitized =
+        Map.new(entries, fn {key, item} ->
+          item =
+            if sensitive_key?(key), do: @redacted, else: sanitize(item, profile, opts, depth + 1)
+
+          {boundary_key(profile, key), item}
+        end)
+
+      mark_map_truncation(sanitized, truncated?, map_size(value), profile)
+    end
+  end
+
+  defp sanitize(value, profile, opts, depth) when is_list(value) do
+    cond do
+      value != [] and (Keyword.keyword?(value) or key_value_list?(value)) ->
+        sanitize(Map.new(value), profile, opts, depth)
+
+      depth >= opts.max_depth ->
+        collection_summary(value, profile)
+
+      true ->
+        {items, truncated?} = bounded(value, opts.max_items)
+        items = Enum.map(items, &sanitize(&1, profile, opts, depth + 1))
+        mark_list_truncation(items, truncated?, length(value), profile)
+    end
+  end
+
+  defp sanitize(value, profile, opts, depth) when is_tuple(value) do
+    if depth >= opts.max_depth do
+      collection_summary(value, profile)
+    else
+      {items, truncated?} = value |> Tuple.to_list() |> bounded(opts.max_items)
+      items = Enum.map(items, &sanitize(&1, profile, opts, depth + 1))
+      items = mark_list_truncation(items, truncated?, tuple_size(value), profile)
 
       case profile do
         :telemetry -> List.to_tuple(items)
@@ -165,181 +175,96 @@ defmodule Jido.Signal.Sanitizer do
     end
   end
 
-  defp do_sanitize(value, profile, _opts, _depth)
-       when is_function(value) or is_port(value) or is_bitstring(value) do
-    case profile do
-      :telemetry -> inspect(value)
-      :transport -> %{"__type__" => value_type(value), "value" => inspect(value)}
-    end
+  defp sanitize(value, :telemetry, _opts, _depth)
+       when is_pid(value) or is_reference(value) or is_function(value) or is_port(value) or
+              is_bitstring(value),
+       do: inspect(value)
+
+  defp sanitize(value, :transport, _opts, _depth)
+       when is_pid(value) or is_reference(value) or is_function(value) or is_port(value) or
+              is_bitstring(value),
+       do: %{"__type__" => value_type(value), "value" => inspect(value)}
+
+  defp sanitize(value, _profile, _opts, _depth), do: inspect(value)
+
+  defp binary_summary(value, :telemetry, max_binary) do
+    %{
+      __type__: :binary,
+      bytes: byte_size(value),
+      preview: value |> Base.encode64() |> truncate(max_binary)
+    }
   end
 
-  defp do_sanitize(value, _profile, _opts, _depth), do: inspect(value)
-
-  defp sanitize_signal(%Signal{} = signal, profile, opts, depth) do
-    base =
-      %{
-        id: signal.id,
-        type: signal.type,
-        source: signal.source,
-        subject: signal.subject,
-        datacontenttype: signal.datacontenttype,
-        extensions: Map.keys(signal.extensions || %{})
-      }
-      |> compact_map()
-
-    case profile do
-      :telemetry ->
-        base
-
-      :transport ->
-        base
-        |> Map.put(:data, do_sanitize(signal.data, :transport, opts, depth + 1))
-        |> stringify_keys()
-        |> Map.put("__struct__", inspect(Signal))
-    end
+  defp binary_summary(value, :transport, max_binary) do
+    %{
+      "__type__" => "binary",
+      "bytes" => byte_size(value),
+      "preview" => value |> Base.encode64() |> truncate(max_binary)
+    }
   end
 
-  defp sanitize_exception(exception, profile, opts, depth) do
-    fields =
-      exception
-      |> Map.from_struct()
-      |> Map.drop([:__exception__, :__struct__, :message])
-
-    base = %{module: inspect(exception.__struct__)}
-
-    details =
-      if map_size(fields) == 0 do
-        %{}
-      else
-        do_sanitize(fields, profile, opts, depth + 1)
+  defp collection_summary(value, profile) do
+    {type, size_key, size} =
+      cond do
+        is_map(value) -> {:map, :size, map_size(value)}
+        is_list(value) -> {:list, :count, length(value)}
+        is_tuple(value) -> {:tuple, :size, tuple_size(value)}
       end
 
-    case {profile, map_size(fields)} do
-      {:telemetry, 0} ->
-        base
-
-      {:telemetry, _size} ->
-        Map.put(base, :details, details)
-
-      {:transport, 0} ->
-        stringify_keys(base)
-
-      {:transport, _size} ->
-        base |> Map.put(:details, details) |> stringify_keys()
-    end
+    boundary_map(profile, [summary: boundary_value(profile, type)], {size_key, size})
   end
 
-  defp sanitize_struct(struct, profile, opts, depth) do
-    module = struct.__struct__
-    fields = Map.from_struct(struct)
+  defp mark_map_truncation(map, false, _size, _profile), do: map
 
-    condensed =
-      fields
-      |> Enum.filter(fn {key, value} ->
-        scalar?(value) or key in [:id, :name, :path, :type, :source, :target, :status]
-      end)
-      |> Enum.into(%{})
-
-    base =
-      if map_size(condensed) > 0 do
-        condensed
-      else
-        %{summary: summarize_collection(Map.keys(fields), :telemetry)}
-      end
-
-    sanitized = do_sanitize(base, profile, opts, depth + 1)
-
-    case profile do
-      :telemetry ->
-        Map.put(sanitized, :__struct__, inspect(module))
-
-      :transport ->
-        sanitized
-        |> stringify_keys()
-        |> Map.put("__struct__", inspect(module))
-    end
+  defp mark_map_truncation(map, true, size, profile) do
+    marker = boundary_map(profile, count: size)
+    Map.put(map, boundary_key(profile, :__truncated__), marker)
   end
 
-  defp sanitize_map(map, profile, opts, depth) do
-    if depth >= opts.max_depth do
-      summarize_collection(map, profile)
-    else
-      {items, truncated?} =
-        map
-        |> Map.to_list()
-        |> Enum.sort_by(fn {key, _value} -> key_sort_token(key) end)
-        |> take_bounded(opts.max_items)
+  defp mark_list_truncation(items, false, _size, _profile), do: items
 
-      sanitized =
-        Enum.reduce(items, empty_map(profile), fn entry, acc ->
-          sanitize_map_entry(entry, acc, profile, opts, depth)
-        end)
-
-      maybe_mark_map_truncation(sanitized, truncated?, map_size(map), profile)
-    end
+  defp mark_list_truncation(items, true, size, :telemetry) do
+    items ++ ["... (#{size - length(items)} more)"]
   end
 
-  defp sanitize_map_entry({key, value}, acc, profile, opts, depth) do
-    sanitized_key = sanitize_key(key, profile)
-    sanitized_value = sanitize_map_value(key, value, profile, opts, depth)
-
-    Map.put(acc, sanitized_key, sanitized_value)
+  defp mark_list_truncation(items, true, size, :transport) do
+    items ++ [%{"__truncated__" => %{"count" => size}}]
   end
 
-  defp sanitize_map_value(key, value, profile, opts, depth) do
-    if sensitive_key?(key) do
-      redacted_value(profile)
-    else
-      do_sanitize(value, profile, opts, depth + 1)
-    end
+  defp bounded(enumerable, limit) do
+    items = Enum.take(enumerable, limit + 1)
+    {Enum.take(items, limit), length(items) > limit}
   end
 
-  defp empty_map(:telemetry), do: %{}
-  defp empty_map(:transport), do: %{}
-
-  defp maybe_mark_map_truncation(map, false, _original_size, _profile), do: map
-
-  defp maybe_mark_map_truncation(map, true, original_size, :telemetry) do
-    Map.put(map, :__truncated__, %{count: original_size})
+  defp boundary_map(profile, entries) do
+    Map.new(entries, fn {key, value} ->
+      {boundary_key(profile, key), boundary_value(profile, value)}
+    end)
   end
 
-  defp maybe_mark_map_truncation(map, true, original_size, :transport) do
-    Map.put(map, "__truncated__", %{"count" => original_size})
+  defp boundary_map(profile, entries, {key, value}) do
+    Map.put(boundary_map(profile, entries), boundary_key(profile, key), value)
   end
 
-  defp append_list_truncation_marker(items, false, _original_size, _profile), do: items
+  defp boundary_key(:telemetry, key) when is_atom(key), do: key
+  defp boundary_key(_profile, key), do: key_token(key)
 
-  defp append_list_truncation_marker(items, true, original_size, :telemetry) do
-    items ++ ["... (#{original_size - length(items)} more)"]
-  end
+  defp boundary_value(:transport, value) when is_atom(value), do: Atom.to_string(value)
+  defp boundary_value(_profile, value), do: value
 
-  defp append_list_truncation_marker(items, true, original_size, :transport) do
-    items ++ [%{"__truncated__" => %{"count" => original_size}}]
-  end
+  defp key_token(key) when is_atom(key), do: Atom.to_string(key)
 
-  defp take_bounded(enumerable, limit) do
-    list = Enum.take(enumerable, limit + 1)
-    truncated? = length(list) > limit
-    {Enum.take(list, limit), truncated?}
-  end
-
-  defp sanitize_key(key, :telemetry) when is_atom(key), do: key
-  defp sanitize_key(key, :telemetry), do: key_sort_token(key)
-  defp sanitize_key(key, :transport), do: key_sort_token(key)
-
-  defp key_sort_token(key) when is_atom(key), do: Atom.to_string(key)
-
-  defp key_sort_token(key) when is_binary(key) do
+  defp key_token(key) when is_binary(key) do
     if String.valid?(key), do: key, else: "base64:" <> Base.encode64(key)
   end
 
-  defp key_sort_token(key), do: inspect(key)
+  defp key_token(key), do: inspect(key)
 
   defp sensitive_key?(key) do
-    key = key |> key_sort_token() |> String.downcase() |> String.replace("-", "_")
-    unprefixed_key = String.trim_leading(key, "x_")
+    key = key |> key_token() |> String.downcase() |> String.replace("-", "_")
 
-    MapSet.member?(@sensitive_keys, key) or MapSet.member?(@sensitive_keys, unprefixed_key)
+    MapSet.member?(@sensitive_keys, key) or
+      MapSet.member?(@sensitive_keys, String.trim_leading(key, "x_"))
   end
 
   defp key_value_list?([]), do: false
@@ -347,79 +272,29 @@ defmodule Jido.Signal.Sanitizer do
   defp key_value_list?(list) do
     Enum.all?(list, fn
       {key, _value} when is_atom(key) or is_binary(key) -> true
-      _other -> false
+      _item -> false
     end)
   end
 
-  defp summarize_collection(collection, :telemetry) when is_map(collection) do
-    %{summary: :map, size: map_size(collection)}
-  end
+  defp truncate(value, limit) when byte_size(value) <= limit, do: value
 
-  defp summarize_collection(collection, :telemetry) when is_list(collection) do
-    %{summary: :list, count: length(collection)}
-  end
-
-  defp summarize_collection(collection, :transport) when is_map(collection) do
-    %{"summary" => "map", "size" => map_size(collection)}
-  end
-
-  defp summarize_collection(collection, :transport) when is_list(collection) do
-    %{"summary" => "list", "count" => length(collection)}
-  end
-
-  defp summarize_collection(collection, :telemetry) when is_tuple(collection) do
-    %{summary: :tuple, size: tuple_size(collection)}
-  end
-
-  defp summarize_collection(collection, :transport) when is_tuple(collection) do
-    %{"summary" => "tuple", "size" => tuple_size(collection)}
-  end
-
-  defp summarize_collection(value, :telemetry) do
-    %{summary: value_type(value)}
-  end
-
-  defp summarize_collection(value, :transport) do
-    %{"summary" => value_type(value)}
-  end
-
-  defp profile_opts(:telemetry), do: @telemetry_opts
-  defp profile_opts(:transport), do: @transport_opts
-
-  defp default_preview_length(:telemetry), do: 240
-  defp default_preview_length(:transport), do: 512
-
-  defp redacted_value(:telemetry), do: @redacted
-  defp redacted_value(:transport), do: @redacted
-
-  defp truncate_binary(value, max_binary) when byte_size(value) <= max_binary, do: value
-
-  defp truncate_binary(value, max_binary) do
+  defp truncate(value, limit) do
     value
-    |> valid_binary_prefix(max_binary)
+    |> valid_prefix(limit)
     |> Kernel.<>("...")
   end
 
-  defp valid_binary_prefix(_value, 0), do: ""
+  defp valid_prefix(_value, 0), do: ""
 
-  defp valid_binary_prefix(value, size) do
+  defp valid_prefix(value, size) do
     prefix = binary_part(value, 0, size)
 
-    if String.valid?(value) and not String.valid?(prefix) do
-      valid_binary_prefix(value, size - 1)
-    else
-      prefix
-    end
+    if String.valid?(value) and not String.valid?(prefix),
+      do: valid_prefix(value, size - 1),
+      else: prefix
   end
 
-  defp compact_map(map) do
-    Enum.reject(map, fn {_key, value} -> is_nil(value) end)
-    |> Enum.into(%{})
-  end
-
-  defp stringify_keys(map) do
-    Map.new(map, fn {key, value} -> {key_sort_token(key), value} end)
-  end
+  defp string_keys(map), do: Map.new(map, fn {key, value} -> {key_token(key), value} end)
 
   defp scalar?(value)
        when is_nil(value) or is_boolean(value) or is_atom(value) or is_binary(value) or
@@ -433,8 +308,4 @@ defmodule Jido.Signal.Sanitizer do
   defp value_type(value) when is_function(value), do: "function"
   defp value_type(value) when is_port(value), do: "port"
   defp value_type(value) when is_bitstring(value), do: "bitstring"
-  defp value_type(value) when is_tuple(value), do: "tuple"
-  defp value_type(value) when is_map(value), do: "map"
-  defp value_type(value) when is_list(value), do: "list"
-  defp value_type(_value), do: "term"
 end
