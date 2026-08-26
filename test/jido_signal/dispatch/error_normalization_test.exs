@@ -173,6 +173,25 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert metadata.target_kind == :url
   end
 
+  test "structured dispatch errors do not contain target credentials" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+    {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+
+    config =
+      {URLReportingAdapter,
+       url: "https://example.com/path?token=url-secret",
+       headers: [{"authorization", "Bearer header-secret"}],
+       secret: "adapter-secret"}
+
+    assert {:error, %Error.DispatchError{} = error} = Dispatch.dispatch(signal, config)
+
+    error_text = inspect(error.details)
+    assert error_text =~ "https://example.com/path"
+    refute error_text =~ "url-secret"
+    refute error_text =~ "header-secret"
+    refute error_text =~ "adapter-secret"
+  end
+
   test "dispatch leaves raw adapter reasons unchanged by default" do
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
     config = {:named, [target: {:name, :nonexistent_process}, delivery_mode: :async]}

@@ -74,7 +74,15 @@ Structured callers can serialize the public contract through `Error.to_map/1`:
 %{
   type: :dispatch_error,
   message: "Signal dispatch failed",
-  details: %{"adapter" => "http", "reason" => "timeout"},
+  details: %{
+    "adapter" => "http",
+    "reason" => "timeout",
+    "target" => %{
+      "adapter" => "http",
+      "target" => "https://api.example.com/events",
+      "target_kind" => "url"
+    }
+  },
   retryable?: true
 } = Jido.Signal.Error.to_map(error)
 ```
@@ -276,21 +284,12 @@ Monitor dispatch performance:
 )
 ```
 
-### Resource Pool Management
+### High-volume HTTP Delivery
 
-For HTTP adapters, configure connection pooling:
-
-```elixir
-# Using Finch for HTTP dispatches
-config = {:http, [
-  url: "https://api.example.com/events",
-  method: :post,
-  headers: [{"content-type", "application/json"}],
-  pool: :analytics_pool,
-  pool_timeout: 5000,
-  receive_timeout: 30000
-]}
-```
+The built-in HTTP adapter uses the OTP `:httpc` profile and has no pool options.
+Use a custom Dispatch adapter when the application needs a dedicated connection
+pool, custom transport policy, or response processing. The application owns
+that adapter and its process life cycle.
 
 ### Bus Subscription Optimization
 

@@ -39,7 +39,7 @@ Traditional Elixir messaging (`send`, `GenServer.cast/call`) works great for sim
 - **Event Routing**: Broadcasting to multiple interested processes based on patterns
 - **Trace Context**: Carrying W3C traceparent and tracestate across Signal boundaries
 - **Reliable Delivery**: Ensuring critical messages aren't lost if a process crashes
-- **Cross-System Integration**: Communicating with external services via webhooks/HTTP
+- **Cross-System Integration**: Communicating with external services through HTTP
 
 ```elixir
 # Traditional Elixir messaging
@@ -193,7 +193,9 @@ Signals are CloudEvents-compliant message envelopes that carry your application'
 # Dispatch is configured when subscribing or dispatching, not on the signal
 :ok = Dispatch.dispatch(signal, [
   {:pubsub, target: MyApp.PubSub, topic: "payments"},
-  {:webhook, url: "https://api.partner.com/webhook", secret: "secret123"}
+  {:http,
+   url: "https://api.partner.com/events",
+   headers: [{"authorization", "Bearer token"}]}
 ])
 ```
 
@@ -295,8 +297,10 @@ dispatch_configs = [
   # Requires {:phoenix_pubsub, "~> 2.1"} in your app deps.
   {:pubsub, target: MyApp.PubSub, topic: "events"},
   
-  # HTTP webhook with signature
-  {:webhook, url: "https://api.example.com/webhook", secret: "secret123"},
+  # Structured CloudEvents JSON over OTP HTTP
+  {:http,
+   url: "https://api.example.com/events",
+   headers: [{"authorization", "Bearer token"}]},
   
   # Log structured data
   {:logger, level: :info, structured: true},
@@ -312,6 +316,14 @@ dispatch_configs = [
 Dispatch is ordered and synchronous. Start a Task in the calling application if
 delivery must run asynchronously. Retry and circuit-breaking policy also belongs
 to the calling application or the Bus.
+
+The HTTP adapter uses OTP `:httpc`; it needs no external HTTP client. It sends
+structured JSON with `application/cloudevents+json`, does not follow redirects,
+and accepts only `url`, `headers`, and `timeout` options. Dispatch adds no retry
+loop. OTP `:httpc` can still honor `Retry-After` on a 503 response, and this
+client behavior cannot be disabled on OTP 27. Use a custom adapter for strict
+single-attempt delivery, request signing, other methods, custom TLS policy, or
+response data.
 
 ## Advanced Features
 
@@ -390,7 +402,15 @@ Jido.Signal.Error.to_map(error)
 # => %{
 # =>   type: :dispatch_error,
 # =>   message: "Signal dispatch failed",
-# =>   details: %{"adapter" => "http", "reason" => "timeout"},
+# =>   details: %{
+# =>     "adapter" => "http",
+# =>     "reason" => "timeout",
+# =>     "target" => %{
+# =>       "adapter" => "http",
+# =>       "target" => "https://down.example.com",
+# =>       "target_kind" => "url"
+# =>     }
+# =>   },
 # =>   retryable?: true
 # => }
 ```

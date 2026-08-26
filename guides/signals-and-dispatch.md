@@ -126,13 +126,22 @@ HTTP endpoint delivery:
 ```elixir
 config = {:http, [
   url: "https://api.example.com/events",
-  method: :post,
   headers: [{"x-api-key", "secret"}],
   timeout: 5000
 ]}
 ```
 
-The HTTP adapter makes one request. The calling application owns retry policy.
+The HTTP adapter uses OTP `:httpc`; it does not need Req or another HTTP client.
+It sends structured CloudEvents JSON and does not follow redirects. Dispatch
+does not add a retry loop. OTP `:httpc` can honor `Retry-After` on a 503
+response, and OTP 27 has no option to disable that client behavior. Use a
+custom adapter when strict single-attempt delivery is required.
+
+The HTTP target accepts only `url`, `headers`, and `timeout`. Its content type,
+TLS verification, and HTTP method cannot be changed. Use a custom Dispatch
+adapter when an integration needs request signing, another method, custom TLS
+policy, or response data. The v3 package does not include the old proprietary
+Webhook adapter.
 
 ## Dispatch Execution
 
@@ -252,9 +261,9 @@ By default, dispatch returns raw error atoms. Structured errors (`Jido.Signal.Er
 {:error, :process_not_alive} = 
   Jido.Signal.Dispatch.dispatch(signal, {:pid, [target: dead_pid]})
 
-# HTTP timeout
-{:error, :timeout} = 
-  Jido.Signal.Dispatch.dispatch(signal, {:http, [url: "...", timeout: 1]})
+# HTTP status failure
+{:error, {:http_status, 503}} =
+  Jido.Signal.Dispatch.dispatch(signal, {:http, [url: "https://api.example.com/events"]})
 ```
 
 ### Multiple Target Errors

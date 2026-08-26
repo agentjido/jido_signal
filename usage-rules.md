@@ -21,6 +21,7 @@ Model domain events as validated signals and route them predictably through disp
 - Use router patterns intentionally: exact > `*` > `**`, with explicit priority when needed.
 - Use Router management functions. Do not inspect Router implementation fields.
 - For fanout workflows, route through `Jido.Signal.Bus`; for single targets, use direct dispatch.
+- Use the HTTP adapter only for structured CloudEvents JSON `POST` delivery. Use a custom adapter for strict single-attempt delivery, request signing, or transport policy.
 - For durable consumers, select a durable Bus Store and use explicit acknowledgements.
 - Acknowledge `RecordedSignal.id`, not the Signal envelope ID.
 - Keep retry, concurrency, and rate-limit policy in the calling application.
@@ -38,6 +39,7 @@ Model domain events as validated signals and route them predictably through disp
 - Schema-backed Signal extension modules and Signal-owned dispatch metadata.
 - General term serializers, dynamic type providers, and MessagePack.
 - Process-dictionary trace state and Signal-owned sampling policy.
+- HTTP method, retry, TLS, redirect, connection-pool, and Webhook policy in the built-in HTTP adapter.
 
 ## References
 - `README.md`

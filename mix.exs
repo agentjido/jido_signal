@@ -60,7 +60,7 @@ defmodule Jido.Signal.MixProject do
 
   def application do
     [
-      extra_applications: [:crypto, :logger],
+      extra_applications: [:crypto, :inets, :logger, :public_key, :ssl],
       mod: {Jido.Signal.Application, []}
     ]
   end
@@ -118,8 +118,7 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Dispatch.Named,
           Jido.Signal.Dispatch.NoopAdapter,
           Jido.Signal.Dispatch.PidAdapter,
-          Jido.Signal.Dispatch.PubSub,
-          Jido.Signal.Dispatch.Webhook
+          Jido.Signal.Dispatch.PubSub
         ],
         Serialization: [
           Jido.Signal.Serialization

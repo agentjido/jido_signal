@@ -181,7 +181,14 @@ These APIs and options are removed:
 
 Start a Task in your application for asynchronous work. Put retry, concurrency,
 rate-limit, and circuit-breaker policy in the application that owns the work.
-The HTTP and webhook adapters make one request for each dispatch.
+The HTTP adapter sends structured CloudEvents JSON with OTP `:httpc`. It does
+not follow redirects, and it accepts only `url`, `headers`, and `timeout`.
+Dispatch adds no retry loop. OTP `:httpc` can still honor `Retry-After` on a
+503 response, and OTP 27 has no option to disable that client behavior. Use a
+custom adapter when strict single-attempt delivery is required. The old
+`method`, `retry`, and `ssl_options` options are removed. The
+proprietary Webhook adapter is also removed; use a custom adapter when an
+endpoint needs request signing.
 
 ## Update Bus Configuration
 

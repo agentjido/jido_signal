@@ -7,7 +7,7 @@ defmodule Jido.Signal.Dispatch do
   retries, concurrency limits, and circuit breaking.
 
   Built-in adapters are `:pid`, `:named`, `:pubsub`, `:bus`, `:logger`,
-  `:console`, `:noop`, `:http`, and `:webhook`. A custom adapter can implement
+  `:console`, `:noop`, and `:http`. A custom adapter can implement
   `Jido.Signal.Dispatch.Adapter`.
   """
 
@@ -24,7 +24,6 @@ defmodule Jido.Signal.Dispatch do
           | :console
           | :noop
           | :http
-          | :webhook
           | nil
           | module()
   @type dispatch_config :: {adapter(), keyword()}
@@ -44,8 +43,7 @@ defmodule Jido.Signal.Dispatch do
     logger: Jido.Signal.Dispatch.LoggerAdapter,
     console: Jido.Signal.Dispatch.ConsoleAdapter,
     noop: Jido.Signal.Dispatch.NoopAdapter,
-    http: Jido.Signal.Dispatch.Http,
-    webhook: Jido.Signal.Dispatch.Webhook
+    http: Jido.Signal.Dispatch.Http
   }
 
   @doc """
@@ -257,7 +255,7 @@ defmodule Jido.Signal.Dispatch do
 
   defp invalid_adapter_message(adapter) do
     "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, " <>
-      ":pubsub, :bus, :logger, :console, :noop, :http, :webhook or a module " <>
+      ":pubsub, :bus, :logger, :console, :noop, :http or a module " <>
       "implementing Jido.Signal.Dispatch.Adapter"
   end
 
@@ -282,7 +280,7 @@ defmodule Jido.Signal.Dispatch do
        Error.dispatch_error("Signal dispatch failed", %{
          adapter: adapter,
          reason: reason,
-         config: config
+         target: target_summary(adapter, config)
        })}
     else
       {:error, reason}
@@ -294,9 +292,9 @@ defmodule Jido.Signal.Dispatch do
       {:error,
        Error.validation_error("Invalid adapter configuration", %{
          field: "config",
-         value: config,
          adapter: adapter,
-         reason: reason
+         reason: reason,
+         target: target_summary(adapter, config)
        })}
     else
       {:error, reason}
@@ -317,7 +315,17 @@ defmodule Jido.Signal.Dispatch do
     Error.dispatch_error("Signal dispatch failed", %{
       adapter: target.adapter,
       reason: reason,
-      config: Target.to_tuple(target)
+      target: target_summary(target.adapter, Target.to_tuple(target))
     })
   end
+
+  defp target_summary(adapter, {_configured_adapter, opts}) when is_list(opts) do
+    %{
+      adapter: adapter,
+      target: get_target_from_opts(opts),
+      target_kind: target_kind(opts)
+    }
+  end
+
+  defp target_summary(adapter, _config), do: %{adapter: adapter}
 end
