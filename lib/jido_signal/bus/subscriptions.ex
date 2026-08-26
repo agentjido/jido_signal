@@ -1,4 +1,4 @@
-defmodule Jido.Signal.Bus.Subscriber do
+defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   @moduledoc false
 
   @enforce_keys [:id, :path, :durable?, :cursor, :created_at]
@@ -29,7 +29,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
   @moduledoc false
 
   alias Jido.Signal.Bus.DurableSubscription
-  alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.Bus.Subscriptions.Subscriber
   alias Jido.Signal.ID
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry

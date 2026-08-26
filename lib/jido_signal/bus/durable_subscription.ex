@@ -3,7 +3,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
 
   alias Jido.Signal.Bus.RecordedSignal
   alias Jido.Signal.Bus.Store
-  alias Jido.Signal.Bus.Subscriber
+  alias Jido.Signal.Bus.Subscriptions.Subscriber
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
