@@ -59,7 +59,7 @@ defmodule Jido.Signal.Serialization.SecurityTest do
       # Now try with unknown fields during deserialization
       # The safe_build_struct should only map known fields
       simple_json =
-        ~s({"id":"123","source":"/test","specversion":"1.0.2","time":"2025-11-17T21:00:00Z","type":"test.event"})
+        ~s({"id":"123","source":"/test","specversion":"1.0","time":"2025-11-17T21:00:00Z","type":"test.event"})
 
       {:ok, result2} = JsonSerializer.deserialize(simple_json, type: "Elixir.Jido.Signal")
       assert %Jido.Signal{} = result2

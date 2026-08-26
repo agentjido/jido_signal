@@ -7,7 +7,6 @@ defmodule Jido.Signal.TraceContextTest do
   alias Jido.Signal.TraceContext
 
   setup do
-    Jido.Signal.Ext.Registry.register(Jido.Signal.Ext.Trace)
     TraceContext.clear()
     :ok
   end

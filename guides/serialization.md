@@ -13,14 +13,14 @@ matching functions on `Jido.Signal` remain available for v2 compatibility.
 
 All Signal formats use `Jido.Signal.to_map/1` before encoding and
 `Jido.Signal.from_map/1` after decoding. The canonical map uses string keys,
-flattens extension attributes, omits nil optional fields, and writes
-`"jido_schema_version" => 2`. Version 1 payloads and payloads without a version
+flattens context attributes, and omits nil optional fields. It does not add a
+Jido-specific wire marker. Legacy payloads with `jido_schema_version` 1 or 2
 remain readable.
 
 The stable wire fields are `specversion`, `id`, `source`, `type`, `subject`,
-`time`, `datacontenttype`, `dataschema`, `data`, registered extension attributes,
-and `jido_schema_version`. Internal structs and extension containers are not wire
-formats.
+`time`, `datacontenttype`, `dataschema`, `data`, and flat CloudEvents extension
+context attributes. Internal structs and the `extensions` container are not
+wire formats.
 
 ### Serializer Behaviour
 

@@ -4,169 +4,62 @@ defmodule Jido.Signal.Serialization.VersioningTest do
   alias Jido.Signal
   alias Jido.Signal.Serialization.{ErlangTermSerializer, JsonSerializer, MsgpackSerializer}
 
-  defmodule TestExt do
-    use Jido.Signal.Ext,
-      namespace: "versiontest",
-      schema: Zoi.object(%{version_message: Zoi.string()})
+  test "canonical output uses CloudEvents 1.0 without a Jido marker" do
+    signal = Signal.new!(type: "test.event", source: "/test")
+
+    assert {:ok, json} = JsonSerializer.serialize(signal)
+    map = Jason.decode!(json)
+
+    assert map["specversion"] == "1.0"
+    refute Map.has_key?(map, "jido_schema_version")
   end
 
-  describe "JsonSerializer versioning" do
-    test "serialized Signal includes jido_schema_version" do
-      signal = Signal.new!(type: "test.event", source: "/test")
-      {:ok, json} = JsonSerializer.serialize(signal)
-      map = Jason.decode!(json)
-
-      assert map["jido_schema_version"] == Signal.wire_version()
-    end
-
-    test "version field survives round-trip" do
-      signal = Signal.new!(type: "test.event", source: "/test", id: "123")
-      {:ok, json} = JsonSerializer.serialize(signal)
-      {:ok, deserialized} = JsonSerializer.deserialize(json)
-
-      # Verify signal was reconstructed correctly
-      assert deserialized["type"] == "test.event"
-      assert deserialized["source"] == "/test"
-    end
-
-    test "deserializes old signals without version field" do
-      # Simulate old signal without version
-      old_json = ~s({"type":"test.event","source":"/test","id":"old123"})
-      {:ok, deserialized} = JsonSerializer.deserialize(old_json)
-
-      assert deserialized["type"] == "test.event"
-      assert deserialized["source"] == "/test"
-    end
-
-    test "accepts signals with explicit version field" do
-      json_with_version = ~s({"type":"test.event","source":"/test","jido_schema_version":1})
-      {:ok, deserialized} = JsonSerializer.deserialize(json_with_version)
-
-      assert deserialized["type"] == "test.event"
-    end
-  end
-
-  describe "MsgpackSerializer versioning" do
-    test "serialized Signal includes jido_schema_version" do
-      signal = Signal.new!(type: "test.event", source: "/test")
-      {:ok, msgpack} = MsgpackSerializer.serialize(signal)
-      {:ok, unpacked} = Msgpax.unpack(msgpack)
-
-      assert unpacked["jido_schema_version"] == Signal.wire_version()
-    end
-
-    test "version field survives round-trip" do
-      signal = Signal.new!(type: "test.event", source: "/test", id: "123")
-      {:ok, msgpack} = MsgpackSerializer.serialize(signal)
-      {:ok, deserialized} = MsgpackSerializer.deserialize(msgpack)
-
-      assert deserialized["type"] == "test.event"
-      assert deserialized["source"] == "/test"
-    end
-  end
-
-  describe "ErlangTermSerializer versioning" do
-    test "serialized Signal includes jido_schema_version" do
-      signal = Signal.new!(type: "test.event", source: "/test")
-      {:ok, term_binary} = ErlangTermSerializer.serialize(signal)
-      term_map = :erlang.binary_to_term(term_binary, [:safe])
-
-      version = term_map["jido_schema_version"]
-      assert version == Signal.wire_version()
-    end
-
-    test "version field survives round-trip" do
-      signal = Signal.new!(type: "test.event", source: "/test", id: "123")
-      {:ok, term_binary} = ErlangTermSerializer.serialize(signal)
-      {:ok, deserialized} = ErlangTermSerializer.deserialize(term_binary)
-
-      # Check core fields are preserved
-      assert is_map(deserialized)
-    end
-  end
-
-  describe "backward compatibility" do
-    test "all serializers handle signals without version gracefully" do
-      # Create a signal, serialize it, manually remove version, deserialize
-      signal = Signal.new!(type: "test.event", source: "/test")
-
-      # JSON
-      {:ok, json} = JsonSerializer.serialize(signal)
-      json_map = Jason.decode!(json)
-      no_version_json = json_map |> Map.delete("jido_schema_version") |> Jason.encode!()
-      assert {:ok, _} = JsonSerializer.deserialize(no_version_json)
-
-      # MsgPack
-      {:ok, msgpack} = MsgpackSerializer.serialize(signal)
-      {:ok, msgpack_map} = Msgpax.unpack(msgpack)
-      no_version_map = Map.delete(msgpack_map, "jido_schema_version")
-      {:ok, no_version_msgpack_iodata} = Msgpax.pack(no_version_map)
-      no_version_msgpack = IO.iodata_to_binary(no_version_msgpack_iodata)
-      assert {:ok, _} = MsgpackSerializer.deserialize(no_version_msgpack)
-    end
-  end
-
-  describe "version field with extensions" do
-    test "version field coexists with extensions" do
-      signal = Signal.new!(type: "test.event", source: "/test")
-
-      {:ok, signal_with_ext} =
-        Signal.put_extension(signal, "versiontest", %{version_message: "value"})
-
-      {:ok, json} = JsonSerializer.serialize(signal_with_ext)
-      map = Jason.decode!(json)
-
-      # Both version and extension data should be present
-      assert map["jido_schema_version"] == Signal.wire_version()
-      assert map["version_message"] == "value"
-    end
-
-    test "round-trip preserves version and extensions" do
-      signal = Signal.new!(type: "test.event", source: "/test")
-
-      {:ok, signal_with_ext} =
-        Signal.put_extension(signal, "versiontest", %{version_message: "val"})
-
-      {:ok, json} = JsonSerializer.serialize(signal_with_ext)
-      {:ok, deserialized} = Signal.deserialize(json)
-
-      assert deserialized.type == "test.event"
-      assert deserialized.extensions["versiontest"] == %{version_message: "val"}
-    end
-
-    test "rejects unsupported Signal wire versions" do
+  test "reads supported legacy Jido wire markers" do
+    for version <- [1, 2] do
       json =
         Jason.encode!(%{
           "specversion" => "1.0.2",
-          "type" => "test.event",
+          "id" => "legacy-#{version}",
           "source" => "/test",
-          "jido_schema_version" => 999
+          "type" => "test.event",
+          "jido_schema_version" => version
         })
 
-      assert {:error, error} = Signal.deserialize(json)
-      assert error =~ "unsupported jido_schema_version 999"
+      assert {:ok, signal} = Signal.deserialize(json)
+      assert signal.specversion == "1.0"
+      assert signal.id == "legacy-#{version}"
     end
   end
 
-  describe "canonical cross-format representation" do
-    test "all formats round-trip the same logical Signal" do
-      for data <- ["scalar", [1, %{"nested" => true}], %{"count" => 2}] do
-        signal =
-          Signal.new!("test.cross_format", data,
-            source: "/test",
-            id: "cross-format",
-            subject: "subject"
-          )
+  test "rejects an unsupported legacy Jido wire marker" do
+    json =
+      Jason.encode!(%{
+        "specversion" => "1.0",
+        "id" => "123",
+        "source" => "/test",
+        "type" => "test.event",
+        "jido_schema_version" => 999
+      })
 
-        decoded =
-          for serializer <- [JsonSerializer, MsgpackSerializer, ErlangTermSerializer] do
-            assert {:ok, binary} = Signal.serialize(signal, serializer: serializer)
-            assert {:ok, result} = Signal.deserialize(binary, serializer: serializer)
-            Signal.to_map(result)
-          end
+    assert {:error, error} = Signal.deserialize(json)
+    assert error =~ "unsupported jido_schema_version 999"
+  end
 
-        assert Enum.uniq(decoded) == [Signal.to_map(signal)]
+  test "all formats use the same canonical representation" do
+    signal =
+      Signal.new!("test.crossformat", %{"count" => 2},
+        source: "/test",
+        id: "cross-format",
+        subject: "subject"
+      )
+
+    decoded =
+      for serializer <- [JsonSerializer, MsgpackSerializer, ErlangTermSerializer] do
+        assert {:ok, binary} = Signal.serialize(signal, serializer: serializer)
+        assert {:ok, result} = Signal.deserialize(binary, serializer: serializer)
+        Signal.to_map(result)
       end
-    end
+
+    assert Enum.uniq(decoded) == [Signal.to_map(signal)]
   end
 end

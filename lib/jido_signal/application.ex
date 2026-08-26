@@ -21,10 +21,6 @@ defmodule Jido.Signal.Application do
   def start(_type, _args) do
     children = [
       {Registry, keys: :unique, name: Jido.Signal.Registry},
-
-      # Extension Registry for Signal extensions
-      Jido.Signal.Ext.Registry,
-
       # Middleware callback Task Supervisor
       {Task.Supervisor, name: Jido.Signal.TaskSupervisor}
     ]

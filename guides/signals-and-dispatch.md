@@ -3,7 +3,7 @@
 
 ## Signal Structure
 
-Signals implement the CloudEvents v1.0.2 specification with Jido extensions:
+Signals implement the CloudEvents 1.0 specification:
 
 ```elixir
 # Basic signal
@@ -21,13 +21,13 @@ Signals implement the CloudEvents v1.0.2 specification with Jido extensions:
 
 # Signal fields
 signal.id              # UUID7 (auto-generated)
-signal.specversion     # "1.0.2"
+signal.specversion     # "1.0"
 signal.type            # "user.created"
 signal.source          # "/auth/service"
 signal.data            # %{user_id: "123", email: "user@example.com"}
-signal.time            # ISO 8601 timestamp (auto-generated)
-signal.datacontenttype # "application/json" (default)
-signal.extensions      # Map of extension namespaces to extension data
+signal.time            # RFC 3339 timestamp, or nil when not supplied
+signal.datacontenttype # Media type, or nil when not supplied
+signal.extensions      # Flat CloudEvents extension context attributes
 
 # Data semantics (CloudEvents):
 # - When datacontenttype is JSON (or omitted in JSON format), data may be any JSON value
@@ -197,33 +197,21 @@ end
 Jido.Signal.Dispatch.dispatch(signal, {:pubsub, [target: :pubsub, topic: "user-events"]})
 ```
 
-Zoi is the schema format for custom Signals and Signal extensions.
-
-Zoi schemas must accept and return map-shaped data. Anonymous refinement
-functions are supported when the schema is declared inline and does not use
-caller variables. Use a named `{Module, :function, args}` refinement for schemas
-stored in variables, module attributes, or dynamic options.
-
-Typed signals can also define constructor-time extension policy:
+Zoi is the schema format for custom Signals. Zoi schemas must accept and return
+map-shaped data. Schemas must be static module data. Use named MFA values for
+all Zoi callbacks:
 
 ```elixir
-defmodule UserCreatedSignal do
-  use Jido.Signal,
-    type: "user.created",
-    schema: Zoi.object(%{
-      user_id: Zoi.string()
-    }),
-    extension_policy: [
-      {MyApp.Signal.Ext.Trace, :required},
-      {MyApp.Signal.Ext.Dispatch, :forbidden}
-    ]
+defmodule MyApp.SignalChecks do
+  def not_blank(value, _opts) do
+    if String.trim(value) == "", do: {:error, "cannot be blank"}, else: :ok
+  end
 end
 
-{:ok, signal} =
-  UserCreatedSignal.new(%{user_id: "123"},
-    trace: %{trace_id: "trace-123", span_id: "span-456"}
-  )
+schema = Zoi.string() |> Zoi.refine({MyApp.SignalChecks, :not_blank, []})
 ```
+
+Anonymous callbacks and lazy schemas are rejected at compile time.
 
 ### Schema Validation
 

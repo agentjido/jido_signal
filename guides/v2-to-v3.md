@@ -19,7 +19,7 @@ Use Elixir 1.18 or later and OTP 27 or later.
 
 ## Replace NimbleOptions Schemas with Zoi
 
-Typed Signals and extensions now accept Zoi schemas only:
+Typed Signals accept Zoi schemas only:
 
 ```elixir
 defmodule MyApp.UserCreated do
@@ -36,6 +36,25 @@ end
 Remove NimbleOptions schema declarations and error conversion from your Signal
 modules. Zoi errors pass through the Jido Signal structured error boundary.
 
+Zoi schemas must be static module data. Replace anonymous refinement,
+transform, and callback functions with named `{Module, :function, args}` MFA
+values. Lazy schemas are not supported. The compiler rejects these values when
+it expands `use Jido.Signal`.
+
+## Make Envelope Semantics Explicit
+
+Jido generates a UUID7 only when it creates a new Signal ID. It accepts any
+non-empty external ID when it reads a Signal.
+
+The CloudEvents wire `specversion` is `"1.0"`. The old `"1.0.2"` value named a
+specification document patch. The v3 reader accepts that old value and
+normalizes it to `"1.0"`.
+
+Generic construction now requires `source`. Typed Signals can supply a
+`default_source`. Jido no longer infers source from the call stack. Jido also
+does not create an event time or infer `application/json`. Supply `time` and
+`datacontenttype` only when they are known.
+
 ## Use the Canonical Signal Map
 
 Use `Jido.Signal.to_map/1` and `Jido.Signal.from_map/1` for storage and transport
@@ -46,12 +65,12 @@ map = Jido.Signal.to_map(signal)
 {:ok, signal} = Jido.Signal.from_map(map)
 ```
 
-The v3 writer adds `"jido_schema_version" => 2`. It uses string keys, omits nil
-optional fields, and flattens extension attributes. The reader accepts version 1,
-version 2, and unversioned v2 payloads.
+The v3 writer uses string keys, omits nil optional fields, and flattens valid
+CloudEvents context attributes. It does not add a Jido-specific wire marker.
+The reader accepts legacy `jido_schema_version` 1 and 2 payloads.
 
-The removed `jido_dispatch` field is read as the `"dispatch"` extension for old
-payloads. New payloads do not write `jido_dispatch`.
+The removed `jido_dispatch` field is not Signal metadata. Move dispatch targets
+to Bus subscriptions or pass them directly to `Jido.Signal.Dispatch`.
 
 You can use the Serialization entry module:
 
@@ -59,6 +78,32 @@ You can use the Serialization entry module:
 {:ok, binary} = Jido.Signal.Serialization.serialize(signal)
 {:ok, signal} = Jido.Signal.Serialization.deserialize(binary)
 ```
+
+## Replace Schema-backed Signal Extensions
+
+The `Jido.Signal.Ext` behavior and extension registry are removed. Use a custom
+Signal module with a Zoi schema for domain data:
+
+```elixir
+defmodule MyApp.PaymentCaptured do
+  use Jido.Signal,
+    type: "payment.captured",
+    default_source: "/billing",
+    schema: Zoi.object(%{payment_id: Zoi.string()})
+end
+```
+
+CloudEvents extension context attributes remain available for small routing or
+processing metadata:
+
+```elixir
+{:ok, signal} = Jido.Signal.put_context(signal, "tenantid", "tenant-123")
+```
+
+Context names contain only lower-case letters and digits, start with a letter,
+and have at most 20 characters. Values must use a CloudEvents context type.
+Maps, lists, tuples, PIDs, and dispatch configurations are not valid context
+values.
 
 ## Keep Router Precedence
 

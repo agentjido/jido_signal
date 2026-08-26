@@ -113,7 +113,8 @@ defmodule Jido.Signal.Bus.V3BusTest do
     assert stored["format_version"] == 1
     assert stored["cursor"] == 1
     assert stored["signal"] == Signal.to_map(event)
-    assert stored["signal"]["jido_schema_version"] == 2
+    assert stored["signal"]["specversion"] == "1.0"
+    refute Map.has_key?(stored["signal"], "jido_schema_version")
   end
 
   test "removes a regular subscription after its target exits" do

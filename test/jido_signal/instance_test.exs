@@ -20,7 +20,6 @@ defmodule Jido.Signal.InstanceTest do
       assert Names.registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Registry
       assert Names.task_supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.TaskSupervisor
       assert Names.supervisor(jido: MyApp.Jido) == MyApp.Jido.Signal.Supervisor
-      assert Names.ext_registry(jido: MyApp.Jido) == MyApp.Jido.Signal.Ext.Registry
     end
 
     test "handles deeply nested instance names" do
@@ -49,7 +48,6 @@ defmodule Jido.Signal.InstanceTest do
       assert Process.whereis(Names.supervisor(instance_opts)) == pid
       assert Process.whereis(Names.registry(instance_opts)) |> is_pid()
       assert Process.whereis(Names.task_supervisor(instance_opts)) |> is_pid()
-      assert Process.whereis(Names.ext_registry(instance_opts)) |> is_pid()
 
       # Cleanup
       Instance.stop(instance)

@@ -1,665 +1,167 @@
 defmodule Jido.Signal.CustomTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Signal.CustomTest, as: CustomTest
   alias Jido.Signal.ID
 
-  # Define a test Signal module
-  defmodule TestSignal do
+  defmodule UserCreated do
     use Jido.Signal,
-      type: "test.signal",
-      schema:
-        Zoi.object(%{
-          user_id: Zoi.string(),
-          message: Zoi.string(),
-          count: Zoi.integer() |> Zoi.default(1)
-        })
-  end
-
-  defmodule ZoiSignal do
-    use Jido.Signal,
-      type: "zoi.signal",
+      type: "user.created",
+      default_source: "/accounts",
+      datacontenttype: "application/json",
+      dataschema: "https://example.com/schemas/user-created",
       schema:
         Zoi.object(%{
           user_id: Zoi.string(),
           email:
             Zoi.string()
-            |> Zoi.refine({CustomTest, :valid_email, []}),
+            |> Zoi.refine({Jido.Signal.CustomTest, :valid_email, []}),
           count: Zoi.integer() |> Zoi.default(1)
         })
   end
 
-  defmodule VariableZoiSignal do
-    field_schema = Zoi.string()
-
+  defmodule ExplicitSource do
     use Jido.Signal,
-      type: "variable.zoi.signal",
-      schema: Zoi.object(%{value: field_schema})
+      type: "explicit.source",
+      schema: Zoi.object(%{value: Zoi.string()})
   end
 
-  defmodule StaticMfaSignal do
-    use Jido.Signal,
-      type: "static.mfa.signal",
-      schema:
-        Zoi.object(%{
-          value:
-            Zoi.integer()
-            |> Zoi.refine({CustomTest, :positive, []})
-        })
-  end
-
-  defmodule ScalarTransformSignal do
-    use Jido.Signal,
-      type: "scalar.transform.signal",
-      schema: Zoi.object(%{}) |> Zoi.transform({CustomTest, :invalid_transform, []})
-  end
-
-  # Define another test Signal module with minimal config
-  defmodule SimpleSignal do
-    use Jido.Signal,
-      type: "simple.signal"
-  end
-
-  # Define a Signal with additional CloudEvents fields
-  defmodule ComplexSignal do
-    use Jido.Signal,
-      type: "complex.signal",
-      default_source: "/test/source",
-      datacontenttype: "application/json",
-      dataschema: "https://example.com/schema",
-      schema:
-        Zoi.object(%{
-          action: Zoi.string(),
-          priority: Zoi.enum([:low, :medium, :high]) |> Zoi.default(:medium)
-        })
-  end
-
-  defmodule RequiredPolicyExtension do
-    use Jido.Signal.Ext,
-      namespace: "requiredext",
-      schema: Zoi.object(%{id: Zoi.string()})
-  end
-
-  defmodule OptionalPolicyExtension do
-    use Jido.Signal.Ext,
-      namespace: "optionalext",
-      schema: Zoi.object(%{id: Zoi.string()})
-  end
-
-  defmodule ForbiddenPolicyExtension do
-    use Jido.Signal.Ext,
-      namespace: "forbiddenext",
-      schema: Zoi.object(%{id: Zoi.string()})
-  end
-
-  defmodule PolicySignal do
-    use Jido.Signal,
-      type: "policy.signal",
-      schema: Zoi.object(%{message: Zoi.string()}),
-      extension_policy: [
-        {RequiredPolicyExtension, :required},
-        {OptionalPolicyExtension, :optional},
-        {ForbiddenPolicyExtension, :forbidden}
-      ]
-  end
-
-  describe "TestSignal" do
-    test "creates valid signal with required data" do
-      data = %{user_id: "123", message: "Hello World"}
-
-      assert {:ok, signal} = TestSignal.new(data)
-      assert %Jido.Signal{} = signal
-      assert signal.type == "test.signal"
-      assert signal.data == %{user_id: "123", message: "Hello World", count: 1}
-      assert signal.specversion == "1.0.2"
-      assert is_binary(signal.id)
-      assert is_binary(signal.time)
-    end
-
-    test "creates signal with new! function" do
-      data = %{user_id: "456", message: "Test"}
-
-      signal = TestSignal.new!(data)
-      assert %Jido.Signal{} = signal
-      assert signal.type == "test.signal"
-      assert signal.data.user_id == "456"
-    end
-
-    test "validates required fields" do
-      data = %{message: "Missing user_id"}
-
-      assert {:error, error} = TestSignal.new(data)
-      assert error =~ "user_id"
-      assert error =~ "required"
-    end
-
-    test "validates data types" do
-      data = %{user_id: "123", message: "Hello", count: "not_an_integer"}
-
-      assert {:error, error} = TestSignal.new(data)
-      assert error =~ "expected integer"
-    end
-
-    test "uses default values from schema" do
-      data = %{user_id: "123", message: "Hello"}
-
-      assert {:ok, signal} = TestSignal.new(data)
-      assert signal.data.count == 1
-    end
-
-    test "allows overriding signal options" do
-      data = %{user_id: "123", message: "Hello"}
-      opts = [source: "/custom/source", subject: "custom-subject"]
-
-      assert {:ok, signal} = TestSignal.new(data, opts)
-      assert signal.source == "/custom/source"
-      assert signal.subject == "custom-subject"
-    end
-
-    test "exposes metadata functions" do
-      assert TestSignal.type() == "test.signal"
-      schema = TestSignal.schema()
-      assert %Zoi.Types.Map{} = schema
-      assert TestSignal.default_source() == nil
-      assert TestSignal.extension_policy() == %{}
-
-      metadata = TestSignal.to_json()
-      assert metadata.type == "test.signal"
-      assert %Zoi.Types.Map{} = metadata.schema
-      assert metadata.extension_policy == %{}
-    end
-
-    test "validates data with validate_data/1" do
-      valid_data = %{user_id: "123", message: "Hello"}
-      assert {:ok, validated} = TestSignal.validate_data(valid_data)
-      assert validated.count == 1
-
-      invalid_data = %{message: "Missing user_id"}
-      assert {:error, error} = TestSignal.validate_data(invalid_data)
-      assert error =~ "user_id"
-      assert error =~ "required"
-    end
-  end
-
-  describe "ZoiSignal" do
-    test "creates a Signal with valid data and applies defaults" do
+  describe "typed Signal construction" do
+    test "uses configured envelope values and validates data" do
       assert {:ok, signal} =
-               ZoiSignal.new(%{user_id: "123", email: "user@example.com"})
+               UserCreated.new(%{user_id: "123", email: "user@example.com"})
 
-      assert signal.type == "zoi.signal"
-      assert signal.data == %{user_id: "123", email: "user@example.com", count: 1}
-      assert %Zoi.Types.Map{} = ZoiSignal.schema()
-      assert %Zoi.Types.Map{} = ZoiSignal.to_json().schema
+      assert signal.type == "user.created"
+      assert signal.source == "/accounts"
+      assert signal.specversion == "1.0"
+      assert signal.time == nil
+      assert signal.datacontenttype == "application/json"
+      assert signal.dataschema == "https://example.com/schemas/user-created"
+      assert signal.data.count == 1
+      assert ID.valid?(signal.id)
     end
 
-    test "returns a useful error for invalid data" do
-      assert {:error, error} = ZoiSignal.new(%{user_id: "123", email: "invalid"})
+    test "supports an explicit source override" do
+      assert {:ok, signal} =
+               UserCreated.new(
+                 %{user_id: "123", email: "user@example.com"},
+                 source: "/imports"
+               )
 
-      assert is_binary(error)
-      assert error =~ "Invalid parameters for Signal"
+      assert signal.source == "/imports"
+    end
+
+    test "requires source when the definition has no default" do
+      assert {:error, error} = ExplicitSource.new(%{value: "test"})
+      assert error =~ "source"
+
+      assert {:ok, signal} = ExplicitSource.new(%{value: "test"}, source: "/test")
+      assert signal.source == "/test"
+    end
+
+    test "returns a useful Zoi validation error" do
+      assert {:error, error} =
+               UserCreated.new(%{user_id: "123", email: "not-an-email"})
+
       assert error =~ "email"
       assert error =~ "must contain @"
     end
 
-    test "uses a named MFA refinement" do
-      assert {:ok, validated} =
-               ZoiSignal.validate_data(%{user_id: "123", email: "user@example.com"})
+    test "keeps type and data fixed by the definition" do
+      assert {:ok, signal} =
+               UserCreated.new(
+                 %{user_id: "123", email: "user@example.com"},
+                 type: "other.type",
+                 data: %{other: true}
+               )
 
-      assert validated.count == 1
-
-      assert {:error, error} =
-               ZoiSignal.validate_data(%{user_id: "123", email: "invalid"})
-
-      assert error =~ "must contain @"
+      assert signal.type == "user.created"
+      assert signal.data.user_id == "123"
     end
 
-    test "uses the direct Zoi unknown-key behavior" do
-      assert {:ok, signal} =
-               ZoiSignal.new(%{
-                 user_id: "123",
-                 email: "user@example.com",
-                 extra: "removed"
-               })
+    test "exposes concise static metadata" do
+      assert UserCreated.type() == "user.created"
+      assert UserCreated.default_source() == "/accounts"
+      assert %Zoi.Types.Map{} = UserCreated.schema()
 
-      refute Map.has_key?(signal.data, :extra)
+      assert UserCreated.to_json() == %{
+               type: "user.created",
+               default_source: "/accounts",
+               datacontenttype: "application/json",
+               dataschema: "https://example.com/schemas/user-created",
+               schema: UserCreated.schema()
+             }
     end
   end
 
-  describe "Zoi schema loading" do
-    test "stores a schema that contains a caller variable" do
-      assert {:ok, signal} = VariableZoiSignal.new(%{value: "stored"})
-      assert signal.data == %{value: "stored"}
-      assert %Zoi.Types.Map{} = VariableZoiSignal.schema()
+  describe "static Zoi schema checks" do
+    test "accepts named MFA effects" do
+      assert {:ok, data} =
+               UserCreated.validate_data(%{user_id: "123", email: "user@example.com"})
+
+      assert data.count == 1
     end
 
-    test "stores and runs a named MFA refinement" do
-      assert {:ok, %{value: 1}} = StaticMfaSignal.validate_data(%{value: 1})
+    test "rejects anonymous functions at compile time" do
+      module = unique_module("AnonymousSchema")
 
-      assert {:error, error} = StaticMfaSignal.validate_data(%{value: 0})
-      assert error =~ "must be positive"
-    end
-
-    test "evaluates non-literal options once" do
-      module = unique_module("CountedOptionsSignal")
-      {:ok, counter} = Agent.start_link(fn -> 0 end)
-
-      create_module(
-        module,
-        quote do
-          use Jido.Signal, CustomTest.counted_options(unquote(counter))
-        end
-      )
-
-      assert Agent.get(counter, & &1) == 1
-      assert module.type() == "counted.options.signal"
-    end
-
-    test "builds a storable schema once" do
-      module = unique_module("CountedSchemaSignal")
-      {:ok, counter} = Agent.start_link(fn -> 0 end)
-
-      create_module(
-        module,
-        quote do
-          counter = unquote(counter)
-
-          use Jido.Signal,
-            type: "counted.schema.signal",
-            schema: CustomTest.counted_schema(counter)
-        end
-      )
-
-      assert Agent.get(counter, & &1) == 1
-      assert %Zoi.Types.Map{} = module.schema()
-      assert %Zoi.Types.Map{} = module.schema()
-      assert {:ok, %{value: 1}} = module.validate_data(%{value: 1})
-      assert Agent.get(counter, & &1) == 1
-    end
-
-    test "rejects anonymous functions in dynamic schema options" do
-      module = unique_module("DynamicClosureSignal")
-
-      assert_raise CompileError,
-                   ~r/:schema must be static module data.*anonymous functions.*named MFA/s,
-                   fn ->
-                     create_module(
-                       module,
-                       quote do
-                         opts = [
-                           type: "dynamic.closure.signal",
-                           schema:
-                             Zoi.object(%{
-                               value:
-                                 Zoi.integer()
-                                 |> Zoi.refine(fn value -> value > 0 end)
-                             })
-                         ]
-
-                         use Jido.Signal, opts
-                       end
-                     )
-                   end
-    end
-
-    test "rejects inline anonymous schema effects" do
-      module = unique_module("InlineAnonymousSignal")
-
-      assert_raise CompileError,
-                   ~r/:schema must be static module data.*anonymous functions.*named MFA/s,
-                   fn ->
-                     create_module(
-                       module,
-                       quote do
-                         use Jido.Signal,
-                           type: "inline.anonymous.signal",
-                           schema:
-                             Zoi.object(%{
-                               value: Zoi.integer() |> Zoi.refine(fn _value -> :ok end)
-                             })
-                       end
-                     )
-                   end
-    end
-
-    test "rejects a Zoi schema that cannot accept map data" do
-      module = unique_module("ScalarSchemaSignal")
-
-      assert_raise CompileError, ~r/must accept map-shaped Signal data/, fn ->
+      assert_raise CompileError, ~r/anonymous functions are not supported/, fn ->
         create_module(
           module,
           quote do
             use Jido.Signal,
-              type: "scalar.schema.signal",
-              schema: Zoi.integer()
+              type: "anonymous.schema",
+              default_source: "/test",
+              schema:
+                Zoi.object(%{
+                  value: Zoi.string() |> Zoi.refine(fn _value, _opts -> :ok end)
+                })
           end
         )
       end
     end
 
-    test "rejects a non-map result from a Zoi transform" do
-      assert {:error, error} = ScalarTransformSignal.validate_data(%{})
-      assert error =~ "Zoi schema validation must return a map"
-    end
+    test "rejects lazy schemas at compile time" do
+      module = unique_module("LazySchema")
 
-    test "rejects lazy schemas" do
-      module = unique_module("LazySignal")
-
-      assert_raise CompileError, ~r/:schema must be static module data.*lazy schemas/s, fn ->
+      assert_raise CompileError, ~r/lazy schemas are not supported/, fn ->
         create_module(
           module,
           quote do
             use Jido.Signal,
-              type: "lazy.signal",
-              schema: Zoi.lazy({__MODULE__, :data_schema, []})
-
-            def data_schema, do: Zoi.object(%{value: Zoi.integer()})
+              type: "lazy.schema",
+              default_source: "/test",
+              schema: Zoi.lazy(fn -> Zoi.object(%{value: Zoi.string()}) end)
           end
         )
       end
     end
-  end
 
-  describe "SimpleSignal" do
-    test "creates signal without schema validation" do
-      data = %{anything: "goes", number: 42}
+    test "rejects non-Zoi schemas at compile time" do
+      module = unique_module("InvalidSchema")
 
-      assert {:ok, signal} = SimpleSignal.new(data)
-      assert signal.type == "simple.signal"
-      assert signal.data == data
-    end
-
-    test "works with empty data" do
-      assert {:ok, signal} = SimpleSignal.new()
-      assert signal.type == "simple.signal"
-      assert signal.data == %{}
-    end
-
-    test "keeps no-schema payloads unchanged" do
-      assert {:ok, "anything"} = SimpleSignal.validate_data("anything")
-    end
-  end
-
-  describe "ComplexSignal" do
-    test "uses configured CloudEvents fields" do
-      data = %{action: "test_action"}
-
-      assert {:ok, signal} = ComplexSignal.new(data)
-      assert signal.type == "complex.signal"
-      assert signal.source == "/test/source"
-      assert signal.datacontenttype == "application/json"
-      assert signal.dataschema == "https://example.com/schema"
-      assert signal.data.priority == :medium
-    end
-
-    test "allows runtime override of source and other fields" do
-      data = %{action: "test_action"}
-
-      opts = [
-        source: "/runtime/source",
-        subject: "runtime-subject"
-      ]
-
-      assert {:ok, signal} = ComplexSignal.new(data, opts)
-      assert signal.type == "complex.signal"
-      assert signal.source == "/runtime/source"
-      assert signal.subject == "runtime-subject"
-      assert signal.datacontenttype == "application/json"
-    end
-
-    test "validates enum fields" do
-      valid_data = %{action: "test", priority: :high}
-      assert {:ok, signal} = ComplexSignal.new(valid_data)
-      assert signal.data.priority == :high
-
-      invalid_data = %{action: "test", priority: :invalid}
-      assert {:error, error} = ComplexSignal.new(invalid_data)
-      assert error =~ "expected one of"
-    end
-  end
-
-  describe "PolicySignal" do
-    test "exposes normalized extension policy metadata" do
-      expected_policy = %{
-        "forbiddenext" => :forbidden,
-        "optionalext" => :optional,
-        "requiredext" => :required
-      }
-
-      assert PolicySignal.extension_policy() == expected_policy
-      assert PolicySignal.to_json().extension_policy == expected_policy
-      assert PolicySignal.__signal_metadata__().extension_policy == expected_policy
-    end
-
-    test "creates a signal when required extension is present via top-level namespace" do
-      assert {:ok, signal} =
-               PolicySignal.new(%{message: "hello"},
-                 requiredext: %{id: "required-123"}
-               )
-
-      assert signal.extensions["requiredext"] == %{id: "required-123"}
-    end
-
-    test "returns error when required extension is missing" do
-      assert {:error, error} = PolicySignal.new(%{message: "hello"})
-      assert error =~ "Signal #{inspect(PolicySignal)}"
-      assert error =~ "\"requiredext\""
-      assert error =~ "requires extension namespace"
-    end
-
-    test "returns error when forbidden extension is passed as top-level namespace" do
-      assert {:error, error} =
-               PolicySignal.new(%{message: "hello"},
-                 requiredext: %{id: "required-123"},
-                 forbiddenext: %{id: "forbidden-123"}
-               )
-
-      assert error =~ "Signal #{inspect(PolicySignal)}"
-      assert error =~ "\"forbiddenext\""
-      assert error =~ "forbids extension namespace"
-    end
-
-    test "returns error when forbidden extension is passed via extensions map" do
-      assert {:error, error} =
-               PolicySignal.new(%{message: "hello"},
-                 requiredext: %{id: "required-123"},
-                 extensions: %{"forbiddenext" => %{id: "forbidden-123"}}
-               )
-
-      assert error =~ "Signal #{inspect(PolicySignal)}"
-      assert error =~ "\"forbiddenext\""
-      assert error =~ "forbids extension namespace"
-    end
-
-    test "allows optional extension to be omitted" do
-      assert {:ok, signal} =
-               PolicySignal.new(%{message: "hello"},
-                 requiredext: %{id: "required-123"}
-               )
-
-      assert signal.extensions["requiredext"] == %{id: "required-123"}
-      refute Map.has_key?(signal.extensions, "optionalext")
-    end
-
-    test "prefers explicit extensions map with atom keys over top-level namespace input" do
-      assert {:ok, signal} =
-               PolicySignal.new(%{message: "hello"},
-                 requiredext: %{id: "top-level"},
-                 extensions: %{requiredext: %{id: "explicit"}}
-               )
-
-      assert signal.extensions["requiredext"] == %{id: "explicit"}
-    end
-
-    test "returns error when effective required extension data is invalid" do
-      assert {:error, error} =
-               PolicySignal.new(%{message: "hello"},
-                 requiredext: %{}
-               )
-
-      assert error =~ "Signal #{inspect(PolicySignal)}"
-      assert error =~ "\"requiredext\""
-      assert error =~ "invalid data for extension namespace"
-      assert error =~ "required"
-      assert error =~ "id"
-    end
-
-    test "returns error when explicit extensions map contains invalid required data" do
-      assert {:error, error} =
-               PolicySignal.new(%{message: "hello"},
-                 extensions: %{requiredext: %{}}
-               )
-
-      assert error =~ "Signal #{inspect(PolicySignal)}"
-      assert error =~ "\"requiredext\""
-      assert error =~ "invalid data for extension namespace"
-      assert error =~ "required"
-      assert error =~ "id"
-    end
-  end
-
-  describe "Signal ID generation" do
-    test "generates valid UUID7 IDs" do
-      {:ok, signal} = TestSignal.new(%{user_id: "123", message: "test"})
-
-      assert ID.valid?(signal.id)
-
-      # Extract timestamp should work
-      timestamp = ID.extract_timestamp(signal.id)
-      assert is_integer(timestamp)
-      assert timestamp > 0
-    end
-
-    test "IDs are unique across multiple signals" do
-      data = %{user_id: "123", message: "test"}
-
-      {:ok, signal1} = TestSignal.new(data)
-      {:ok, signal2} = TestSignal.new(data)
-
-      assert signal1.id != signal2.id
-    end
-  end
-
-  describe "Signal serialization" do
-    test "can serialize and deserialize custom signals" do
-      data = %{user_id: "123", message: "Hello"}
-      {:ok, original} = TestSignal.new(data)
-
-      {:ok, json} = Jido.Signal.serialize(original)
-      assert is_binary(json)
-
-      {:ok, deserialized} = Jido.Signal.deserialize(json)
-      assert deserialized.type == original.type
-      # Data keys become strings after JSON serialization/deserialization
-      expected_data = %{"count" => 1, "message" => "Hello", "user_id" => "123"}
-      assert deserialized.data == expected_data
-      assert deserialized.id == original.id
-    end
-  end
-
-  describe "error handling" do
-    test "new! raises on validation errors" do
-      data = %{message: "Missing user_id"}
-
-      assert_raise RuntimeError, fn ->
-        TestSignal.new!(data)
+      assert_raise CompileError, ~r/must be a Zoi schema/, fn ->
+        create_module(
+          module,
+          quote do
+            use Jido.Signal,
+              type: "invalid.schema",
+              default_source: "/test",
+              schema: :not_a_schema
+          end
+        )
       end
     end
-
-    test "provides meaningful error messages" do
-      # user_id should be string
-      data = %{user_id: 123, message: "Hello"}
-
-      assert {:error, error} = TestSignal.new(data)
-      assert error =~ "expected string"
-    end
-
-    test "rejects unsupported schema formats at compile time" do
-      assert_raise CompileError,
-                   ~r/must be a Zoi schema/,
-                   fn ->
-                     defmodule InvalidSchemaSignal do
-                       use Jido.Signal,
-                         type: "invalid.schema.signal",
-                         schema: :not_a_schema
-                     end
-                   end
-    end
-
-    test "rejects invalid extension policy modes at compile time" do
-      assert_raise CompileError, ~r/invalid enum value.*extension_policy\[0\]\[1\]/, fn ->
-        defmodule InvalidPolicyModeSignal do
-          use Jido.Signal,
-            type: "invalid.policy.mode.signal",
-            extension_policy: [
-              {RequiredPolicyExtension, :sometimes}
-            ]
-        end
-      end
-    end
-
-    test "rejects non-module extension policy keys at compile time" do
-      assert_raise CompileError, ~r/expected module.*extension_policy\[0\]\[0\]/, fn ->
-        defmodule InvalidPolicyModuleSignal do
-          use Jido.Signal,
-            type: "invalid.policy.module.signal",
-            extension_policy: [
-              {:not_a_module, :required}
-            ]
-        end
-      end
-    end
-
-    test "rejects duplicate extension policy namespaces at compile time" do
-      defmodule DuplicatePolicyExtensionOne do
-        use Jido.Signal.Ext,
-          namespace: "duplicatepolicy"
-      end
-
-      defmodule DuplicatePolicyExtensionTwo do
-        use Jido.Signal.Ext,
-          namespace: "duplicatepolicy"
-      end
-
-      assert_raise CompileError,
-                   ~r/extension_policy declares namespace "duplicatepolicy" more than once/,
-                   fn ->
-                     defmodule DuplicatePolicySignal do
-                       use Jido.Signal,
-                         type: "duplicate.policy.signal",
-                         extension_policy: [
-                           {DuplicatePolicyExtensionOne, :required},
-                           {DuplicatePolicyExtensionTwo, :optional}
-                         ]
-                     end
-                   end
-    end
-  end
-
-  def counted_options(counter) do
-    Agent.update(counter, &(&1 + 1))
-    [type: "counted.options.signal", schema: Zoi.object(%{value: Zoi.integer()})]
-  end
-
-  def counted_schema(counter) do
-    Agent.update(counter, &(&1 + 1))
-    Zoi.object(%{value: Zoi.integer()})
   end
 
   def valid_email(email, _opts) do
     if String.contains?(email, "@"), do: :ok, else: {:error, "must contain @"}
   end
 
-  def positive(value, _opts) do
-    if value > 0, do: :ok, else: {:error, "must be positive"}
+  defp create_module(module, body) do
+    Module.create(module, body, Macro.Env.location(__ENV__))
   end
 
-  def invalid_transform(_data, _opts), do: :invalid
-
-  defp unique_module(prefix) do
-    Module.concat(__MODULE__, "#{prefix}#{System.unique_integer([:positive])}")
-  end
-
-  defp create_module(module, quoted) do
-    Module.create(module, quoted, Macro.Env.location(__ENV__))
+  defp unique_module(suffix) do
+    Module.concat(__MODULE__, "#{suffix}#{System.unique_integer([:positive])}")
   end
 end

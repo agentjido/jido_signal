@@ -47,7 +47,7 @@ defmodule Jido.Signal.TraceContext do
 
   * `Jido.Signal.Trace` - Low-level trace context creation and manipulation
   * `Jido.Signal.Trace.Context` - The trace context struct
-  * `Jido.Signal.Ext.Trace` - The trace extension for signals
+  * `Jido.Signal.Context` - CloudEvents extension context attributes
   """
 
   alias Jido.Signal
@@ -111,7 +111,7 @@ defmodule Jido.Signal.TraceContext do
   end
 
   @doc """
-  Sets trace context from a signal's extension data.
+  Sets trace context from a Signal's flat context attributes.
 
   Extracts trace context from the signal's `correlation` extension
   and sets it in the process dictionary.
@@ -197,7 +197,7 @@ defmodule Jido.Signal.TraceContext do
       TraceContext.set(parent_ctx)
 
       # Create outbound signal
-      {:ok, signal} = Signal.new("user.created", %{user_id: "123"})
+      {:ok, signal} = Signal.new("user.created", %{user_id: "123"}, source: "/example")
 
       # Propagate trace as child
       {:ok, traced} = TraceContext.propagate_to(signal, "input-signal-id")

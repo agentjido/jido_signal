@@ -72,7 +72,7 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
           "type": "test.event",
           "source": "/test/source",
           "id": "test-id-123",
-          "specversion": "1.0.2"
+          "specversion": "1.0"
         }
       })
 
@@ -96,7 +96,7 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
             "type": "first.event",
             "source": "/test/first",
             "id": "first-id",
-            "specversion": "1.0.2"
+            "specversion": "1.0"
           }
         },
         {
@@ -107,7 +107,7 @@ defmodule JidoTest.Signal.Bus.RecordedSignalSerializationTest do
             "type": "second.event",
             "source": "/test/second",
             "id": "second-id",
-            "specversion": "1.0.2"
+            "specversion": "1.0"
           }
         }
       ])

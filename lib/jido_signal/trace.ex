@@ -3,8 +3,8 @@ defmodule Jido.Signal.Trace do
   Helper functions for distributed trace management.
 
   Provides utilities for creating and propagating trace contexts
-  across signal boundaries. Uses the `correlation` extension
-  (Jido.Signal.Ext.Trace) for storage.
+  across signal boundaries. It stores W3C trace context as flat CloudEvents
+  extension context attributes.
 
   ## Trace Hierarchy
 
@@ -38,9 +38,13 @@ defmodule Jido.Signal.Trace do
   """
 
   alias Jido.Signal
+  alias Jido.Signal.Context, as: SignalContext
   alias Jido.Signal.Trace.Context
 
-  @extension_namespace "correlation"
+  @traceparent "traceparent"
+  @tracestate "tracestate"
+  @parent_span_id "parentspanid"
+  @causation_id "causationid"
 
   @typedoc """
   Trace context struct containing W3C-compatible trace information.
@@ -91,7 +95,7 @@ defmodule Jido.Signal.Trace do
   @doc """
   Extracts trace context from a signal.
 
-  Returns `nil` if the signal has no trace extension.
+  Returns `nil` if the signal has no `traceparent` context attribute.
 
   ## Examples
 
@@ -103,9 +107,16 @@ defmodule Jido.Signal.Trace do
   """
   @spec get(Signal.t()) :: Context.t() | nil
   def get(%Signal{} = signal) do
-    case Signal.get_extension(signal, @extension_namespace) do
-      nil -> nil
-      map when is_map(map) -> Context.from_map!(map)
+    with traceparent when is_binary(traceparent) <- Signal.get_context(signal, @traceparent),
+         {:ok, context} <- Context.from_traceparent(traceparent) do
+      %{
+        context
+        | tracestate: Signal.get_context(signal, @tracestate),
+          parent_span_id: Signal.get_context(signal, @parent_span_id),
+          causation_id: Signal.get_context(signal, @causation_id)
+      }
+    else
+      _missing_or_invalid -> nil
     end
   end
 
@@ -114,7 +125,7 @@ defmodule Jido.Signal.Trace do
   @doc """
   Adds trace context to a signal.
 
-  Uses the `correlation` extension namespace to store trace data.
+  Stores `traceparent`, optional `tracestate`, and Jido correlation attributes.
 
   ## Examples
 
@@ -123,7 +134,19 @@ defmodule Jido.Signal.Trace do
   """
   @spec put(Signal.t(), Context.t()) :: {:ok, Signal.t()} | {:error, term()}
   def put(%Signal{} = signal, %Context{} = ctx) do
-    Signal.put_extension(signal, @extension_namespace, Context.to_map(ctx))
+    attributes =
+      %{
+        @traceparent => Context.to_traceparent(ctx),
+        @tracestate => ctx.tracestate,
+        @parent_span_id => ctx.parent_span_id,
+        @causation_id => ctx.causation_id
+      }
+      |> Enum.reject(fn {_name, value} -> is_nil(value) end)
+      |> Map.new()
+
+    with {:ok, attributes} <- SignalContext.normalize(attributes) do
+      {:ok, %{signal | extensions: Map.merge(signal.extensions, attributes)}}
+    end
   end
 
   @doc """

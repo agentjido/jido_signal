@@ -78,23 +78,6 @@ defmodule Jido.Signal.Names do
   end
 
   @doc """
-  Returns the Extension Registry name for the given instance scope.
-
-  ## Examples
-
-      iex> Jido.Signal.Names.ext_registry([])
-      Jido.Signal.Ext.Registry
-
-      iex> Jido.Signal.Names.ext_registry(jido: MyApp.Jido)
-      MyApp.Jido.Signal.Ext.Registry
-
-  """
-  @spec ext_registry(opts()) :: atom()
-  def ext_registry(opts) do
-    scoped(opts, Jido.Signal.Ext.Registry)
-  end
-
-  @doc """
   Resolves a module name based on instance scope.
 
   When `jido:` option is nil or not present, returns the default module.

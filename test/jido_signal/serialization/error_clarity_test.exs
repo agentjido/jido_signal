@@ -23,7 +23,7 @@ defmodule Jido.Signal.Serialization.ErrorClarityTest do
     end
 
     test "Signal boundary reports invalid envelope fields" do
-      invalid_signal = ~s({"specversion":"1.0.2","type":"","source":"","id":"123"})
+      invalid_signal = ~s({"specversion":"1.0","type":"","source":"","id":"123"})
 
       assert {:error, error} = Signal.deserialize(invalid_signal)
       assert error =~ "type" or error =~ "source"

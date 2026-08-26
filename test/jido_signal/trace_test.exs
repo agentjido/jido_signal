@@ -5,11 +5,6 @@ defmodule Jido.Signal.TraceTest do
   alias Jido.Signal.Trace
   alias Jido.Signal.Trace.Context
 
-  setup do
-    Jido.Signal.Ext.Registry.register(Jido.Signal.Ext.Trace)
-    :ok
-  end
-
   describe "new_root/0,1" do
     test "generates valid W3C trace_id (32 hex chars)" do
       ctx = Trace.new_root()
@@ -103,9 +98,7 @@ defmodule Jido.Signal.TraceTest do
 
       {:ok, traced} = Trace.put(signal, ctx)
 
-      stored = traced.extensions["correlation"]
-      assert stored.trace_id == ctx.trace_id
-      assert stored.span_id == ctx.span_id
+      assert traced.extensions["traceparent"] == Trace.to_traceparent(ctx)
     end
 
     test "get extracts trace from signal extensions" do
@@ -159,9 +152,7 @@ defmodule Jido.Signal.TraceTest do
 
       traced = Trace.put!(signal, ctx)
 
-      stored = traced.extensions["correlation"]
-      assert stored.trace_id == ctx.trace_id
-      assert stored.span_id == ctx.span_id
+      assert traced.extensions["traceparent"] == Trace.to_traceparent(ctx)
     end
   end
 

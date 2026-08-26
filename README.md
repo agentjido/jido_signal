@@ -18,7 +18,7 @@ The v3 public API has five primary areas: `Jido.Signal`,
 
 ## Overview
 
-`Jido.Signal` is a sophisticated toolkit for building event-driven and agent-based systems in Elixir. It provides a complete ecosystem for defining, routing, dispatching, and tracking signals throughout your application, built on the CloudEvents v1.0.2 specification with powerful Jido-specific extensions.
+`Jido.Signal` is a toolkit for event-driven and agent-based systems in Elixir. It provides a small CloudEvents 1.0 envelope, typed domain Signals, routing, dispatch, serialization, and a Signal Bus.
 
 Whether you're building microservices that need reliable event communication, implementing complex agent-based systems, or creating observable distributed applications, Jido.Signal provides the foundation for robust, traceable, and scalable event-driven architecture.
 
@@ -56,7 +56,9 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 ## Key Features
 
 ### **Standardized Signal Structure**
-- CloudEvents v1.0.2 compliant message format
+- CloudEvents 1.0 compliant message format
+- UUID7 IDs for Signals created by Jido
+- Explicit event source, time, and content type semantics
 - Custom signal types with data validation
 - Rich metadata and context tracking
 - Flexible serialization (JSON, optional MessagePack, Erlang Term Format)
@@ -223,34 +225,21 @@ end
 # reason identifies the missing email field.
 ```
 
-Zoi is the schema format for custom Signals and Signal extensions.
+Zoi is the schema format for custom Signals. Zoi schemas must accept and return
+map-shaped data. Schemas must be static module data. Use named
+`{Module, :function, args}` MFA values for refinements, transforms, and other
+callbacks. Anonymous functions and lazy schemas are rejected at compile time.
 
-Zoi schemas must accept and return map-shaped data. Anonymous refinement
-functions are supported when the schema is declared inline and does not use
-caller variables. Use a named `{Module, :function, args}` refinement for schemas
-stored in variables, module attributes, or dynamic options.
-
-Typed signals can also declare extension policy when you want constructor-time guarantees
-for known extensions without changing generic deserialization behavior:
+CloudEvents extension context attributes are flat transport metadata. They are
+optional and do not replace a custom Signal data schema:
 
 ```elixir
-defmodule UserCreated do
-  use Jido.Signal,
-    type: "user.created.v1",
-    schema: Zoi.object(%{
-      user_id: Zoi.string()
-    }),
-    extension_policy: [
-      {MyApp.Signal.Ext.Trace, :required},
-      {MyApp.Signal.Ext.Dispatch, :forbidden}
-    ]
-end
-
-{:ok, signal} =
-  UserCreated.new(%{user_id: "u_123"},
-    trace: %{trace_id: "trace-123", span_id: "span-456"}
-  )
+{:ok, signal} = Jido.Signal.put_context(signal, "tenantid", "tenant-123")
+"tenant-123" = Jido.Signal.get_context(signal, "tenantid")
 ```
+
+Context names use lower-case letters and digits. Values use CloudEvents context
+types. Put domain data and dispatch policy outside this metadata map.
 
 ### The Router
 

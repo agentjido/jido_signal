@@ -111,7 +111,7 @@ defmodule JidoTest.Signal.SerializationTest do
   describe "Signal boundary validation" do
     test "Signal.deserialize returns an error for an empty type" do
       invalid_json =
-        ~s({"specversion":"1.0.2","type":"","source":"/test","id":"123"})
+        ~s({"specversion":"1.0","type":"","source":"/test","id":"123"})
 
       assert {:error, error} = Jido.Signal.deserialize(invalid_json)
       assert error =~ "type"
@@ -119,7 +119,7 @@ defmodule JidoTest.Signal.SerializationTest do
 
     test "Signal.deserialize returns an error for an empty source" do
       invalid_json =
-        ~s({"specversion":"1.0.2","type":"test.event","source":"","id":"123"})
+        ~s({"specversion":"1.0","type":"test.event","source":"","id":"123"})
 
       assert {:error, error} = Jido.Signal.deserialize(invalid_json)
       assert error =~ "source"

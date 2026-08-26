@@ -18,7 +18,7 @@ defmodule Jido.Signal.DispatchValidationTest do
   end
 
   test "validates options exactly once when pre-validated" do
-    {:ok, signal} = Signal.new("test.event", %{})
+    {:ok, signal} = Signal.new("test.event", %{}, source: "/test")
     config = {CountingAdapter, [counter_pid: self()]}
 
     # Should validate once
@@ -30,7 +30,7 @@ defmodule Jido.Signal.DispatchValidationTest do
   end
 
   test "validates options exactly once for multiple configs" do
-    {:ok, signal} = Signal.new("test.event", %{})
+    {:ok, signal} = Signal.new("test.event", %{}, source: "/test")
 
     configs = [
       {CountingAdapter, [counter_pid: self()]},
@@ -49,7 +49,7 @@ defmodule Jido.Signal.DispatchValidationTest do
   end
 
   test "validates options exactly once for a larger target list" do
-    {:ok, signal} = Signal.new("test.event", %{})
+    {:ok, signal} = Signal.new("test.event", %{}, source: "/test")
 
     configs =
       for _i <- 1..10 do

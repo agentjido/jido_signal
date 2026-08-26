@@ -12,17 +12,18 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
 
   @fixtures Path.expand("../fixtures/v2", __DIR__)
 
-  describe "Signal constructor defaults" do
-    test "keeps the v2 envelope defaults" do
-      assert {:ok, signal} = Signal.new(%{type: "compat.created", data: %{id: 1}})
+  describe "Signal constructor contract" do
+    test "generates only the Jido-owned envelope values" do
+      assert {:ok, signal} =
+               Signal.new(%{type: "compat.created", source: "/compat", data: %{id: 1}})
 
       assert signal.type == "compat.created"
       assert signal.data == %{id: 1}
-      assert signal.specversion == "1.0.2"
-      assert signal.datacontenttype == "application/json"
+      assert signal.specversion == "1.0"
+      assert signal.datacontenttype == nil
       assert is_binary(signal.id)
-      assert is_binary(signal.source)
-      assert is_binary(signal.time)
+      assert signal.source == "/compat"
+      assert signal.time == nil
     end
   end
 
@@ -45,7 +46,7 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
       end
     end
 
-    test "reads the deprecated dispatch field as an extension" do
+    test "rejects the deprecated dispatch field as Signal metadata" do
       map = %{
         "specversion" => "1.0.2",
         "id" => "legacy-dispatch",
@@ -54,9 +55,8 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
         "jido_dispatch" => {:noop, []}
       }
 
-      assert {:ok, signal} = Signal.from_map(map)
-      assert signal.extensions["dispatch"] == {:noop, []}
-      refute Map.has_key?(Signal.to_map(signal), "jido_dispatch")
+      assert {:error, error} = Signal.from_map(map)
+      assert error =~ "jido_dispatch"
     end
   end
 

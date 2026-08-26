@@ -272,7 +272,7 @@ defmodule JidoTest.Signal.Dispatch.AdapterTest do
       assert signal.source == "/test"
       assert signal.data.message == "test delivery"
       assert is_binary(signal.id)
-      assert is_binary(signal.time)
+      assert signal.time == nil
     end
 
     test "adapter handles signal with no data", %{} do
