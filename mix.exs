@@ -74,19 +74,32 @@ defmodule Jido.Signal.MixProject do
       main: "readme",
       extras: [
         "README.md",
-        "CONTRIBUTING.md",
-        "LICENSE",
         "guides/getting-started.md",
         "guides/signals-and-dispatch.md",
-        "guides/event-bus.md",
-        "guides/v2-to-v3.md",
-        "guides/signal-router.md",
         "guides/signal-extensions.md",
         "guides/serialization.md",
-        "guides/advanced.md"
+        "guides/signal-router.md",
+        "guides/event-bus.md",
+        "guides/advanced.md",
+        "guides/v2-to-v3.md",
+        "CONTRIBUTING.md",
+        "LICENSE"
       ],
       groups_for_extras: [
-        Guides: ~r/guides\/.*/
+        "Start Here": [
+          "guides/getting-started.md",
+          "guides/signals-and-dispatch.md"
+        ],
+        "Signal Format": [
+          "guides/signal-extensions.md",
+          "guides/serialization.md"
+        ],
+        "Routing and Delivery": [
+          "guides/signal-router.md",
+          "guides/event-bus.md"
+        ],
+        "Advanced Use": "guides/advanced.md",
+        Upgrade: "guides/v2-to-v3.md"
       ],
       groups_for_modules: [
         "Core Signal": [

@@ -513,17 +513,33 @@ The v3 reader accepts supported v2 wire maps. New writes use only the v3
 canonical form. Read the [v2 to v3 migration guide](guides/v2-to-v3.md) before
 you convert stored Signals or Bus subscriptions.
 
-## Documentation
+## Guides
 
-- **[Getting Started Guide](guides/getting-started.md)** - Quick setup and first signal
-- **[Signals & Dispatch](guides/signals-and-dispatch.md)** - Signal structure and dispatch adapters
-- **[Event Bus](guides/event-bus.md)** - Pub/sub, durable cursors, replay, and Store adapters
-- **[Signal Router](guides/signal-router.md)** - Pattern matching and routing
-- **[Signal Extensions](guides/signal-extensions.md)** - CloudEvents context attributes
-- **[Serialization](guides/serialization.md)** - Canonical Signal maps, JSON, and Erlang Term Format
-- **[Advanced Topics](guides/advanced.md)** - Custom adapters, performance, and testing
-- **[v2 to v3 Migration](guides/v2-to-v3.md)** - Progression, compatibility, and replacement patterns
-- **[API Reference](https://hexdocs.pm/jido_signal)** - Complete function documentation
+**Start here**
+
+- **[Getting Started](guides/getting-started.md)** - Install, configure, and send a first Signal
+- **[Signals and Dispatch](guides/signals-and-dispatch.md)** - Create typed Signals and deliver them
+
+**Signal format**
+
+- **[CloudEvents Context Attributes](guides/signal-extensions.md)** - Add small transport metadata
+- **[Serialization](guides/serialization.md)** - Use canonical maps, JSON, and Erlang Term Format
+
+**Routing and delivery**
+
+- **[Signal Router](guides/signal-router.md)** - Match Signal types with exact and wildcard paths
+- **[Event Bus](guides/event-bus.md)** - Use subscriptions, durable cursors, replay, and Stores
+
+**Advanced use**
+
+- **[Advanced Usage](guides/advanced.md)** - Add custom adapters, telemetry, and test support
+
+**Upgrade**
+
+- **[Migrate from v2 to v3](guides/v2-to-v3.md)** - Follow the compatibility and replacement path
+
+For module and function details, use the
+[API reference](https://hexdocs.pm/jido_signal).
 
 ## Development
 
