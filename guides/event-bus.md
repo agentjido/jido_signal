@@ -42,9 +42,10 @@ Bus.subscribe(:my_bus, "user.*",
 )
 ```
 
-The Bus checks subscription paths with the Router. It sends matching signals in
-subscription registration order. Dispatch is synchronous from the Bus process.
-Use multiple Bus processes when independent workloads must not block each other.
+The Bus checks subscription paths with the Router. It keeps Router precedence:
+exact, `*`, `**`, specificity, and then registration order. Dispatch is
+synchronous from the Bus process. Use multiple Bus processes when independent
+workloads must not block each other.
 
 ## Bounded Replay
 

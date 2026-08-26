@@ -30,6 +30,41 @@ defmodule Jido.Signal.Bus.V3BusTest do
     end
   end
 
+  defmodule OrderAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def validate_opts(opts), do: {:ok, opts}
+
+    @impl true
+    def deliver(signal, opts) do
+      send(opts[:observer], {:ordered_delivery, opts[:label], signal})
+      :ok
+    end
+  end
+
+  defmodule ObservingStore do
+    alias Jido.Signal.Bus.Store.Memory
+
+    def init(opts) do
+      observer = Keyword.fetch!(opts, :observer)
+
+      with {:ok, memory} <- Memory.init(Keyword.delete(opts, :observer)) do
+        {:ok, %{memory: memory, observer: observer}}
+      end
+    end
+
+    def append(records, state) do
+      send(state.observer, {:stored_records, records})
+
+      with {:ok, memory} <- Memory.append(records, state.memory) do
+        {:ok, %{state | memory: memory}}
+      end
+    end
+
+    def read(opts, state), do: Memory.read(opts, state.memory)
+  end
+
   test "publishes in order and keeps a bounded replay log" do
     bus = start_bus(max_log_size: 2)
 
@@ -42,24 +77,66 @@ defmodule Jido.Signal.Bus.V3BusTest do
     assert Enum.map(replayed, & &1.cursor) == [2, 3]
   end
 
-  test "delivers matching subscriptions in registration order" do
+  test "keeps Router precedence through Bus delivery" do
     bus = start_bus()
-    parent = self()
-
-    first = spawn(fn -> relay(parent, :first) end)
-    second = spawn(fn -> relay(parent, :second) end)
 
     assert {:ok, _id} =
-             Bus.subscribe(bus, "ordered.*", dispatch: {:pid, target: first})
+             Bus.subscribe(bus, "ordered.**",
+               dispatch: {OrderAdapter, observer: self(), label: :multi}
+             )
 
     assert {:ok, _id} =
-             Bus.subscribe(bus, "ordered.event", dispatch: {:pid, target: second})
+             Bus.subscribe(bus, "ordered.*",
+               dispatch: {OrderAdapter, observer: self(), label: :single}
+             )
+
+    assert {:ok, _id} =
+             Bus.subscribe(bus, "ordered.event",
+               dispatch: {OrderAdapter, observer: self(), label: :exact}
+             )
 
     event = signal("ordered.event")
     assert {:ok, [_record]} = Bus.publish(bus, [event])
 
-    assert_receive {:relayed, :first, ^event}
-    assert_receive {:relayed, :second, ^event}
+    assert_receive {:ordered_delivery, :exact, ^event}
+    assert_receive {:ordered_delivery, :single, ^event}
+    assert_receive {:ordered_delivery, :multi, ^event}
+  end
+
+  test "writes an explicit Store record version and canonical Signal map" do
+    bus = start_bus(store: ObservingStore, store_opts: [observer: self()])
+    event = signal("stored.created")
+
+    assert {:ok, [_record]} = Bus.publish(bus, [event])
+
+    assert_receive {:stored_records, [stored]}
+    assert stored["format_version"] == 1
+    assert stored["cursor"] == 1
+    assert stored["signal"] == Signal.to_map(event)
+    assert stored["signal"]["jido_schema_version"] == 2
+  end
+
+  test "removes a regular subscription after its target exits" do
+    bus = start_bus()
+    client = spawn(fn -> receive do: (:stop -> :ok) end)
+    monitor_ref = Process.monitor(client)
+    subscription_id = "short-lived"
+
+    assert {:ok, ^subscription_id} =
+             Bus.subscribe(bus, "short.*",
+               subscription_id: subscription_id,
+               dispatch: {:pid, target: client}
+             )
+
+    Process.exit(client, :kill)
+    assert_receive {:DOWN, ^monitor_ref, :process, ^client, :killed}
+
+    assert_eventually(fn ->
+      case Bus.subscribe(bus, "short.*", subscription_id: subscription_id) do
+        {:ok, ^subscription_id} -> true
+        {:error, :subscription_already_exists} -> false
+      end
+    end)
   end
 
   test "does not skip an unacknowledged record after an out-of-order acknowledgement" do
@@ -170,4 +247,17 @@ defmodule Jido.Signal.Bus.V3BusTest do
         relay(parent, label)
     end
   end
+
+  defp assert_eventually(fun, attempts \\ 20)
+
+  defp assert_eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(fun, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_fun, 0), do: flunk("condition did not become true")
 end

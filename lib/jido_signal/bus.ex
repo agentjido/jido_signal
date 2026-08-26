@@ -180,6 +180,7 @@ defmodule Jido.Signal.Bus do
        %{
          name: name,
          jido: Keyword.get(opts, :jido),
+         router: Router.new!(),
          subscriptions: %{},
          subscription_order: [],
          monitors: %{},
@@ -533,21 +534,23 @@ defmodule Jido.Signal.Bus do
   end
 
   defp dispatch_record(state, record) do
-    Enum.reduce_while(state.subscription_order, {:ok, state}, fn subscription_id,
-                                                                 {:ok, current_state} ->
-      case maybe_deliver_record(current_state, record, subscription_id) do
+    signal = record_to_public!(record).signal
+
+    case Router.route(state.router, signal) do
+      {:ok, subscription_ids} -> deliver_routed_record(state, record, subscription_ids)
+      {:error, _no_match} -> {:ok, state}
+    end
+  end
+
+  defp deliver_routed_record(state, record, subscription_ids) do
+    Enum.reduce_while(subscription_ids, {:ok, state}, fn subscription_id, {:ok, current_state} ->
+      subscriber = Map.fetch!(current_state.subscriptions, subscription_id)
+
+      case deliver_record_to_subscriber(current_state, record, subscriber) do
         {:ok, next_state} -> {:cont, {:ok, next_state}}
         {:error, reason, next_state} -> {:halt, {:error, reason, next_state}}
       end
     end)
-  end
-
-  defp maybe_deliver_record(state, record, subscription_id) do
-    subscriber = Map.get(state.subscriptions, subscription_id)
-
-    if subscriber && Router.matches?(record_type(record), subscriber.path),
-      do: deliver_record_to_subscriber(state, record, subscriber),
-      else: {:ok, state}
   end
 
   defp deliver_records_to_subscriber(records, state, subscription_id) do
@@ -974,11 +977,14 @@ defmodule Jido.Signal.Bus do
 
   defp remove_subscriber(state, subscriber, demonitor? \\ true) do
     state = if demonitor?, do: demonitor_subscriber(state, subscriber), else: state
+    subscriptions = Map.delete(state.subscriptions, subscriber.id)
+    subscription_order = Enum.reject(state.subscription_order, &(&1 == subscriber.id))
 
     %{
       state
-      | subscriptions: Map.delete(state.subscriptions, subscriber.id),
-        subscription_order: Enum.reject(state.subscription_order, &(&1 == subscriber.id))
+      | subscriptions: subscriptions,
+        subscription_order: subscription_order,
+        router: rebuild_subscription_router(subscriptions, subscription_order)
     }
   end
 
@@ -987,11 +993,24 @@ defmodule Jido.Signal.Bus do
   end
 
   defp insert_subscriber(state, subscriber) do
+    {:ok, router} = Router.add(state.router, {subscriber.path, subscriber.id})
+
     %{
       state
       | subscriptions: Map.put(state.subscriptions, subscriber.id, subscriber),
-        subscription_order: state.subscription_order ++ [subscriber.id]
+        subscription_order: state.subscription_order ++ [subscriber.id],
+        router: router
     }
+  end
+
+  defp rebuild_subscription_router(subscriptions, subscription_order) do
+    routes =
+      Enum.map(subscription_order, fn subscription_id ->
+        subscriber = Map.fetch!(subscriptions, subscription_id)
+        {subscriber.path, subscriber.id}
+      end)
+
+    Router.new!(routes)
   end
 
   defp middleware_context(state) do
