@@ -4,8 +4,6 @@ defmodule Jido.Signal.Bus.RecordedSignal do
 
   This struct wraps a signal with additional metadata about when it was recorded.
   """
-  alias Jido.Signal.Serialization.JsonSerializer
-
   @schema Zoi.struct(
             __MODULE__,
             %{
@@ -56,17 +54,15 @@ defmodule Jido.Signal.Bus.RecordedSignal do
   """
   @spec serialize(t() | list(t())) :: binary()
   def serialize(%__MODULE__{} = recorded_signal) do
-    case JsonSerializer.serialize(to_map(recorded_signal)) do
-      {:ok, binary} -> binary
-      {:error, reason} -> raise "Serialization failed: #{inspect(reason)}"
-    end
+    recorded_signal
+    |> to_map()
+    |> Jason.encode!()
   end
 
   def serialize(recorded_signals) when is_list(recorded_signals) do
-    case JsonSerializer.serialize(Enum.map(recorded_signals, &to_map/1)) do
-      {:ok, binary} -> binary
-      {:error, reason} -> raise "Serialization failed: #{inspect(reason)}"
-    end
+    recorded_signals
+    |> Enum.map(&to_map/1)
+    |> Jason.encode!()
   end
 
   defp to_map(%__MODULE__{} = recorded_signal) do

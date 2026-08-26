@@ -77,7 +77,19 @@ You can use the Serialization entry module:
 ```elixir
 {:ok, binary} = Jido.Signal.Serialization.serialize(signal)
 {:ok, signal} = Jido.Signal.Serialization.deserialize(binary)
+
+{:ok, binary} = Jido.Signal.Serialization.serialize(signal, format: :erlang_term)
+{:ok, signal} = Jido.Signal.Serialization.deserialize(binary, format: :erlang_term)
 ```
+
+Serialization accepts Signals only. The v2 serializer behavior, type providers,
+JSON decoder protocol, runtime serializer configuration, and MessagePack format
+are removed. Convert stored MessagePack values to JSON or Erlang Term Format
+before the upgrade.
+
+JSON-safe Signal data uses `data`. Binary data and other Erlang-only terms use
+`data_base64`. Jido creates that value with `:erlang.term_to_binary/1` and
+`Base.encode64/1`. The reader uses the safe Erlang term option.
 
 ## Replace Schema-backed Signal Extensions
 

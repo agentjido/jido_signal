@@ -1,40 +1,82 @@
 defmodule Jido.Signal.Serialization do
   @moduledoc """
-  Encodes and decodes Signals through one canonical map contract.
+  Encodes and decodes Signals through the canonical CloudEvents map.
 
-  All built-in formats call `Jido.Signal.to_map/1` before encoding and
-  `Jido.Signal.from_map/1` after decoding. JSON is the default. MessagePack is
-  optional. Erlang term encoding is available for trusted Erlang systems.
+  JSON is the default format. Use `format: :erlang_term` for trusted
+  Erlang/Elixir systems.
 
-  Use the `:serializer` option to select a module that implements
-  `Jido.Signal.Serialization.Serializer`.
+  The maximum input size is 10 MB. Set `:max_payload_bytes` for one call, or
+  configure `:max_payload_bytes` for the `:jido_signal` application.
   """
 
   alias Jido.Signal
-  alias Jido.Signal.Serialization.Serializer
+
+  @default_max_payload_bytes 10_000_000
+
+  @type format :: :json | :erlang_term
 
   @doc "Encodes one Signal or a list of Signals."
   @spec serialize(Signal.t() | [Signal.t()], keyword()) ::
           {:ok, binary()} | {:error, term()}
-  def serialize(signal_or_signals, opts \\ []) do
-    Serializer.serialize(signal_or_signals, opts)
+  def serialize(signal_or_signals, opts \\ [])
+
+  def serialize(signal_or_signals, opts) when is_list(opts) do
+    with {:ok, format} <- format(opts),
+         {:ok, wire_data} <- to_wire_data(signal_or_signals) do
+      encode(wire_data, format)
+    end
+  rescue
+    exception -> {:error, {:serialization_failed, Exception.message(exception)}}
   end
+
+  def serialize(_signal_or_signals, _opts),
+    do: {:error, {:invalid_options, "expected a keyword list"}}
 
   @doc "Decodes one Signal or a list of Signals."
   @spec deserialize(binary(), keyword()) ::
           {:ok, Signal.t() | [Signal.t()]} | {:error, term()}
-  def deserialize(binary, opts \\ []) when is_binary(binary) do
-    with {:ok, data} <- Serializer.deserialize(binary, opts) do
-      convert(data)
+  def deserialize(binary, opts \\ [])
+
+  def deserialize(binary, opts) when is_binary(binary) and is_list(opts) do
+    with {:ok, format} <- format(opts),
+         :ok <- check_payload_size(binary, opts),
+         {:ok, wire_data} <- decode(binary, format) do
+      from_wire_data(wire_data)
     end
   rescue
-    exception -> {:error, Exception.message(exception)}
+    exception -> {:error, {:deserialization_failed, Exception.message(exception)}}
   end
 
-  defp convert(data) when is_list(data) do
+  def deserialize(binary, _opts) when not is_binary(binary),
+    do: {:error, {:invalid_payload, "expected a binary"}}
+
+  def deserialize(_binary, _opts), do: {:error, {:invalid_options, "expected a keyword list"}}
+
+  defp to_wire_data(%Signal{} = signal), do: {:ok, Signal.to_map(signal)}
+
+  defp to_wire_data(signals) when is_list(signals) do
+    signals
+    |> Enum.reduce_while({:ok, []}, fn
+      %Signal{} = signal, {:ok, acc} ->
+        {:cont, {:ok, [Signal.to_map(signal) | acc]}}
+
+      value, _acc ->
+        {:halt, {:error, {:invalid_signal, "expected a Signal, got: #{inspect(value)}"}}}
+    end)
+    |> case do
+      {:ok, wire_data} -> {:ok, Enum.reverse(wire_data)}
+      error -> error
+    end
+  end
+
+  defp to_wire_data(value),
+    do:
+      {:error, {:invalid_signal, "expected a Signal or list of Signals, got: #{inspect(value)}"}}
+
+  defp from_wire_data(data) when is_list(data) do
     data
     |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
-      case convert_one(item) do
+      case from_wire_item(item) do
         {:ok, signal} -> {:cont, {:ok, [signal | acc]}}
         {:error, reason} -> {:halt, {:error, reason}}
       end
@@ -45,9 +87,56 @@ defmodule Jido.Signal.Serialization do
     end
   end
 
-  defp convert(data), do: convert_one(data)
+  defp from_wire_data(data), do: from_wire_item(data)
 
-  defp convert_one(%Signal{} = signal), do: {:ok, signal}
-  defp convert_one(data) when is_map(data), do: Signal.from_map(data)
-  defp convert_one(data), do: {:error, "cannot convert #{inspect(data)} to Signal"}
+  defp from_wire_item(data) when is_map(data), do: Signal.from_map(data)
+
+  defp from_wire_item(data),
+    do: {:error, {:invalid_wire_data, "expected a map, got: #{inspect(data)}"}}
+
+  defp format(opts) do
+    case Keyword.get(opts, :format, :json) do
+      format when format in [:json, :erlang_term] -> {:ok, format}
+      format -> {:error, {:unsupported_format, format}}
+    end
+  end
+
+  defp encode(data, :json) do
+    case Jason.encode(data) do
+      {:ok, binary} -> {:ok, binary}
+      {:error, error} -> {:error, {:json_encode_failed, Exception.message(error)}}
+    end
+  end
+
+  defp encode(data, :erlang_term), do: {:ok, :erlang.term_to_binary(data)}
+
+  defp decode(binary, :json) do
+    case Jason.decode(binary) do
+      {:ok, data} -> {:ok, data}
+      {:error, error} -> {:error, {:json_decode_failed, Exception.message(error)}}
+    end
+  end
+
+  defp decode(binary, :erlang_term) do
+    {:ok, :erlang.binary_to_term(binary, [:safe])}
+  rescue
+    error in ArgumentError -> {:error, {:erlang_term_decode_failed, Exception.message(error)}}
+  end
+
+  defp check_payload_size(binary, opts) do
+    max =
+      Keyword.get_lazy(opts, :max_payload_bytes, fn ->
+        Application.get_env(:jido_signal, :max_payload_bytes, @default_max_payload_bytes)
+      end)
+
+    if is_integer(max) and max >= 0 do
+      if byte_size(binary) <= max do
+        :ok
+      else
+        {:error, {:payload_too_large, byte_size(binary), max}}
+      end
+    else
+      {:error, {:invalid_max_payload_bytes, max}}
+    end
+  end
 end

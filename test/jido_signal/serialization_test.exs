@@ -1,198 +1,179 @@
-defmodule JidoTest.Signal.SerializationTest do
-  use ExUnit.Case
+defmodule Jido.Signal.SerializationTest do
+  use ExUnit.Case, async: false
 
-  alias Jido.Signal.Serialization.{JsonDecoder, JsonSerializer, ModuleNameTypeProvider}
-  alias JidoTest.TestStructs.{CustomDecodedStruct, TestStruct}
+  alias Jido.Signal
+  alias Jido.Signal.Serialization
 
-  describe "JsonSerializer" do
-    test "serializes and deserializes structs" do
-      original = %TestStruct{field1: "test", field2: 123}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-
-      {:ok, deserialized} =
-        JsonSerializer.deserialize(serialized, type: "Elixir.JidoTest.TestStructs.TestStruct")
-
-      assert deserialized == original
-    end
-
-    test "serializes and deserializes structs with nil values" do
-      original = %TestStruct{field1: nil, field2: nil}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-
-      {:ok, deserialized} =
-        JsonSerializer.deserialize(serialized, type: "Elixir.JidoTest.TestStructs.TestStruct")
-
-      assert deserialized == original
-    end
-
-    test "serializes and deserializes structs with nested maps" do
-      original = %TestStruct{field1: %{nested: "value"}, field2: 123}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-
-      {:ok, deserialized} =
-        JsonSerializer.deserialize(serialized, type: "Elixir.JidoTest.TestStructs.TestStruct")
-
-      # After deserialization, nested map keys become strings (security: no unsafe atom creation)
-      assert deserialized.field1 == %{"nested" => "value"}
-      assert deserialized.field2 == 123
-    end
-
-    test "serializes and deserializes structs with lists" do
-      original = %TestStruct{field1: [1, 2, 3], field2: ["a", "b", "c"]}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-
-      {:ok, deserialized} =
-        JsonSerializer.deserialize(serialized, type: "Elixir.JidoTest.TestStructs.TestStruct")
-
-      assert deserialized == original
-    end
-
-    test "serializes and deserializes maps" do
-      original = %{"key" => "value", "nested" => %{"num" => 42}}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-      {:ok, deserialized} = JsonSerializer.deserialize(serialized)
-
-      assert deserialized == original
-    end
-
-    test "serializes and deserializes empty maps" do
-      original = %{}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-      {:ok, deserialized} = JsonSerializer.deserialize(serialized)
-
-      assert deserialized == original
-    end
-
-    test "serializes and deserializes maps with lists" do
-      original = %{"list" => [1, 2, %{"nested" => "value"}]}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-      {:ok, deserialized} = JsonSerializer.deserialize(serialized)
-
-      assert deserialized == original
-    end
-
-    test "handles custom JsonDecoder implementation" do
-      original = %CustomDecodedStruct{value: 5}
-      {:ok, serialized} = JsonSerializer.serialize(original)
-
-      {:ok, deserialized} =
-        JsonSerializer.deserialize(serialized,
-          type: "Elixir.JidoTest.TestStructs.CustomDecodedStruct"
+  describe "JSON" do
+    test "round-trips one Signal through the canonical map" do
+      signal =
+        Signal.new!("test.created", %{"count" => 2},
+          source: "/test",
+          id: "json-1",
+          subject: "record/1"
         )
 
-      # Value doubled by custom decoder
-      assert deserialized.value == 10
+      assert {:ok, json} = Signal.serialize(signal)
+      assert Jason.decode!(json) == Signal.to_map(signal)
+      assert {:ok, decoded} = Signal.deserialize(json)
+      assert decoded == signal
     end
 
-    test "handles custom JsonDecoder with nil value" do
-      original = %CustomDecodedStruct{value: nil}
-      {:ok, serialized} = JsonSerializer.serialize(original)
+    test "round-trips a list of Signals" do
+      signals = [
+        Signal.new!(type: "first.created", source: "/test", id: "first"),
+        Signal.new!(type: "second.created", source: "/test", id: "second")
+      ]
 
-      {:ok, deserialized} =
-        JsonSerializer.deserialize(serialized,
-          type: "Elixir.JidoTest.TestStructs.CustomDecodedStruct"
-        )
-
-      assert deserialized.value == nil
+      assert {:ok, json} = Signal.serialize(signals)
+      assert {:ok, decoded} = Signal.deserialize(json)
+      assert decoded == signals
     end
 
-    test "returns error on invalid JSON" do
-      {:error, _reason} =
-        JsonSerializer.deserialize("{invalid_json",
-          type: "Elixir.JidoTest.TestStructs.TestStruct"
-        )
-    end
-
-    test "returns error on non-existent type" do
-      {:error, _reason} = JsonSerializer.deserialize("{}", type: "NonExistentModule")
+    test "returns a tagged error for invalid JSON" do
+      assert {:error, {:json_decode_failed, message}} = Signal.deserialize("{invalid")
+      assert is_binary(message)
     end
   end
 
-  describe "Signal boundary validation" do
-    test "Signal.deserialize returns an error for an empty type" do
-      invalid_json =
-        ~s({"specversion":"1.0","type":"","source":"/test","id":"123"})
+  describe "Erlang term format" do
+    test "round-trips through the same canonical map" do
+      signal = Signal.new!("test.created", %{"count" => 2}, source: "/test")
 
-      assert {:error, error} = Jido.Signal.deserialize(invalid_json)
-      assert error =~ "type"
+      assert {:ok, binary} = Signal.serialize(signal, format: :erlang_term)
+      assert :erlang.binary_to_term(binary, [:safe]) == Signal.to_map(signal)
+      assert {:ok, decoded} = Signal.deserialize(binary, format: :erlang_term)
+      assert decoded == signal
     end
 
-    test "Signal.deserialize returns an error for an empty source" do
-      invalid_json =
-        ~s({"specversion":"1.0","type":"test.event","source":"","id":"123"})
+    test "returns a tagged error for invalid Erlang term data" do
+      assert {:error, {:erlang_term_decode_failed, message}} =
+               Signal.deserialize(<<1, 2, 3>>, format: :erlang_term)
 
-      assert {:error, error} = Jido.Signal.deserialize(invalid_json)
+      assert is_binary(message)
+    end
+  end
+
+  describe "Erlang-only Signal data" do
+    test "uses an Erlang term binary in data_base64" do
+      data = %{status: :ready, value: {1, 2}, bytes: <<0, 255>>}
+      signal = Signal.new!("test.binary", data, source: "/test")
+
+      wire = Signal.to_map(signal)
+      refute Map.has_key?(wire, "data")
+      assert is_binary(wire["data_base64"])
+
+      assert wire["data_base64"]
+             |> Base.decode64!()
+             |> :erlang.binary_to_term([:safe]) == data
+
+      assert {:ok, decoded} = Signal.from_map(wire)
+      assert decoded.data == data
+    end
+
+    test "keeps JSON-safe values in data" do
+      data = %{"message" => "hello", "items" => [1, true, nil]}
+      signal = Signal.new!("test.json", data, source: "/test")
+
+      assert Signal.to_map(signal)["data"] == data
+      refute Map.has_key?(Signal.to_map(signal), "data_base64")
+    end
+
+    test "rejects invalid or ambiguous data_base64" do
+      wire = %{
+        "specversion" => "1.0",
+        "id" => "binary-1",
+        "source" => "/test",
+        "type" => "test.binary"
+      }
+
+      assert {:error, error} = Signal.from_map(Map.put(wire, "data_base64", "not-base64"))
+      assert error =~ "valid Base64"
+
+      encoded = :ok |> :erlang.term_to_binary() |> Base.encode64()
+
+      assert {:error, error} =
+               Signal.from_map(Map.merge(wire, %{"data" => "value", "data_base64" => encoded}))
+
+      assert error =~ "mutually exclusive"
+    end
+  end
+
+  describe "boundary and options" do
+    test "validates the decoded Signal envelope" do
+      json = ~s({"specversion":"1.0","id":"1","source":"","type":"test.created"})
+
+      assert {:error, error} = Signal.deserialize(json)
       assert error =~ "source"
     end
 
-    test "deserialize succeeds for valid Signal" do
-      valid_json = ~s({"type": "test.event", "source": "/test", "id": "123"})
-
-      assert {:ok, result} = JsonSerializer.deserialize(valid_json)
-      assert result["type"] == "test.event"
-      assert result["source"] == "/test"
+    test "rejects non-Signal input and unsupported formats" do
+      assert {:error, {:invalid_signal, _message}} = Serialization.serialize(%{"type" => "test"})
+      assert {:error, {:invalid_signal, _message}} = Serialization.serialize([:not_a_signal])
+      assert {:error, {:unsupported_format, :msgpack}} = Signal.serialize([], format: :msgpack)
     end
 
-    test "deserialize allows CloudEvents extensions" do
-      json_with_ext = ~s({"type": "test", "source": "/s", "id": "x", "custom_field": "value"})
+    test "enforces the payload size for each call" do
+      signal = Signal.new!(type: "test.created", source: "/test")
+      assert {:ok, json} = Signal.serialize(signal)
 
-      assert {:ok, result} = JsonSerializer.deserialize(json_with_ext)
-      assert result["type"] == "test"
-      assert result["custom_field"] == "value"
-    end
-  end
+      assert {:error, {:payload_too_large, size, 10}} =
+               Signal.deserialize(json, max_payload_bytes: 10)
 
-  describe "ModuleNameTypeProvider" do
-    test "converts struct to type string" do
-      struct = %TestStruct{}
-      type_string = ModuleNameTypeProvider.to_string(struct)
-
-      assert type_string == "Elixir.JidoTest.TestStructs.TestStruct"
+      assert size == byte_size(json)
     end
 
-    test "converts type string to struct" do
-      type_string = "Elixir.JidoTest.TestStructs.TestStruct"
-      struct = ModuleNameTypeProvider.to_struct(type_string)
+    test "reads the application payload limit" do
+      previous = Application.get_env(:jido_signal, :max_payload_bytes)
+      Application.put_env(:jido_signal, :max_payload_bytes, 10)
 
-      assert struct == %TestStruct{}
+      on_exit(fn ->
+        if previous do
+          Application.put_env(:jido_signal, :max_payload_bytes, previous)
+        else
+          Application.delete_env(:jido_signal, :max_payload_bytes)
+        end
+      end)
+
+      signal = Signal.new!(type: "test.created", source: "/test")
+      assert {:ok, json} = Signal.serialize(signal)
+      assert {:error, {:payload_too_large, _size, 10}} = Signal.deserialize(json)
     end
 
-    test "handles nested module names" do
-      type_string = ModuleNameTypeProvider.to_string(%CustomDecodedStruct{})
-      assert type_string == "Elixir.JidoTest.TestStructs.CustomDecodedStruct"
-    end
-
-    test "raises on invalid module name format" do
-      assert_raise ArgumentError, fn ->
-        ModuleNameTypeProvider.to_struct("InvalidModuleName")
-      end
-    end
-
-    test "raises on non-existent module" do
-      assert_raise ArgumentError, fn ->
-        ModuleNameTypeProvider.to_struct("Elixir.NonExistent.Module")
-      end
+    test "serialize!/2 returns a binary" do
+      signal = Signal.new!(type: "test.created", source: "/test")
+      assert is_binary(Signal.serialize!(signal))
     end
   end
 
-  describe "JsonDecoder" do
-    test "default implementation returns data unchanged" do
-      data = %{some: "data"}
-      assert JsonDecoder.decode(data) == data
+  describe "legacy input" do
+    test "normalizes supported v2 wire values" do
+      json =
+        Jason.encode!(%{
+          "specversion" => "1.0.2",
+          "jido_schema_version" => 1,
+          "id" => "legacy-1",
+          "source" => "/test",
+          "type" => "test.created"
+        })
+
+      assert {:ok, signal} = Signal.deserialize(json)
+      assert signal.specversion == "1.0"
+      refute Map.has_key?(Signal.to_map(signal), "jido_schema_version")
     end
 
-    test "custom implementation modifies data" do
-      data = %CustomDecodedStruct{value: 5}
-      decoded = JsonDecoder.decode(data)
+    test "rejects unsupported v2 wire markers" do
+      json =
+        Jason.encode!(%{
+          "specversion" => "1.0",
+          "jido_schema_version" => 999,
+          "id" => "legacy-999",
+          "source" => "/test",
+          "type" => "test.created"
+        })
 
-      assert decoded.value == 10
-    end
-
-    test "default implementation handles various data types" do
-      assert JsonDecoder.decode(nil) == nil
-      assert JsonDecoder.decode([1, 2, 3]) == [1, 2, 3]
-      assert JsonDecoder.decode("string") == "string"
-      assert JsonDecoder.decode(123) == 123
+      assert {:error, error} = Signal.deserialize(json)
+      assert error =~ "unsupported jido_schema_version 999"
     end
   end
 end

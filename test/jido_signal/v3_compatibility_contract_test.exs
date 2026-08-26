@@ -6,10 +6,6 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.Router
-  alias Jido.Signal.Serialization.ErlangTermSerializer
-  alias Jido.Signal.Serialization.JsonSerializer
-  alias Jido.Signal.Serialization.MsgpackSerializer
-
   @fixtures Path.expand("../fixtures/v2", __DIR__)
 
   describe "Signal constructor contract" do
@@ -28,20 +24,19 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
   end
 
   describe "v2 serialized fixtures" do
-    for {filename, serializer, encoded?} <- [
-          {"signal.json", JsonSerializer, false},
-          {"signal.msgpack.b64", MsgpackSerializer, true},
-          {"signal.erlang.b64", ErlangTermSerializer, true}
+    for {filename, format, encoded?} <- [
+          {"signal.json", :json, false},
+          {"signal.erlang.b64", :erlang_term, true}
         ] do
       @filename filename
-      @serializer serializer
+      @format format
       @encoded? encoded?
 
       test "decodes #{@filename}" do
         binary = File.read!(Path.join(@fixtures, @filename))
         binary = if @encoded?, do: Base.decode64!(String.trim(binary)), else: binary
 
-        assert {:ok, signal} = Signal.deserialize(binary, serializer: @serializer)
+        assert {:ok, signal} = Signal.deserialize(binary, format: @format)
         assert_fixture_signal(signal)
       end
     end

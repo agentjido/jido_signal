@@ -121,15 +121,7 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Dispatch.Webhook
         ],
         Serialization: [
-          Jido.Signal.Serialization,
-          Jido.Signal.Serialization.Config,
-          Jido.Signal.Serialization.ErlangTermSerializer,
-          Jido.Signal.Serialization.JsonDecoder,
-          Jido.Signal.Serialization.JsonSerializer,
-          Jido.Signal.Serialization.ModuleNameTypeProvider,
-          Jido.Signal.Serialization.MsgpackSerializer,
-          Jido.Signal.Serialization.Serializer,
-          Jido.Signal.Serialization.TypeProvider
+          Jido.Signal.Serialization
         ],
         "System Infrastructure": [
           Jido.Signal.Instance,
@@ -173,7 +165,6 @@ defmodule Jido.Signal.MixProject do
     [
       # Deps
       {:jason, "~> 1.4"},
-      {:msgpax, "~> 2.3", optional: true},
       {:phoenix_pubsub, "~> 2.1", optional: true},
       {:telemetry, "~> 1.3"},
       {:splode, "~> 0.3.0"},

@@ -14,6 +14,9 @@ defmodule Jido.Signal do
   values follow the CloudEvents rules. Put domain fields in `data` and validate
   them with a custom Signal module.
 
+  The canonical map keeps JSON-safe values in `data`. It encodes binary and
+  other Erlang-only values as an Erlang term binary in `data_base64`.
+
   ## Examples
 
       {:ok, signal} =
@@ -192,7 +195,7 @@ defmodule Jido.Signal do
     {Map.drop(attrs, core_names), Map.take(attrs, core_names)}
   end
 
-  @doc "Serializes one Signal or a list of Signals."
+  @doc "Serializes one Signal or a list of Signals as JSON or Erlang Term Format."
   defdelegate serialize(signal_or_signals, opts \\ []), to: Serialization
 
   @doc "Serializes one Signal or a list of Signals, or raises."
@@ -203,7 +206,7 @@ defmodule Jido.Signal do
     end
   end
 
-  @doc "Deserializes one Signal or a list of Signals."
+  @doc "Deserializes one Signal or a list of Signals from JSON or Erlang Term Format."
   defdelegate deserialize(binary, opts \\ []), to: Serialization
 
   @doc false

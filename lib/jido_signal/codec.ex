@@ -6,7 +6,7 @@ defmodule Jido.Signal.Codec do
 
   @core_names ~w[
     specversion id source type subject time
-    datacontenttype dataschema data extensions
+    datacontenttype dataschema data data_base64 extensions
   ]
   @legacy_wire_version_key "jido_schema_version"
   @legacy_wire_versions [1, 2]
@@ -16,8 +16,9 @@ defmodule Jido.Signal.Codec do
     attrs = stringify_keys(map)
 
     with :ok <- validate_legacy_wire_version(attrs),
+         {:ok, data} <- extract_data(attrs),
          {:ok, extensions} <- extract_extensions(attrs) do
-      parse_signal(attrs, extensions)
+      parse_signal(attrs, data, extensions)
     end
   end
 
@@ -48,10 +49,10 @@ defmodule Jido.Signal.Codec do
     end
   end
 
-  defp parse_signal(attrs, extensions) do
+  defp parse_signal(attrs, data, extensions) do
     signal =
       struct(Signal,
-        data: Map.get(attrs, "data"),
+        data: data,
         datacontenttype: Map.get(attrs, "datacontenttype"),
         dataschema: Map.get(attrs, "dataschema"),
         extensions: extensions,
@@ -78,12 +79,67 @@ defmodule Jido.Signal.Codec do
       "subject" => signal.subject,
       "time" => normalize_time(signal.time),
       "datacontenttype" => signal.datacontenttype,
-      "dataschema" => signal.dataschema,
-      "data" => signal.data
+      "dataschema" => signal.dataschema
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
+    |> Map.merge(encode_data(signal.data))
   end
+
+  defp encode_data(nil), do: %{}
+
+  defp encode_data(data) do
+    if json_data?(data) do
+      %{"data" => data}
+    else
+      %{"data_base64" => data |> :erlang.term_to_binary() |> Base.encode64()}
+    end
+  end
+
+  defp extract_data(attrs) do
+    case {Map.fetch(attrs, "data"), Map.fetch(attrs, "data_base64")} do
+      {{:ok, _data}, {:ok, _encoded}} ->
+        {:error, "parse error: data and data_base64 are mutually exclusive"}
+
+      {{:ok, data}, :error} ->
+        {:ok, data}
+
+      {:error, {:ok, encoded}} ->
+        decode_data_base64(encoded)
+
+      {:error, :error} ->
+        {:ok, nil}
+    end
+  end
+
+  defp decode_data_base64(encoded) when is_binary(encoded) do
+    with {:ok, binary} <- Base.decode64(encoded) do
+      {:ok, :erlang.binary_to_term(binary, [:safe])}
+    else
+      :error -> {:error, "parse error: data_base64 must be valid Base64"}
+    end
+  rescue
+    error in ArgumentError ->
+      {:error,
+       "parse error: data_base64 must contain a safe Erlang term: #{Exception.message(error)}"}
+  end
+
+  defp decode_data_base64(_encoded),
+    do: {:error, "parse error: data_base64 must be a Base64 string"}
+
+  defp json_data?(nil), do: true
+  defp json_data?(value) when is_boolean(value) or is_number(value), do: true
+  defp json_data?(value) when is_binary(value), do: String.valid?(value)
+  defp json_data?([]), do: true
+  defp json_data?([head | tail]), do: json_data?(head) and json_data?(tail)
+
+  defp json_data?(value) when is_map(value) and not is_struct(value) do
+    Enum.all?(value, fn {key, item} ->
+      is_binary(key) and String.valid?(key) and json_data?(item)
+    end)
+  end
+
+  defp json_data?(_value), do: false
 
   defp normalize_specversion("1.0.2"), do: "1.0"
   defp normalize_specversion(value), do: value

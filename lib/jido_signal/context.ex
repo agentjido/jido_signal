@@ -10,7 +10,7 @@ defmodule Jido.Signal.Context do
 
   @core_names ~w[
     specversion id source type subject time
-    datacontenttype dataschema data extensions
+    datacontenttype dataschema data data_base64 extensions
   ]
   @name_pattern ~r/\A[a-z][a-z0-9]{0,19}\z/
   @min_integer -2_147_483_648

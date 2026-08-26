@@ -30,9 +30,9 @@ signal.datacontenttype # Media type, or nil when not supplied
 signal.extensions      # Flat CloudEvents extension context attributes
 
 # Data semantics (CloudEvents):
-# - When datacontenttype is JSON (or omitted in JSON format), data may be any JSON value
-#   (object/map, array, string, number, boolean, null)
-# - For non-JSON payloads, encode according to datacontenttype; binary payloads use data_base64 when serialized to JSON
+# - JSON-safe data uses the data field in the wire map.
+# - Binary and other Erlang-only data uses an Erlang term binary in data_base64.
+# - datacontenttype describes the data. It does not transform the data.
 ```
 
 ## Signal IDs
