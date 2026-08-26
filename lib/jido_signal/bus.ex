@@ -1061,12 +1061,12 @@ defmodule Jido.Signal.Bus do
         },
         extra
       )
-      |> Telemetry.add_trace(signal)
 
     Telemetry.execute(
       [:jido, :signal, :bus, event],
       %{timestamp: System.monotonic_time(:microsecond)},
-      metadata
+      metadata,
+      signal
     )
   end
 

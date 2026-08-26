@@ -144,7 +144,7 @@ defmodule Jido.Signal.Dispatch do
   defp with_dispatch_telemetry(signal, target, fun) do
     start_time = System.monotonic_time(:millisecond)
     metadata = dispatch_telemetry_metadata(signal, target)
-    Telemetry.execute([:jido, :dispatch, :start], %{}, metadata)
+    Telemetry.execute([:jido, :dispatch, :start], %{}, metadata, signal)
 
     result = fun.()
     measurements = %{latency_ms: System.monotonic_time(:millisecond) - start_time}
@@ -154,7 +154,8 @@ defmodule Jido.Signal.Dispatch do
         Telemetry.execute(
           [:jido, :dispatch, :stop],
           measurements,
-          Map.merge(metadata, %{outcome: :ok, success?: true})
+          Map.merge(metadata, %{outcome: :ok, success?: true}),
+          signal
         )
 
       {:error, reason} ->
@@ -168,7 +169,8 @@ defmodule Jido.Signal.Dispatch do
             success?: false,
             error_type: Error.type(error),
             retryable?: Error.retryable?(error)
-          })
+          }),
+          signal
         )
     end
 
@@ -176,16 +178,13 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp dispatch_telemetry_metadata(signal, target) do
-    Telemetry.add_trace(
-      %{
-        adapter: target.adapter,
-        runtime_surface: :dispatch,
-        signal_type: signal_type(signal),
-        target: get_target_from_opts(target.opts),
-        target_kind: target_kind(target.opts)
-      },
-      signal
-    )
+    %{
+      adapter: target.adapter,
+      runtime_surface: :dispatch,
+      signal_type: signal_type(signal),
+      target: get_target_from_opts(target.opts),
+      target_kind: target_kind(target.opts)
+    }
   end
 
   defp signal_type(%{type: type}) when is_binary(type), do: type

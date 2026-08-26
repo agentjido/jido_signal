@@ -621,7 +621,8 @@ defmodule Jido.Signal.Router do
         Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: 0},
-          Telemetry.add_trace(%{signal_type: signal.type, matched: false}, signal)
+          %{signal_type: signal.type, matched: false},
+          signal
         )
 
         {:error,
@@ -634,7 +635,8 @@ defmodule Jido.Signal.Router do
         Telemetry.execute(
           [:jido, :signal, :router, :routed],
           %{latency_us: latency_us, match_count: length(results)},
-          Telemetry.add_trace(%{signal_type: signal.type, matched: true}, signal)
+          %{signal_type: signal.type, matched: true},
+          signal
         )
 
         {:ok, results}

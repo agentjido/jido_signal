@@ -103,6 +103,20 @@ or tracing system owns span lifetime, sampling policy, export, and process
 context. `causationid` can be an application-owned context attribute, but it is
 not part of W3C Trace Context.
 
+Pass the Signal to `Jido.Signal.Telemetry.execute/4` when a custom telemetry
+event must include its trace IDs and flags:
+
+```elixir
+Jido.Signal.Telemetry.execute(
+  [:my_app, :signal, :handled],
+  %{duration: duration},
+  %{signal_type: signal.type},
+  signal
+)
+```
+
+This reads trace context from the Signal. It does not read process state.
+
 ## Dispatch Is Not Signal Metadata
 
 Select a dispatch target at the delivery boundary:

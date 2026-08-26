@@ -413,42 +413,6 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
     Telemetry.execute(
       [:jido, :signal, :middleware, :before_dispatch, :start],
       %{system_time: System.system_time()},
-      Telemetry.add_trace(
-        %{
-          bus_name: context[:bus_name],
-          module: module,
-          signal_id: signal.id,
-          subscription_id: subscriber.id
-        },
-        signal
-      )
-    )
-  end
-
-  defp handle_before_dispatch_result(result, module, start_time, context, signal, subscriber) do
-    duration_us = System.monotonic_time(:microsecond) - start_time
-    telemetry_meta = build_dispatch_telemetry_meta(context, module, signal, subscriber)
-
-    case result do
-      {:cont, new_signal, new_state} ->
-        emit_before_dispatch_telemetry(:stop, duration_us, telemetry_meta)
-        {:cont, {:ok, new_signal, {module, new_state}}}
-
-      {:skip, new_state} ->
-        emit_before_dispatch_telemetry(:skip, duration_us, telemetry_meta)
-        {:halt, {:skip, {module, new_state}}}
-
-      {:halt, reason, new_state} ->
-        emit_before_dispatch_telemetry(:stop, duration_us, telemetry_meta)
-        {:halt, {:error, reason, {module, new_state}}}
-
-      {:error, _reason} = error ->
-        {:halt, error}
-    end
-  end
-
-  defp build_dispatch_telemetry_meta(context, module, signal, subscriber) do
-    Telemetry.add_trace(
       %{
         bus_name: context[:bus_name],
         module: module,
@@ -459,11 +423,43 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
     )
   end
 
-  defp emit_before_dispatch_telemetry(event, duration_us, meta) do
+  defp handle_before_dispatch_result(result, module, start_time, context, signal, subscriber) do
+    duration_us = System.monotonic_time(:microsecond) - start_time
+    telemetry_meta = build_dispatch_telemetry_meta(context, module, signal, subscriber)
+
+    case result do
+      {:cont, new_signal, new_state} ->
+        emit_before_dispatch_telemetry(:stop, duration_us, telemetry_meta, signal)
+        {:cont, {:ok, new_signal, {module, new_state}}}
+
+      {:skip, new_state} ->
+        emit_before_dispatch_telemetry(:skip, duration_us, telemetry_meta, signal)
+        {:halt, {:skip, {module, new_state}}}
+
+      {:halt, reason, new_state} ->
+        emit_before_dispatch_telemetry(:stop, duration_us, telemetry_meta, signal)
+        {:halt, {:error, reason, {module, new_state}}}
+
+      {:error, _reason} = error ->
+        {:halt, error}
+    end
+  end
+
+  defp build_dispatch_telemetry_meta(context, module, signal, subscriber) do
+    %{
+      bus_name: context[:bus_name],
+      module: module,
+      signal_id: signal.id,
+      subscription_id: subscriber.id
+    }
+  end
+
+  defp emit_before_dispatch_telemetry(event, duration_us, meta, signal) do
     Telemetry.execute(
       [:jido, :signal, :middleware, :before_dispatch, event],
       %{duration_us: duration_us},
-      meta
+      meta,
+      signal
     )
   end
 
@@ -525,15 +521,13 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
     Telemetry.execute(
       [:jido, :signal, :middleware, :after_dispatch, :stop],
       %{duration_us: duration_us},
-      Telemetry.add_trace(
-        %{
-          bus_name: context[:bus_name],
-          module: module,
-          signal_id: signal.id,
-          subscription_id: subscriber.id
-        },
-        signal
-      )
+      %{
+        bus_name: context[:bus_name],
+        module: module,
+        signal_id: signal.id,
+        subscription_id: subscriber.id
+      },
+      signal
     )
   end
 end

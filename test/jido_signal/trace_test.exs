@@ -140,25 +140,59 @@ defmodule Jido.Signal.TraceTest do
   end
 
   describe "telemetry" do
-    test "adds trace metadata explicitly from a Signal" do
+    test "execute/4 adds trace metadata from a Signal" do
       signal = Signal.new!(type: "test.created", source: "/test")
       trace = Trace.new(trace_flags: "01")
       assert {:ok, signal} = Trace.put(signal, trace)
 
-      metadata = Telemetry.add_trace(%{signal_type: signal.type}, signal)
+      event = [:jido, :signal, :test, :traced]
+      handler_id = {__MODULE__, make_ref()}
+      test_pid = self()
 
+      assert :ok =
+               Telemetry.attach(
+                 handler_id,
+                 event,
+                 fn name, measurements, metadata, _config ->
+                   send(test_pid, {name, measurements, metadata})
+                 end,
+                 %{}
+               )
+
+      on_exit(fn -> Telemetry.detach(handler_id) end)
+
+      assert :ok =
+               Telemetry.execute(event, %{count: 1}, %{signal_type: signal.type}, signal)
+
+      assert_receive {^event, %{count: 1}, metadata}
       assert metadata.jido_trace_id == trace.trace_id
       assert metadata.jido_span_id == trace.span_id
       assert metadata.jido_trace_flags == "01"
       assert metadata.signal_type == signal.type
     end
 
-    test "does not add empty trace metadata" do
+    test "execute/4 does not add empty trace metadata" do
       signal = Signal.new!(type: "test.created", source: "/test")
+      event = [:jido, :signal, :test, :untraced]
+      handler_id = {__MODULE__, make_ref()}
+      test_pid = self()
 
-      assert Telemetry.add_trace(%{signal_type: signal.type}, signal) == %{
-               signal_type: signal.type
-             }
+      assert :ok =
+               Telemetry.attach(
+                 handler_id,
+                 event,
+                 fn name, _measurements, metadata, _config ->
+                   send(test_pid, {name, metadata})
+                 end,
+                 %{}
+               )
+
+      on_exit(fn -> Telemetry.detach(handler_id) end)
+
+      assert :ok =
+               Telemetry.execute(event, %{}, %{signal_type: signal.type}, signal)
+
+      assert_receive {^event, %{signal_type: "test.created"}}
     end
   end
 end
