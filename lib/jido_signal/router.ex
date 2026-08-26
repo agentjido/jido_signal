@@ -43,7 +43,6 @@ defmodule Jido.Signal.Router do
   alias Jido.Signal
   alias Jido.Signal.Error
   alias Jido.Signal.Router.Index
-  alias Jido.Signal.Telemetry
 
   @type path :: String.t()
   @type match :: (Signal.t() -> boolean())
@@ -242,9 +241,7 @@ defmodule Jido.Signal.Router do
   end
 
   def route(%Router{} = router, %Signal{type: type} = signal) when is_binary(type) do
-    start_time = System.monotonic_time(:microsecond)
     targets = Index.lookup(router, type, signal)
-    emit_route_telemetry(signal, targets, start_time)
 
     case targets do
       [] -> no_match(signal)
@@ -344,18 +341,6 @@ defmodule Jido.Signal.Router do
 
   defp route_validation_error(_errors, route) do
     Error.routing_error("Invalid route", %{route: route.path})
-  end
-
-  defp emit_route_telemetry(signal, targets, start_time) do
-    Telemetry.execute(
-      [:jido, :signal, :router, :routed],
-      %{
-        latency_us: System.monotonic_time(:microsecond) - start_time,
-        match_count: length(targets)
-      },
-      %{signal_type: signal.type, matched: targets != []},
-      signal
-    )
   end
 
   defp no_match(signal) do
