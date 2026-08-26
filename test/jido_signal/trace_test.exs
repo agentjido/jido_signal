@@ -150,7 +150,7 @@ defmodule Jido.Signal.TraceTest do
       test_pid = self()
 
       assert :ok =
-               Telemetry.attach(
+               :telemetry.attach(
                  handler_id,
                  event,
                  fn name, measurements, metadata, _config ->
@@ -159,7 +159,7 @@ defmodule Jido.Signal.TraceTest do
                  %{}
                )
 
-      on_exit(fn -> Telemetry.detach(handler_id) end)
+      on_exit(fn -> :telemetry.detach(handler_id) end)
 
       assert :ok =
                Telemetry.execute(event, %{count: 1}, %{signal_type: signal.type}, signal)
@@ -178,7 +178,7 @@ defmodule Jido.Signal.TraceTest do
       test_pid = self()
 
       assert :ok =
-               Telemetry.attach(
+               :telemetry.attach(
                  handler_id,
                  event,
                  fn name, _measurements, metadata, _config ->
@@ -187,7 +187,7 @@ defmodule Jido.Signal.TraceTest do
                  %{}
                )
 
-      on_exit(fn -> Telemetry.detach(handler_id) end)
+      on_exit(fn -> :telemetry.detach(handler_id) end)
 
       assert :ok =
                Telemetry.execute(event, %{}, %{signal_type: signal.type}, signal)

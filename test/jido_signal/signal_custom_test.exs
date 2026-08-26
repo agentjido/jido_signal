@@ -104,18 +104,12 @@ defmodule Jido.Signal.CustomTest do
       assert signal.data.user_id == "123"
     end
 
-    test "exposes concise static metadata" do
+    test "exposes the static definition" do
       assert UserCreated.type() == "user.created"
       assert UserCreated.default_source() == "/accounts"
+      assert UserCreated.datacontenttype() == "application/json"
+      assert UserCreated.dataschema() == "https://example.com/schemas/user-created"
       assert %Zoi.Types.Map{} = UserCreated.schema()
-
-      assert UserCreated.metadata() == %{
-               type: "user.created",
-               default_source: "/accounts",
-               datacontenttype: "application/json",
-               dataschema: "https://example.com/schemas/user-created",
-               schema: UserCreated.schema()
-             }
     end
   end
 

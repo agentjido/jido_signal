@@ -4,6 +4,10 @@
 CloudEvents extension context attributes are optional transport metadata. A
 Signal does not need an extension attribute to conform to CloudEvents 1.0.
 
+Version 3 uses the context API only. Replace `put_extension/3`,
+`get_extension/2`, `delete_extension/2`, and `list_extensions/1` with
+`put_context/3`, `get_context/2`, `delete_context/2`, and `list_context/1`.
+
 Use a custom Signal module and a Zoi schema for domain data. Use context
 attributes only when routing or processing infrastructure needs small metadata
 that is not part of the event data.

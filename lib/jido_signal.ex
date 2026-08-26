@@ -54,7 +54,6 @@ defmodule Jido.Signal do
   alias Jido.Signal.Codec
   alias Jido.Signal.Serialization
 
-  @wire_version 3
   @default_data_schema Zoi.any()
 
   @definition_defaults %{
@@ -120,10 +119,6 @@ defmodule Jido.Signal do
   @spec schema() :: Zoi.schema()
   def schema, do: @signal_schema
 
-  @doc "Returns the Jido Signal API wire generation."
-  @spec wire_version() :: pos_integer()
-  def wire_version, do: @wire_version
-
   @doc "Defines a custom Signal module with a static Zoi data schema."
   defmacro __using__(opts_ast) do
     quote location: :keep do
@@ -148,10 +143,6 @@ defmodule Jido.Signal do
       @doc "Returns the static Zoi data schema."
       @spec schema() :: Zoi.schema()
       def schema, do: @signal_definition[:schema]
-
-      @doc "Returns the typed Signal metadata."
-      @spec metadata() :: map()
-      def metadata, do: @signal_definition
 
       @doc "Validates data with the static Zoi schema."
       @spec validate_data(term()) :: Zoi.result()
@@ -315,28 +306,6 @@ defmodule Jido.Signal do
   @doc "Lists the CloudEvents extension context attribute names."
   @spec list_context(t()) :: [String.t()]
   defdelegate list_context(signal), to: Context, as: :names
-
-  @deprecated "Use put_context/3. Extension values are now flat CloudEvents values."
-  defdelegate put_extension(signal, name, value), to: Context, as: :put
-
-  @deprecated "Use get_context/2."
-  defdelegate get_extension(signal, name), to: Context, as: :get
-
-  @deprecated "Use delete_context/2."
-  defdelegate delete_extension(signal, name), to: Context, as: :delete
-
-  @deprecated "Use list_context/1."
-  defdelegate list_extensions(signal), to: Context, as: :names
-
-  @doc false
-  def flatten_extensions(%__MODULE__{} = signal), do: to_map(signal)
-
-  @doc false
-  def inflate_extensions(attrs) when is_map(attrs) do
-    attrs = stringify_keys(attrs)
-    core_names = ~w[specversion id source type subject time datacontenttype dataschema data]
-    {Map.drop(attrs, core_names), Map.take(attrs, core_names)}
-  end
 
   @doc "Serializes one Signal or a list of Signals as JSON or Erlang Term Format."
   defdelegate serialize(signal_or_signals, opts \\ []), to: Serialization

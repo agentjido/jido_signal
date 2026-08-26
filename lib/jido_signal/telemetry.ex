@@ -29,16 +29,6 @@ defmodule Jido.Signal.Telemetry do
     :telemetry.execute(event_name, measurements, metadata)
   end
 
-  @spec attach(term(), event_name(), function(), map()) :: :ok | {:error, term()}
-  def attach(handler_id, event_name, function, config) do
-    :telemetry.attach(handler_id, event_name, function, config)
-  end
-
-  @spec detach(term()) :: :ok | {:error, term()}
-  def detach(handler_id) do
-    :telemetry.detach(handler_id)
-  end
-
   defp drop_nil_entries(metadata) do
     Enum.reject(metadata, fn {_key, value} -> is_nil(value) end)
     |> Enum.into(%{})
