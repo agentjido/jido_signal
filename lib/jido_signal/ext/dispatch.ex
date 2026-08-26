@@ -2,21 +2,19 @@ defmodule Jido.Signal.Ext.Dispatch do
   @moduledoc """
   Dispatch extension for Jido Signals.
 
-  This extension provides the same functionality as the existing `jido_dispatch` field
-  through the Signal extension system while maintaining full backward compatibility.
-  It allows configuring how signals are routed and delivered to various destinations
-  using configurable adapters.
+  This extension stores a dispatch target in the Signal extension system. It allows
+  callers to keep dispatch metadata on a Signal when a wire representation requires it.
 
   ## Features
 
-  - Same tuple format as existing `jido_dispatch`: `{adapter, opts}` or list of tuples
-  - Reuses existing dispatch validation logic from `Jido.Signal.Dispatch`
+  - Uses the public dispatch tuple format: `{adapter, opts}` or a list of tuples
+  - Uses validation from `Jido.Signal.Dispatch`
   - CloudEvents-compliant serialization with attribute name "dispatch"
   - Full compatibility with all existing dispatch adapters
 
   ## Supported Adapters
 
-  The extension supports all the same adapters as the existing `jido_dispatch` field:
+  The extension supports the public dispatch adapters:
 
   * `:pid` - Direct delivery to a specific process
   * `:bus` - Delivery to an event bus (implementation pending)
@@ -100,8 +98,7 @@ defmodule Jido.Signal.Ext.Dispatch do
   @doc """
   Validates dispatch configuration data using existing dispatch validation logic.
 
-  Delegates to `Jido.Signal.Dispatch.validate_opts/1` to ensure the same validation
-  behavior as the existing `jido_dispatch` field.
+  Delegates to `Jido.Signal.Dispatch.validate_opts/1`.
 
   ## Parameters
   - `data` - The dispatch configuration to validate

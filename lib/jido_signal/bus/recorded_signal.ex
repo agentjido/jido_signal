@@ -6,8 +6,6 @@ defmodule Jido.Signal.Bus.RecordedSignal do
   """
   alias Jido.Signal.Serialization.JsonSerializer
 
-  @derive {Jason.Encoder, only: [:id, :type, :created_at, :signal]}
-
   @schema Zoi.struct(
             __MODULE__,
             %{
@@ -57,17 +55,26 @@ defmodule Jido.Signal.Bus.RecordedSignal do
   """
   @spec serialize(t() | list(t())) :: binary()
   def serialize(%__MODULE__{} = recorded_signal) do
-    case JsonSerializer.serialize(recorded_signal) do
+    case JsonSerializer.serialize(to_map(recorded_signal)) do
       {:ok, binary} -> binary
       {:error, reason} -> raise "Serialization failed: #{inspect(reason)}"
     end
   end
 
   def serialize(recorded_signals) when is_list(recorded_signals) do
-    case JsonSerializer.serialize(recorded_signals) do
+    case JsonSerializer.serialize(Enum.map(recorded_signals, &to_map/1)) do
       {:ok, binary} -> binary
       {:error, reason} -> raise "Serialization failed: #{inspect(reason)}"
     end
+  end
+
+  defp to_map(%__MODULE__{} = recorded_signal) do
+    %{
+      "id" => recorded_signal.id,
+      "type" => recorded_signal.type,
+      "created_at" => DateTime.to_iso8601(recorded_signal.created_at),
+      "signal" => Jido.Signal.to_map(recorded_signal.signal)
+    }
   end
 
   @doc """

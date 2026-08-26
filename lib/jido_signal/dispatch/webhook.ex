@@ -182,7 +182,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
   def prepare_http_opts(signal, opts) do
     with {:ok, opts} <- validate_opts(opts),
          {:ok, event_type} <- event_type(signal, opts) do
-      payload = Jason.encode!(signal)
+      payload = signal |> Jido.Signal.to_map() |> Jason.encode!()
       timestamp = DateTime.utc_now() |> DateTime.to_unix()
 
       webhook_headers =

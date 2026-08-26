@@ -24,7 +24,6 @@ defmodule Jido.Signal.Serialization.ErlangTermSerializer do
 
   @behaviour Jido.Signal.Serialization.Serializer
 
-  alias Jido.Signal.Serialization.CloudEventsTransform
   alias Jido.Signal.Serialization.Config
   alias Jido.Signal.Serialization.TypeProvider
 
@@ -59,7 +58,6 @@ defmodule Jido.Signal.Serialization.ErlangTermSerializer do
 
   defp do_deserialize(binary, config) do
     result = :erlang.binary_to_term(binary, [:safe])
-    result = CloudEventsTransform.inflate_for_deserialization(result)
 
     # If a specific type is requested, convert to that type
     case Keyword.get(config, :type) do
@@ -100,12 +98,7 @@ defmodule Jido.Signal.Serialization.ErlangTermSerializer do
 
   def valid_erlang_term?(_), do: false
 
-  # Prepare term for serialization by flattening extensions in Signal structs
-  defp prepare_for_serialization(%Jido.Signal{} = signal) do
-    signal
-    |> CloudEventsTransform.flatten_for_serialization()
-    |> Map.put("jido_schema_version", 1)
-  end
+  defp prepare_for_serialization(%Jido.Signal{} = signal), do: Jido.Signal.to_map(signal)
 
   defp prepare_for_serialization(signals) when is_list(signals) do
     Enum.map(signals, &prepare_for_serialization/1)

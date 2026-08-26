@@ -7,6 +7,17 @@ Comprehensive guide to signal serialization, including built-in serializers, cus
 
 Jido Signal provides a flexible serialization system that allows signals to be converted to binary format for storage, transmission, or inter-process communication. The system supports multiple serialization formats and is designed to be extensible with custom serializers.
 
+All Signal formats use `Jido.Signal.to_map/1` before encoding and
+`Jido.Signal.from_map/1` after decoding. The canonical map uses string keys,
+flattens extension attributes, omits nil optional fields, and writes
+`"jido_schema_version" => 2`. Version 1 payloads and payloads without a version
+remain readable.
+
+The stable wire fields are `specversion`, `id`, `source`, `type`, `subject`,
+`time`, `datacontenttype`, `dataschema`, `data`, registered extension attributes,
+and `jido_schema_version`. Internal structs and extension containers are not wire
+formats.
+
 ### Serializer Behaviour
 
 All serializers implement the `Jido.Signal.Serialization.Serializer` behaviour:
@@ -36,8 +47,8 @@ alias Jido.Signal.Serialization.JsonSerializer
 
 # Basic usage
 {:ok, signal} = Jido.Signal.new(%{type: "user.created", source: "/auth"})
-{:ok, json} = JsonSerializer.serialize(signal)
-{:ok, deserialized} = JsonSerializer.deserialize(json)
+{:ok, json} = Signal.serialize(signal, serializer: JsonSerializer)
+{:ok, deserialized} = Signal.deserialize(json, serializer: JsonSerializer)
 ```
 
 **Features:**

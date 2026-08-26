@@ -70,12 +70,8 @@ defmodule Jido.Signal.BusMultiBusE2ETest do
       # Store signal globally and by bus
       new_signals = [signal | state.signals]
 
-      # Extract bus info from metadata if available
-      bus_name =
-        case signal.jido_dispatch do
-          %{bus_name: name} -> name
-          _ -> :unknown_bus
-        end
+      # Extract bus info from middleware-tagged data if available
+      bus_name = Map.get(signal.data || %{}, :bus_name, :unknown_bus)
 
       bus_signals = Map.get(state.signals_by_bus, bus_name, [])
       new_signals_by_bus = Map.put(state.signals_by_bus, bus_name, [signal | bus_signals])

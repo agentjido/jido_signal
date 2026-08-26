@@ -108,25 +108,21 @@ defmodule JidoTest.Signal.SerializationTest do
     end
   end
 
-  describe "Zoi validation" do
-    test "deserialize returns structured error for invalid Signal with empty type" do
-      invalid_json = ~s({"type": "", "source": "/test", "id": "123"})
+  describe "Signal boundary validation" do
+    test "Signal.deserialize returns an error for an empty type" do
+      invalid_json =
+        ~s({"specversion":"1.0.2","type":"","source":"/test","id":"123"})
 
-      assert {:error, {:schema_validation_failed, errors}} =
-               JsonSerializer.deserialize(invalid_json)
-
-      assert is_map(errors)
-      assert Map.has_key?(errors, "type")
+      assert {:error, error} = Jido.Signal.deserialize(invalid_json)
+      assert error =~ "type"
     end
 
-    test "deserialize returns structured error for invalid Signal with empty source" do
-      invalid_json = ~s({"type": "test.event", "source": "", "id": "123"})
+    test "Signal.deserialize returns an error for an empty source" do
+      invalid_json =
+        ~s({"specversion":"1.0.2","type":"test.event","source":"","id":"123"})
 
-      assert {:error, {:schema_validation_failed, errors}} =
-               JsonSerializer.deserialize(invalid_json)
-
-      assert is_map(errors)
-      assert Map.has_key?(errors, "source")
+      assert {:error, error} = Jido.Signal.deserialize(invalid_json)
+      assert error =~ "source"
     end
 
     test "deserialize succeeds for valid Signal" do
@@ -142,7 +138,7 @@ defmodule JidoTest.Signal.SerializationTest do
 
       assert {:ok, result} = JsonSerializer.deserialize(json_with_ext)
       assert result["type"] == "test"
-      # Zoi validation strips unknown fields by default
+      assert result["custom_field"] == "value"
     end
   end
 

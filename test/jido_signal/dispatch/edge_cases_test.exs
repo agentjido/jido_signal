@@ -260,7 +260,7 @@ defmodule Jido.Signal.DispatchEdgeCasesTest do
       test_pid = self()
 
       assert :ok = Dispatch.dispatch_batch(signal, [{:pid, [target: test_pid]}])
-      assert_received {:signal, %Signal{extensions: %{custom: "value"}}}
+      assert_received {:signal, %Signal{extensions: %{"custom" => "value"}}}
     end
   end
 

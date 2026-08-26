@@ -87,7 +87,9 @@ signal_without_thread = Jido.Signal.delete_extension(signal_with_thread, "thread
 
 ## Built-in Dispatch Extension
 
-Jido.Signal includes a built-in Dispatch extension that provides the same functionality as the legacy `jido_dispatch` field:
+Jido.Signal includes a built-in Dispatch extension for dispatch metadata. Prefer
+passing a target directly to `Jido.Signal.Dispatch.dispatch/2` or in the options
+for `Jido.Signal.Bus.subscribe/3`.
 
 ```elixir
 # Add dispatch configuration via extension using namespace STRING

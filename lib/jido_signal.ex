@@ -145,15 +145,18 @@ defmodule Jido.Signal do
   alias Jido.Signal.Sanitizer
   alias Jido.Signal.Schema
   alias Jido.Signal.Serialization.Serializer
-  alias Jido.Signal.Serialization.TypeProvider
   alias Jido.Signal.Using
 
   require Logger
 
   @core_attrs ~w[
     specversion id source type subject time
-    datacontenttype dataschema data jido_dispatch extensions
+    datacontenttype dataschema data extensions
   ]a
+
+  @wire_version 2
+  @readable_wire_versions [1, @wire_version]
+  @wire_version_key "jido_schema_version"
 
   @default_data_schema Zoi.any()
   @signal_config_schema Zoi.keyword(
@@ -181,36 +184,21 @@ defmodule Jido.Signal do
                    __MODULE__,
                    %{
                      # Required fields
-                     id: Zoi.string(),
-                     source: Zoi.string(),
-                     type: Zoi.string(),
+                     id: Zoi.string() |> Zoi.min(1),
+                     source: Zoi.string() |> Zoi.min(1),
+                     type: Zoi.string() |> Zoi.min(1),
                      # Test: Zoi.default(...) |> Zoi.optional() pattern for static defaults
-                     specversion: Zoi.default(Zoi.string(), "1.0.2") |> Zoi.optional(),
+                     specversion: Zoi.default(Zoi.literal("1.0.2"), "1.0.2") |> Zoi.optional(),
                      datacontenttype:
                        Zoi.default(Zoi.string(), "application/json") |> Zoi.optional(),
                      extensions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional(),
                      # Optional fields
-                     subject: Zoi.string() |> Zoi.nullable() |> Zoi.optional(),
-                     time: Zoi.string() |> Zoi.nullable() |> Zoi.optional(),
-                     dataschema: Zoi.string() |> Zoi.nullable() |> Zoi.optional(),
-                     data: Zoi.any() |> Zoi.optional(),
-                     jido_dispatch: Zoi.any() |> Zoi.optional()
+                     subject: Zoi.string() |> Zoi.min(1) |> Zoi.nullable() |> Zoi.optional(),
+                     time: Zoi.string() |> Zoi.min(1) |> Zoi.nullable() |> Zoi.optional(),
+                     dataschema: Zoi.string() |> Zoi.min(1) |> Zoi.nullable() |> Zoi.optional(),
+                     data: Zoi.any() |> Zoi.optional()
                    }
                  )
-
-  @derive {Jason.Encoder,
-           only: [
-             :id,
-             :source,
-             :type,
-             :subject,
-             :time,
-             :datacontenttype,
-             :dataschema,
-             :data,
-             :specversion,
-             :extensions
-           ]}
 
   # Use Zoi.Struct helpers for automatic generation
   @type t :: unquote(Zoi.type_spec(@signal_schema))
@@ -219,6 +207,10 @@ defmodule Jido.Signal do
 
   @doc "Returns the Zoi schema for Signal"
   def schema, do: @signal_schema
+
+  @doc "Returns the current Signal wire format version."
+  @spec wire_version() :: pos_integer()
+  def wire_version, do: @wire_version
 
   @doc false
   @spec storable_schema?(term()) :: boolean()
@@ -571,7 +563,7 @@ defmodule Jido.Signal do
 
   - `type` must be a string
   - `data` can be any term (map, string, etc.)
-  - `attrs` is a map or keyword list for other fields (e.g., `:source`, `:subject`, `:jido_dispatch`)
+  - `attrs` is a map or keyword list for other fields (for example, `:source` or `:subject`)
   - `attrs` must NOT include `:type`/`"type"` or `:data`/`"data"`
 
   Examples:
@@ -629,50 +621,158 @@ defmodule Jido.Signal do
   """
   @spec from_map(map()) :: {:ok, t()} | {:error, String.t()}
   def from_map(map) when is_map(map) do
-    {extensions_data, remaining_attrs} = inflate_extensions(map)
+    map = stringify_keys(map)
 
-    # Parse extensions that were explicitly stored in "extensions" field
-    final_extensions =
-      case parse_extensions(remaining_attrs["extensions"]) do
-        {:ok, explicit} -> Map.merge(extensions_data, explicit)
-        {:error, _} -> extensions_data
-      end
-
-    {core, maybe_ext} = Map.split(remaining_attrs, @core_attrs |> Enum.map(&to_string/1))
-
-    unknown_extensions = Enum.reduce(maybe_ext, %{}, &preserve_unknown_extension/2)
-
-    all_extensions = Map.merge(final_extensions, unknown_extensions)
-    remaining_attrs = core
-
-    with :ok <- parse_specversion(remaining_attrs),
-         {:ok, type} <- parse_type(remaining_attrs),
-         {:ok, source} <- parse_source(remaining_attrs),
-         {:ok, id} <- parse_id(remaining_attrs),
-         {:ok, subject} <- parse_subject(remaining_attrs),
-         {:ok, time} <- parse_time(remaining_attrs),
-         {:ok, datacontenttype} <- parse_datacontenttype(remaining_attrs),
-         {:ok, dataschema} <- parse_dataschema(remaining_attrs),
-         {:ok, data} <- parse_data(remaining_attrs["data"]),
-         {:ok, jido_dispatch} <- parse_jido_dispatch(remaining_attrs["jido_dispatch"]) do
-      event = %__MODULE__{
-        data: data,
-        datacontenttype: datacontenttype || if(data, do: "application/json"),
-        dataschema: dataschema,
-        extensions: all_extensions,
-        id: id,
-        jido_dispatch: jido_dispatch,
-        source: source,
-        specversion: "1.0.2",
-        subject: subject,
-        time: time,
-        type: type
-      }
-
-      {:ok, event}
-    else
-      {:error, reason} -> {:error, "parse error: #{reason}"}
+    with :ok <- validate_wire_version(map),
+         {:ok, extensions, attrs} <- decode_extensions(map),
+         {:ok, signal} <- build_and_validate_signal(attrs, extensions) do
+      {:ok, signal}
     end
+  end
+
+  def from_map(_map), do: {:error, "parse error: expected a map"}
+
+  @doc """
+  Converts a Signal to its canonical CloudEvents-compatible wire map.
+
+  The map uses string keys, flattens extension attributes, omits nil optional
+  fields, and writes the current `jido_schema_version`.
+  """
+  @spec to_map(t()) :: map()
+  def to_map(%__MODULE__{} = signal) do
+    extension_attrs = encode_extensions(signal.extensions)
+
+    signal
+    |> base_wire_map()
+    |> Map.merge(extension_attrs, fn _key, core_value, _extension_value -> core_value end)
+    |> Map.put(@wire_version_key, @wire_version)
+  end
+
+  defp base_wire_map(signal) do
+    %{
+      "specversion" => signal.specversion,
+      "id" => signal.id,
+      "source" => signal.source,
+      "type" => signal.type,
+      "subject" => signal.subject,
+      "time" => normalize_wire_time(signal.time),
+      "datacontenttype" => signal.datacontenttype,
+      "dataschema" => signal.dataschema,
+      "data" => signal.data
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp normalize_wire_time(%DateTime{} = time), do: DateTime.to_iso8601(time)
+  defp normalize_wire_time(time), do: time
+
+  defp encode_extensions(extensions) when is_map(extensions) do
+    Enum.reduce(extensions, %{}, fn {namespace, data}, acc ->
+      namespace = to_string(namespace)
+
+      attrs =
+        case Jido.Signal.Ext.Registry.get(namespace) do
+          {:ok, extension_module} ->
+            case Ext.safe_to_attrs(extension_module, data) do
+              {:ok, attrs} when is_map(attrs) -> stringify_keys(attrs)
+              _ -> %{}
+            end
+
+          {:error, :not_found} ->
+            %{namespace => data}
+        end
+
+      attrs
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+      |> Map.merge(acc)
+    end)
+  end
+
+  defp encode_extensions(_extensions), do: %{}
+
+  defp validate_wire_version(%{@wire_version_key => version})
+       when version in @readable_wire_versions,
+       do: :ok
+
+  defp validate_wire_version(%{@wire_version_key => nil}), do: :ok
+  defp validate_wire_version(map) when not is_map_key(map, @wire_version_key), do: :ok
+
+  defp validate_wire_version(%{@wire_version_key => version}) do
+    {:error, "parse error: unsupported jido_schema_version #{inspect(version)}"}
+  end
+
+  defp decode_extensions(map) do
+    {inflated, remaining_attrs} = inflate_extensions(map)
+
+    with {:ok, explicit} <- normalize_explicit_extensions(remaining_attrs["extensions"]) do
+      core_keys = Enum.map(@core_attrs, &to_string/1)
+
+      unknown =
+        remaining_attrs
+        |> Map.drop(core_keys ++ ["extensions", "jido_dispatch", @wire_version_key])
+        |> Enum.reduce(%{}, &preserve_unknown_extension/2)
+
+      extensions =
+        inflated
+        |> Map.merge(unknown)
+        |> Map.merge(explicit)
+        |> maybe_put_legacy_dispatch(remaining_attrs["jido_dispatch"])
+
+      attrs = Map.take(remaining_attrs, core_keys)
+      {:ok, extensions, attrs}
+    end
+  end
+
+  defp normalize_explicit_extensions(nil), do: {:ok, %{}}
+
+  defp normalize_explicit_extensions(extensions) when is_map(extensions) do
+    {:ok, Map.new(extensions, fn {key, value} -> {to_string(key), value} end)}
+  end
+
+  defp normalize_explicit_extensions(_extensions),
+    do: {:error, "parse error: invalid extensions"}
+
+  defp maybe_put_legacy_dispatch(extensions, nil), do: extensions
+
+  defp maybe_put_legacy_dispatch(extensions, dispatch) do
+    Logger.warning("Decoded deprecated jido_dispatch as the dispatch extension")
+    Map.put_new(extensions, "dispatch", dispatch)
+  end
+
+  defp build_and_validate_signal(attrs, extensions) do
+    data = attrs["data"]
+
+    signal = %__MODULE__{
+      data: data,
+      datacontenttype: attrs["datacontenttype"] || if(data, do: "application/json"),
+      dataschema: attrs["dataschema"],
+      extensions: extensions,
+      id: attrs["id"] || ID.generate!(),
+      source: attrs["source"],
+      specversion: attrs["specversion"],
+      subject: attrs["subject"],
+      time: attrs["time"],
+      type: attrs["type"]
+    }
+
+    case Zoi.parse(@signal_schema, signal) do
+      {:ok, validated} ->
+        validate_nonempty_data(validated)
+
+      {:error, errors} ->
+        {:error, "parse error: #{Zoi.prettify_errors(errors)}"}
+    end
+  end
+
+  defp validate_nonempty_data(%__MODULE__{data: ""}),
+    do: {:error, "parse error: data field given but empty"}
+
+  defp validate_nonempty_data(signal), do: {:ok, signal}
+
+  defp stringify_keys(map) do
+    Map.new(map, fn {key, value} -> {to_string(key), value} end)
   end
 
   defp preserve_unknown_extension({key, value}, acc) do
@@ -690,131 +790,6 @@ defmodule Jido.Signal do
         Map.put(acc, namespace, value)
     end
   end
-
-  @doc """
-  Converts a struct or list of structs to Signal data format.
-
-  This function is useful for converting domain objects to Signal format
-  while preserving their type information through the TypeProvider.
-
-  ## Parameters
-
-  - `signals`: A struct or list of structs to convert
-  - `fields`: Additional fields to include (currently unused)
-
-  ## Returns
-
-  Signal struct or list of Signal structs with the original data as payload
-
-  ## Examples
-
-      # Converting a single struct
-      iex> user = %User{id: 1, name: "John"}
-      iex> signal = Jido.Signal.map_to_signal_data(user)
-      iex> signal.data
-      %User{id: 1, name: "John"}
-
-      # Converting multiple structs
-      iex> users = [%User{id: 1}, %User{id: 2}]
-      iex> signals = Jido.Signal.map_to_signal_data(users)
-      iex> length(signals)
-      2
-  """
-  def map_to_signal_data(signals, fields \\ [])
-
-  @spec map_to_signal_data(list(struct), Keyword.t()) :: list(t())
-  def map_to_signal_data(signals, fields) when is_list(signals) do
-    Enum.map(signals, &map_to_signal_data(&1, fields))
-  end
-
-  @spec map_to_signal_data(struct, Keyword.t()) :: t()
-  def map_to_signal_data(signal, fields) do
-    source = Keyword.get(fields, :source, "/#{inspect(signal.__struct__)}")
-
-    %__MODULE__{
-      data: signal,
-      id: ID.generate!(),
-      source: source,
-      type: TypeProvider.to_string(signal)
-    }
-  end
-
-  # Parser functions for standard CloudEvents fields
-
-  @spec parse_specversion(map()) :: :ok | {:error, String.t()}
-  defp parse_specversion(%{"specversion" => "1.0.2"}), do: :ok
-  defp parse_specversion(%{"specversion" => x}), do: {:error, "unexpected specversion #{x}"}
-  defp parse_specversion(_), do: {:error, "missing specversion"}
-
-  @spec parse_type(map()) :: {:ok, String.t()} | {:error, String.t()}
-  defp parse_type(%{"type" => type}) when byte_size(type) > 0, do: {:ok, type}
-  defp parse_type(_), do: {:error, "missing type"}
-
-  @spec parse_source(map()) :: {:ok, String.t()} | {:error, String.t()}
-  defp parse_source(%{"source" => source}) when byte_size(source) > 0, do: {:ok, source}
-  defp parse_source(_), do: {:error, "missing source"}
-
-  @spec parse_id(map()) :: {:ok, String.t()} | {:error, String.t()}
-  defp parse_id(%{"id" => id}) when byte_size(id) > 0, do: {:ok, id}
-  defp parse_id(%{"id" => ""}), do: {:error, "id given but empty"}
-  defp parse_id(_), do: {:ok, ID.generate!()}
-
-  @spec parse_subject(map()) :: {:ok, String.t() | nil} | {:error, String.t()}
-  defp parse_subject(%{"subject" => sub}) when byte_size(sub) > 0, do: {:ok, sub}
-  defp parse_subject(%{"subject" => ""}), do: {:error, "subject given but empty"}
-  defp parse_subject(_), do: {:ok, nil}
-
-  @spec parse_time(map()) :: {:ok, String.t() | nil} | {:error, String.t()}
-  defp parse_time(%{"time" => time}) when byte_size(time) > 0, do: {:ok, time}
-  defp parse_time(%{"time" => ""}), do: {:error, "time given but empty"}
-  defp parse_time(_), do: {:ok, nil}
-
-  @spec parse_datacontenttype(map()) :: {:ok, String.t() | nil} | {:error, String.t()}
-  defp parse_datacontenttype(%{"datacontenttype" => ct}) when byte_size(ct) > 0, do: {:ok, ct}
-
-  defp parse_datacontenttype(%{"datacontenttype" => ""}),
-    do: {:error, "datacontenttype given but empty"}
-
-  defp parse_datacontenttype(_), do: {:ok, nil}
-
-  @spec parse_dataschema(map()) :: {:ok, String.t() | nil} | {:error, String.t()}
-  defp parse_dataschema(%{"dataschema" => schema}) when byte_size(schema) > 0, do: {:ok, schema}
-  defp parse_dataschema(%{"dataschema" => ""}), do: {:error, "dataschema given but empty"}
-  defp parse_dataschema(_), do: {:ok, nil}
-
-  @spec parse_data(term()) :: {:ok, term()} | {:error, String.t()}
-  defp parse_data(""), do: {:error, "data field given but empty"}
-  defp parse_data(data), do: {:ok, data}
-
-  @spec parse_jido_dispatch(term()) :: {:ok, term() | nil} | {:error, String.t()}
-  defp parse_jido_dispatch(nil), do: {:ok, nil}
-
-  defp parse_jido_dispatch({adapter, opts} = config) when is_atom(adapter) and is_list(opts) do
-    IO.warn(
-      "Signal.jido_dispatch field is deprecated and will be removed in the next major version. " <>
-        "Use the Dispatch extension or pass dispatch configs to Bus.subscribe/3 or Dispatch.dispatch/2 instead.",
-      []
-    )
-
-    {:ok, config}
-  end
-
-  defp parse_jido_dispatch(config) when is_list(config) do
-    IO.warn(
-      "Signal.jido_dispatch field is deprecated and will be removed in the next major version. " <>
-        "Use the Dispatch extension or pass dispatch configs to Bus.subscribe/3 or Dispatch.dispatch/2 instead.",
-      []
-    )
-
-    {:ok, config}
-  end
-
-  defp parse_jido_dispatch(_), do: {:error, "invalid dispatch config"}
-
-  @spec parse_extensions(term()) :: {:ok, map()} | {:error, String.t()}
-  defp parse_extensions(nil), do: {:ok, %{}}
-  defp parse_extensions(extensions) when is_map(extensions), do: {:ok, extensions}
-  defp parse_extensions(_), do: {:error, "invalid extensions"}
 
   @doc """
   Serializes a Signal or a list of Signals using the specified or default serializer.
@@ -1112,46 +1087,7 @@ defmodule Jido.Signal do
       # => %{"type" => "test", "source" => "/test", "user_id" => "123", ...}
   """
   @spec flatten_extensions(t()) :: map()
-  def flatten_extensions(%__MODULE__{} = signal) do
-    base_map = build_base_map_for_flatten(signal)
-    Enum.reduce(signal.extensions, base_map, &flatten_single_extension/2)
-  end
-
-  defp build_base_map_for_flatten(signal) do
-    required_fields = ["specversion", "type", "source", "id"]
-
-    signal
-    |> Map.from_struct()
-    |> Map.delete(:extensions)
-    |> Enum.reject(fn {k, v} ->
-      string_key = to_string(k)
-      v == nil and string_key not in required_fields
-    end)
-    |> Map.new(fn {k, v} -> {to_string(k), v} end)
-  end
-
-  defp flatten_single_extension({namespace, data}, acc) do
-    case get(namespace) do
-      {:ok, extension_module} -> flatten_extension_attrs(extension_module, namespace, data, acc)
-      {:error, :not_found} -> acc
-    end
-  end
-
-  defp flatten_extension_attrs(extension_module, namespace, data, acc) do
-    case Ext.safe_to_attrs(extension_module, data) do
-      {:ok, extension_attrs} ->
-        filtered_attrs = Enum.reject(extension_attrs, fn {_k, v} -> v == nil end)
-        Map.merge(acc, Map.new(filtered_attrs))
-
-      {:error, reason} ->
-        Logger.warning(fn ->
-          "Extension namespace=#{namespace} to_attrs failed " <>
-            "reason=#{Sanitizer.preview(reason, :telemetry)}"
-        end)
-
-        acc
-    end
-  end
+  def flatten_extensions(%__MODULE__{} = signal), do: to_map(signal)
 
   @doc """
   Inflates top-level attributes back to extension data.

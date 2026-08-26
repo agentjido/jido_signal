@@ -37,7 +37,6 @@ defmodule Jido.Signal.Serialization.MsgpackSerializer do
   @behaviour Jido.Signal.Serialization.Serializer
 
   if Code.ensure_loaded?(Msgpax) do
-    alias Jido.Signal.Serialization.CloudEventsTransform
     alias Jido.Signal.Serialization.Config
     alias Jido.Signal.Serialization.TypeProvider
 
@@ -89,8 +88,7 @@ defmodule Jido.Signal.Serialization.MsgpackSerializer do
     end
 
     defp process_unpacked_data(unpacked, config) do
-      inflated = CloudEventsTransform.inflate_for_deserialization(unpacked)
-      result = deserialize_with_type(inflated, config)
+      result = deserialize_with_type(unpacked, config)
       {:ok, result}
     end
 
@@ -190,12 +188,7 @@ defmodule Jido.Signal.Serialization.MsgpackSerializer do
 
     def valid_msgpack?(_), do: false
 
-    # Prepare term for serialization by flattening extensions in Signal structs
-    defp prepare_for_serialization(%Jido.Signal{} = signal) do
-      signal
-      |> CloudEventsTransform.flatten_for_serialization()
-      |> Map.put("jido_schema_version", 1)
-    end
+    defp prepare_for_serialization(%Jido.Signal{} = signal), do: Jido.Signal.to_map(signal)
 
     defp prepare_for_serialization(signals) when is_list(signals) do
       Enum.map(signals, &prepare_for_serialization/1)

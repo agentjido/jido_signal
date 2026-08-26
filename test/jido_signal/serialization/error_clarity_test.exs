@@ -1,6 +1,7 @@
 defmodule Jido.Signal.Serialization.ErrorClarityTest do
   use ExUnit.Case, async: true
 
+  alias Jido.Signal
   alias Jido.Signal.Serialization.{ErlangTermSerializer, JsonSerializer, MsgpackSerializer}
 
   describe "JsonSerializer error tagging" do
@@ -21,16 +22,11 @@ defmodule Jido.Signal.Serialization.ErrorClarityTest do
                JsonSerializer.deserialize(malformed)
     end
 
-    test "schema_validation_failed for invalid Signal" do
-      # Has type, source, and id (signal_map? check) but invalid values
-      invalid_signal = ~s({"type": "", "source": "", "id": "123"})
+    test "Signal boundary reports invalid envelope fields" do
+      invalid_signal = ~s({"specversion":"1.0.2","type":"","source":"","id":"123"})
 
-      assert {:error, {:schema_validation_failed, errors}} =
-               JsonSerializer.deserialize(invalid_signal)
-
-      assert is_map(errors)
-      # Should have errors for both type and source being empty
-      assert Map.has_key?(errors, "type") or Map.has_key?(errors, "source")
+      assert {:error, error} = Signal.deserialize(invalid_signal)
+      assert error =~ "type" or error =~ "source"
     end
 
     test "successful deserialization returns ok tuple" do

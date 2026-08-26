@@ -68,7 +68,7 @@ defmodule Jido.Signal.Ext.UnknownExtensionsTest do
         {:ok, signal} = Signal.from_map(original_data)
 
         # Serialize to JSON
-        json = Jason.encode!(signal)
+        json = Jido.Signal.serialize!(signal)
 
         # Deserialize back
         {:ok, decoded_data} = Jason.decode(json)

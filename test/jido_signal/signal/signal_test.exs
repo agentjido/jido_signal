@@ -2,7 +2,6 @@ defmodule JidoTest.SignalTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
-  alias Jido.Signal.ID
 
   # Simple test extension for testing extension API
   defmodule TestExtension do
@@ -14,10 +13,6 @@ defmodule JidoTest.SignalTest do
           count: Zoi.integer() |> Zoi.min(0) |> Zoi.default(0),
           enabled: Zoi.boolean() |> Zoi.default(true)
         })
-  end
-
-  defmodule TestPayload do
-    defstruct [:value]
   end
 
   describe "new/1" do
@@ -100,12 +95,16 @@ defmodule JidoTest.SignalTest do
         "id" => "123"
       }
 
-      assert {:error, "parse error: unexpected specversion 1.0"} = Signal.from_map(map)
+      assert {:error, error} = Signal.from_map(map)
+      assert error =~ "specversion"
+      assert error =~ "1.0.2"
     end
 
     test "returns error for missing required fields" do
       map = %{"specversion" => "1.0.2"}
-      assert {:error, "parse error: missing type"} = Signal.from_map(map)
+      assert {:error, error} = Signal.from_map(map)
+      assert error =~ "type"
+      assert error =~ "source"
     end
 
     test "handles empty optional fields" do
@@ -134,29 +133,6 @@ defmodule JidoTest.SignalTest do
 
       assert {:ok, signal} = Signal.from_map(map)
       assert signal.datacontenttype == "application/json"
-    end
-  end
-
-  describe "map_to_signal_data/2" do
-    test "returns signal with UUID id for single struct input" do
-      payload = %TestPayload{value: 1}
-
-      signal = Signal.map_to_signal_data(payload)
-
-      assert %Signal{} = signal
-      assert signal.data == payload
-      assert is_binary(signal.id)
-      assert ID.valid?(signal.id)
-    end
-
-    test "returns signals with UUID ids for list input" do
-      payloads = [%TestPayload{value: 1}, %TestPayload{value: 2}]
-
-      signals = Signal.map_to_signal_data(payloads)
-
-      assert length(signals) == 2
-      assert Enum.all?(signals, &ID.valid?(&1.id))
-      assert signals |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 2
     end
   end
 

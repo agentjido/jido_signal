@@ -44,6 +44,20 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
         assert_fixture_signal(signal)
       end
     end
+
+    test "reads the deprecated dispatch field as an extension" do
+      map = %{
+        "specversion" => "1.0.2",
+        "id" => "legacy-dispatch",
+        "source" => "/compat",
+        "type" => "compat.dispatch",
+        "jido_dispatch" => {:noop, []}
+      }
+
+      assert {:ok, signal} = Signal.from_map(map)
+      assert signal.extensions["dispatch"] == {:noop, []}
+      refute Map.has_key?(Signal.to_map(signal), "jido_dispatch")
+    end
   end
 
   describe "Router precedence" do
@@ -127,6 +141,6 @@ defmodule Jido.Signal.V3CompatibilityContractTest do
     assert signal.time == "2025-01-02T03:04:05Z"
     assert signal.data == %{"count" => 1, "ok" => true}
 
-    assert signal.extensions["jido_schema_version"] == 1
+    refute Map.has_key?(signal.extensions, "jido_schema_version")
   end
 end

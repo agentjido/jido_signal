@@ -7,7 +7,7 @@ defmodule Jido.Signal.Serialization.VersioningTest do
   defmodule TestExt do
     use Jido.Signal.Ext,
       namespace: "versiontest",
-      schema: Zoi.object(%{message: Zoi.string()})
+      schema: Zoi.object(%{version_message: Zoi.string()})
   end
 
   describe "JsonSerializer versioning" do
@@ -16,7 +16,7 @@ defmodule Jido.Signal.Serialization.VersioningTest do
       {:ok, json} = JsonSerializer.serialize(signal)
       map = Jason.decode!(json)
 
-      assert map["jido_schema_version"] == 1
+      assert map["jido_schema_version"] == Signal.wire_version()
     end
 
     test "version field survives round-trip" do
@@ -52,7 +52,7 @@ defmodule Jido.Signal.Serialization.VersioningTest do
       {:ok, msgpack} = MsgpackSerializer.serialize(signal)
       {:ok, unpacked} = Msgpax.unpack(msgpack)
 
-      assert unpacked["jido_schema_version"] == 1
+      assert unpacked["jido_schema_version"] == Signal.wire_version()
     end
 
     test "version field survives round-trip" do
@@ -72,7 +72,7 @@ defmodule Jido.Signal.Serialization.VersioningTest do
       term_map = :erlang.binary_to_term(term_binary, [:safe])
 
       version = term_map["jido_schema_version"]
-      assert version == 1
+      assert version == Signal.wire_version()
     end
 
     test "version field survives round-trip" do
@@ -109,26 +109,64 @@ defmodule Jido.Signal.Serialization.VersioningTest do
   describe "version field with extensions" do
     test "version field coexists with extensions" do
       signal = Signal.new!(type: "test.event", source: "/test")
-      {:ok, signal_with_ext} = Signal.put_extension(signal, "versiontest", %{message: "value"})
+
+      {:ok, signal_with_ext} =
+        Signal.put_extension(signal, "versiontest", %{version_message: "value"})
 
       {:ok, json} = JsonSerializer.serialize(signal_with_ext)
       map = Jason.decode!(json)
 
       # Both version and extension data should be present
-      assert map["jido_schema_version"] == 1
-      assert map["message"] == "value"
+      assert map["jido_schema_version"] == Signal.wire_version()
+      assert map["version_message"] == "value"
     end
 
     test "round-trip preserves version and extensions" do
       signal = Signal.new!(type: "test.event", source: "/test")
-      {:ok, signal_with_ext} = Signal.put_extension(signal, "versiontest", %{message: "val"})
+
+      {:ok, signal_with_ext} =
+        Signal.put_extension(signal, "versiontest", %{version_message: "val"})
 
       {:ok, json} = JsonSerializer.serialize(signal_with_ext)
-      {:ok, deserialized} = JsonSerializer.deserialize(json)
+      {:ok, deserialized} = Signal.deserialize(json)
 
-      assert deserialized["type"] == "test.event"
-      # Extensions are inflated into "extensions" map during deserialization
-      assert is_map(deserialized["extensions"])
+      assert deserialized.type == "test.event"
+      assert deserialized.extensions["versiontest"] == %{version_message: "val"}
+    end
+
+    test "rejects unsupported Signal wire versions" do
+      json =
+        Jason.encode!(%{
+          "specversion" => "1.0.2",
+          "type" => "test.event",
+          "source" => "/test",
+          "jido_schema_version" => 999
+        })
+
+      assert {:error, error} = Signal.deserialize(json)
+      assert error =~ "unsupported jido_schema_version 999"
+    end
+  end
+
+  describe "canonical cross-format representation" do
+    test "all formats round-trip the same logical Signal" do
+      for data <- ["scalar", [1, %{"nested" => true}], %{"count" => 2}] do
+        signal =
+          Signal.new!("test.cross_format", data,
+            source: "/test",
+            id: "cross-format",
+            subject: "subject"
+          )
+
+        decoded =
+          for serializer <- [JsonSerializer, MsgpackSerializer, ErlangTermSerializer] do
+            assert {:ok, binary} = Signal.serialize(signal, serializer: serializer)
+            assert {:ok, result} = Signal.deserialize(binary, serializer: serializer)
+            Signal.to_map(result)
+          end
+
+        assert Enum.uniq(decoded) == [Signal.to_map(signal)]
+      end
     end
   end
 end

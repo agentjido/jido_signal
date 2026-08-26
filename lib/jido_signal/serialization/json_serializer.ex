@@ -10,10 +10,8 @@ if Code.ensure_loaded?(Jason) do
 
     @behaviour Jido.Signal.Serialization.Serializer
 
-    alias Jido.Signal.Serialization.CloudEventsTransform
     alias Jido.Signal.Serialization.Config
     alias Jido.Signal.Serialization.JsonDecoder
-    alias Jido.Signal.Serialization.Schema
     alias Jido.Signal.Serialization.TypeProvider
 
     @doc """
@@ -59,23 +57,9 @@ if Code.ensure_loaded?(Jason) do
             end
         end
 
-      decoded =
+      result =
         binary
         |> Jason.decode!(opts)
-        |> CloudEventsTransform.inflate_for_deserialization()
-
-      validated =
-        if CloudEventsTransform.signal_map?(decoded) do
-          case Schema.validate_signal(decoded) do
-            {:ok, valid} -> valid
-            {:error, errors} -> throw({:schema_validation_failed, errors})
-          end
-        else
-          decoded
-        end
-
-      result =
-        validated
         |> to_struct(type)
         |> JsonDecoder.decode()
 
@@ -92,9 +76,6 @@ if Code.ensure_loaded?(Jason) do
     catch
       {:unknown_type, type_str, reason} ->
         {:error, {:unknown_type, type_str, reason}}
-
-      {:schema_validation_failed, errors} ->
-        {:error, {:schema_validation_failed, errors}}
     end
 
     defp to_struct(data, nil), do: data
@@ -122,12 +103,7 @@ if Code.ensure_loaded?(Jason) do
       struct(mod, attrs)
     end
 
-    # Prepare term for serialization by flattening extensions in Signal structs
-    defp prepare_for_serialization(%Jido.Signal{} = signal) do
-      signal
-      |> CloudEventsTransform.flatten_for_serialization()
-      |> Map.put("jido_schema_version", 1)
-    end
+    defp prepare_for_serialization(%Jido.Signal{} = signal), do: Jido.Signal.to_map(signal)
 
     defp prepare_for_serialization(signals) when is_list(signals) do
       Enum.map(signals, &prepare_for_serialization/1)

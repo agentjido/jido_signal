@@ -176,7 +176,7 @@ defmodule Jido.Signal.Dispatch.Http do
     ssl_options = Keyword.get(opts, :ssl_options, [])
     retry_config = Keyword.fetch!(opts, :retry)
 
-    body = Jason.encode!(signal)
+    body = signal |> Jido.Signal.to_map() |> Jason.encode!()
     default_headers = [{"content-type", "application/json"}]
     headers = default_headers ++ headers
 

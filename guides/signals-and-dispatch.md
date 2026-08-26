@@ -27,7 +27,6 @@ signal.source          # "/auth/service"
 signal.data            # %{user_id: "123", email: "user@example.com"}
 signal.time            # ISO 8601 timestamp (auto-generated)
 signal.datacontenttype # "application/json" (default)
-signal.jido_dispatch   # Dispatch configuration (DEPRECATED - pass to Bus.subscribe/3 or Dispatch.dispatch/2 instead)
 signal.extensions      # Map of extension namespaces to extension data
 
 # Data semantics (CloudEvents):
@@ -209,7 +208,7 @@ end
   source: "/different/source"
 )
 
-# Then dispatch separately (preferred over jido_dispatch field):
+# Dispatch separately:
 Jido.Signal.Dispatch.dispatch(signal, {:pubsub, [target: :pubsub, topic: "user-events"]})
 ```
 
