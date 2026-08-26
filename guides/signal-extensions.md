@@ -212,7 +212,10 @@ trace_data = Jido.Signal.get_extension(deserialized_signal, "trace")
 
 ### Schema Design
 
-All package and application Signal schemas use Zoi.
+All package and application Signal schemas use Zoi. Custom refinements and
+transforms must use named `{Module, :function, args}` MFA tuples. Anonymous
+functions and lazy schemas are not accepted because Signal schemas are stored
+as static module data after compile-time validation.
 
 - Use `Zoi.object/1` for map-shaped extension data.
 - Object fields are required unless you use `Zoi.optional/1`.

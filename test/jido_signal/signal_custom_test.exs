@@ -24,9 +24,7 @@ defmodule Jido.Signal.CustomTest do
           user_id: Zoi.string(),
           email:
             Zoi.string()
-            |> Zoi.refine(fn email ->
-              if String.contains?(email, "@"), do: :ok, else: {:error, "must contain @"}
-            end),
+            |> Zoi.refine({CustomTest, :valid_email, []}),
           count: Zoi.integer() |> Zoi.default(1)
         })
   end
@@ -39,50 +37,21 @@ defmodule Jido.Signal.CustomTest do
       schema: Zoi.object(%{value: field_schema})
   end
 
-  defmodule ScopedClosureSignal do
-    value = :outer
-    item = :outer
-    quoted_value = :outer
-
+  defmodule StaticMfaSignal do
     use Jido.Signal,
-      type: "scoped.closure.signal",
+      type: "static.mfa.signal",
       schema:
         Zoi.object(%{
           value:
             Zoi.integer()
-            |> Zoi.refine(fn value ->
-              _quoted = quote(do: quoted_value)
-
-              if match?({:ok, item} when item > 0, {:ok, value}),
-                do: :ok,
-                else: {:error, "must be positive"}
-            end)
+            |> Zoi.refine({CustomTest, :positive, []})
         })
-
-    @outer_values {value, item, quoted_value}
-    def outer_values, do: @outer_values
   end
 
   defmodule ScalarTransformSignal do
     use Jido.Signal,
       type: "scalar.transform.signal",
-      schema: Zoi.object(%{}) |> Zoi.transform(fn _data -> :invalid end)
-  end
-
-  defmodule LazyZoiSignal do
-    use Jido.Signal,
-      type: "lazy.zoi.signal",
-      schema: Zoi.lazy({__MODULE__, :data_schema, []})
-
-    def data_schema, do: Zoi.object(%{value: Zoi.integer()})
-  end
-
-  defmodule ScalarLazyZoiSignal do
-    use Jido.Signal,
-      type: "scalar.lazy.zoi.signal",
-      schema: Zoi.lazy({__MODULE__, :data_schema, []})
-
-    def data_schema, do: Zoi.integer()
+      schema: Zoi.object(%{}) |> Zoi.transform({CustomTest, :invalid_transform, []})
   end
 
   # Define another test Signal module with minimal config
@@ -232,7 +201,7 @@ defmodule Jido.Signal.CustomTest do
       assert error =~ "must contain @"
     end
 
-    test "preserves an inline refinement function" do
+    test "uses a named MFA refinement" do
       assert {:ok, validated} =
                ZoiSignal.validate_data(%{user_id: "123", email: "user@example.com"})
 
@@ -263,11 +232,10 @@ defmodule Jido.Signal.CustomTest do
       assert %Zoi.Types.Map{} = VariableZoiSignal.schema()
     end
 
-    test "keeps inline closure scope separate from caller variables" do
-      assert ScopedClosureSignal.outer_values() == {:outer, :outer, :outer}
-      assert {:ok, %{value: 1}} = ScopedClosureSignal.validate_data(%{value: 1})
+    test "stores and runs a named MFA refinement" do
+      assert {:ok, %{value: 1}} = StaticMfaSignal.validate_data(%{value: 1})
 
-      assert {:error, error} = ScopedClosureSignal.validate_data(%{value: 0})
+      assert {:error, error} = StaticMfaSignal.validate_data(%{value: 0})
       assert error =~ "must be positive"
     end
 
@@ -308,11 +276,11 @@ defmodule Jido.Signal.CustomTest do
       assert Agent.get(counter, & &1) == 1
     end
 
-    test "reports a closure schema from dynamic options" do
+    test "rejects anonymous functions in dynamic schema options" do
       module = unique_module("DynamicClosureSignal")
 
       assert_raise CompileError,
-                   ~r/closure-based :schema must be declared inline without caller variables/,
+                   ~r/:schema must be static module data.*anonymous functions.*named MFA/s,
                    fn ->
                      create_module(
                        module,
@@ -328,6 +296,26 @@ defmodule Jido.Signal.CustomTest do
                          ]
 
                          use Jido.Signal, opts
+                       end
+                     )
+                   end
+    end
+
+    test "rejects inline anonymous schema effects" do
+      module = unique_module("InlineAnonymousSignal")
+
+      assert_raise CompileError,
+                   ~r/:schema must be static module data.*anonymous functions.*named MFA/s,
+                   fn ->
+                     create_module(
+                       module,
+                       quote do
+                         use Jido.Signal,
+                           type: "inline.anonymous.signal",
+                           schema:
+                             Zoi.object(%{
+                               value: Zoi.integer() |> Zoi.refine(fn _value -> :ok end)
+                             })
                        end
                      )
                    end
@@ -353,14 +341,21 @@ defmodule Jido.Signal.CustomTest do
       assert error =~ "Zoi schema validation must return a map"
     end
 
-    test "defers a local lazy schema until its module is compiled" do
-      assert {:ok, %{value: 1}} = LazyZoiSignal.validate_data(%{value: 1})
-      assert %Zoi.Types.Lazy{} = LazyZoiSignal.schema()
-    end
+    test "rejects lazy schemas" do
+      module = unique_module("LazySignal")
 
-    test "rejects a non-map result from a lazy schema at runtime" do
-      assert {:error, error} = ScalarLazyZoiSignal.validate_data(1)
-      assert error =~ "Zoi schema validation must return a map"
+      assert_raise CompileError, ~r/:schema must be static module data.*lazy schemas/s, fn ->
+        create_module(
+          module,
+          quote do
+            use Jido.Signal,
+              type: "lazy.signal",
+              schema: Zoi.lazy({__MODULE__, :data_schema, []})
+
+            def data_schema, do: Zoi.object(%{value: Zoi.integer()})
+          end
+        )
+      end
     end
   end
 
@@ -649,6 +644,16 @@ defmodule Jido.Signal.CustomTest do
     Agent.update(counter, &(&1 + 1))
     Zoi.object(%{value: Zoi.integer()})
   end
+
+  def valid_email(email, _opts) do
+    if String.contains?(email, "@"), do: :ok, else: {:error, "must contain @"}
+  end
+
+  def positive(value, _opts) do
+    if value > 0, do: :ok, else: {:error, "must be positive"}
+  end
+
+  def invalid_transform(_data, _opts), do: :invalid
 
   defp unique_module(prefix) do
     Module.concat(__MODULE__, "#{prefix}#{System.unique_integer([:positive])}")
