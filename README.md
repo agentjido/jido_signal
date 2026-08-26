@@ -16,6 +16,26 @@ The v3 public API has five primary areas: `Jido.Signal`,
 `Jido.Signal.Serialization`, `Jido.Signal.Router`, `Jido.Signal.Dispatch`, and
 `Jido.Signal.Bus`.
 
+## From v2 to v3
+
+v3 starts from the [v2.2.2 release](https://github.com/agentjido/jido_signal/tree/v2.2.2).
+It keeps the Signal envelope, Router precedence, Dispatch target tuples, and
+the main Bus calls. It removes package-owned runtime policy and duplicate
+schema and serialization systems.
+
+| Area | v2.2.2 | v3 |
+| --- | --- | --- |
+| Signal schemas | NimbleOptions and duplicate validation paths | Zoi only, with MFA callback values in schemas |
+| Wire format | Serializer framework, custom markers, and MessagePack | Canonical CloudEvents 1.0 maps, JSON, and safe Erlang terms |
+| Router | Large routing engine and cache | Exact-path map and compact wildcard trie |
+| Dispatch | Async, batch, retry, Fuse, and many adapters | Ordered delivery and a small adapter set |
+| Bus | Journal, partitions, middleware, snapshots, and dead-letter policy | Local ordered delivery, retained replay, durable cursors, and a Store seam |
+| Trace and extensions | Nested trace state and a schema extension registry | Explicit Trace values and flat CloudEvents context attributes |
+
+The v3 reader accepts supported v2 wire maps. New writes use only the v3
+canonical form. Read the [v2 to v3 migration guide](guides/v2-to-v3.md) before
+you convert stored Signals or Bus subscriptions.
+
 ## Overview
 
 `Jido.Signal` is a toolkit for event-driven and agent-based systems in Elixir. It provides a small CloudEvents 1.0 envelope, typed domain Signals, routing, dispatch, serialization, and a Signal Bus.
@@ -48,7 +68,7 @@ send(pid, {:event, data})  # No routing or reliability
 
 # With Jido.Signal
 {:ok, signal} = UserCreated.new(%{user_id: user_id, email: email})
-Bus.publish(:app_bus, [signal])  # Structured, routed, traceable, reliable
+Bus.publish(:app_bus, [signal])  # Structured, routed, traceable, and retained
 ```
 
 Jido.Signal transforms Elixir's message passing into a sophisticated communication system that scales from simple GenServer interactions to complex multi-agent orchestration across distributed systems.
@@ -271,7 +291,8 @@ routes = [
 {:ok, router} = Router.new(routes)
 
 # Route signals to handlers
-{:ok, targets} = Router.route(router, Jido.Signal.new!("user.profile.updated", %{}))
+signal = Jido.Signal.new!("user.profile.updated", %{}, source: "/users")
+{:ok, targets} = Router.route(router, signal)
 # => {:ok, [:handle_user_updates]}
 
 # Manage the immutable Router through public helpers
@@ -372,6 +393,10 @@ Dispatch telemetry keeps the legacy `[:jido, :dispatch, :start|:stop|:exception]
 events with bounded metadata, and package execution logging defaults to
 `config :jido_signal, default_log_level: :info`.
 
+The Bus emits publish, delivery, acknowledgement, and subscription events.
+The Router emits no telemetry. Instrument the operation that calls the Router
+when route timing is useful.
+
 ```elixir
 config :jido_signal,
   default_log_level: :info
@@ -466,7 +491,9 @@ Bus.publish(:event_bus, [signal])
 ```elixir
 # Commands become events
 {:ok, command_signal} = CreateUser.new(user_data)
-{:ok, event_signal} = UserCreated.new(user_data, cause: command_signal.id)
+{:ok, event_signal} = UserCreated.new(user_data)
+{:ok, event_signal} =
+  Jido.Signal.put_context(event_signal, "causeid", command_signal.id)
 
 # Store the canonical map in the application event store.
 MyApp.EventStore.append(Jido.Signal.to_map(event_signal))
@@ -476,10 +503,10 @@ MyApp.EventStore.append(Jido.Signal.to_map(event_signal))
 ```elixir
 # Coordinate multi-step processes
 workflow_signals = [
-  %Signal{type: "workflow.started", data: %{workflow_id: "wf_123"}},
-  %Signal{type: "step.completed", data: %{step: 1, workflow_id: "wf_123"}},
-  %Signal{type: "step.completed", data: %{step: 2, workflow_id: "wf_123"}},
-  %Signal{type: "workflow.completed", data: %{workflow_id: "wf_123"}}
+  Signal.new!("workflow.started", %{workflow_id: "wf_123"}, source: "/workflow"),
+  Signal.new!("step.completed", %{step: 1, workflow_id: "wf_123"}, source: "/workflow"),
+  Signal.new!("step.completed", %{step: 2, workflow_id: "wf_123"}, source: "/workflow"),
+  Signal.new!("workflow.completed", %{workflow_id: "wf_123"}, source: "/workflow")
 ]
 ```
 
@@ -489,10 +516,10 @@ workflow_signals = [
 - **[Signals & Dispatch](guides/signals-and-dispatch.md)** - Signal structure and dispatch adapters
 - **[Event Bus](guides/event-bus.md)** - Pub/sub, durable cursors, replay, and Store adapters
 - **[Signal Router](guides/signal-router.md)** - Pattern matching and routing
-- **[Signal Extensions](guides/signal-extensions.md)** - Custom Signal metadata extensions
+- **[Signal Extensions](guides/signal-extensions.md)** - CloudEvents context attributes
 - **[Serialization](guides/serialization.md)** - Canonical Signal maps, JSON, and Erlang Term Format
 - **[Advanced Topics](guides/advanced.md)** - Custom adapters, performance, and testing
-- **[v2 to v3 Migration](guides/v2-to-v3.md)** - Removed APIs and replacement patterns
+- **[v2 to v3 Migration](guides/v2-to-v3.md)** - Progression, compatibility, and replacement patterns
 - **[API Reference](https://hexdocs.pm/jido_signal)** - Complete function documentation
 
 ## Development

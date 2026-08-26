@@ -102,11 +102,14 @@ Delivery to registered processes uses the same local-process adapter as PID
 delivery:
 
 ```elixir
-config = {:named, [
+config = {:pid, [
   target: {:name, :my_server},
   delivery_mode: :async
 ]}
 ```
+
+The v2 `:named` adapter name is still accepted as a compatibility alias. Use
+`:pid` for new code.
 
 ### PubSub Adapter
 

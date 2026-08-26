@@ -162,7 +162,7 @@ defmodule MyApp.SignalTest do
     {:ok, bus} = Bus.start_link(name: :test_bus, jido: scope)
     {:ok, _} = Bus.subscribe(bus, "test.*")
     
-    signal = Jido.Signal.new!("test.event", %{value: 42})
+    signal = Jido.Signal.new!("test.event", %{value: 42}, source: "/test")
     {:ok, _} = Bus.publish(bus, [signal])
     
     assert_receive {:signal, received}

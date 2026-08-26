@@ -3,6 +3,7 @@
 
 `Jido.Signal.Router` maps Signal type patterns to ordered targets. It performs
 lookup only. It does not execute targets or validate Dispatch configuration.
+It emits no telemetry. Instrument the caller when route timing is useful.
 
 The Router compiles exact paths into a map and wildcard paths into a private
 segment trie. The trie tracks exact, `*`, and `**` transitions. `**` traversal

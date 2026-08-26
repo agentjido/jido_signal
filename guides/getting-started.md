@@ -91,9 +91,12 @@ config = {:pid, [target: pid, delivery_mode: :async]}
 Named process dispatch uses the same local-process adapter as PID dispatch:
 
 ```elixir
-config = {:named, [target: {:name, :my_process}, delivery_mode: :async]}
+config = {:pid, [target: {:name, :my_process}, delivery_mode: :async]}
 :ok = Jido.Signal.Dispatch.dispatch(signal, config)
 ```
+
+The v2 `:named` adapter name is still accepted as a compatibility alias. Use
+`:pid` for new code.
 
 Multiple destinations:
 

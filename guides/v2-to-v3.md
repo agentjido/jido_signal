@@ -5,6 +5,34 @@ Jido Signal v3 has five primary public areas: Signal, Serialization, Router,
 Dispatch, and Bus. It uses Zoi for package schemas. It removes the general
 Journal and several runtime policy features.
 
+This guide starts at
+[v2.2.2](https://github.com/agentjido/jido_signal/tree/v2.2.2). If your
+application uses an older v2 release, record its local behavior before you
+start the upgrade. See the [v3 README](../README.md) for the new public API.
+
+## Understand the Change
+
+| Area | v2.2.2 | v3 |
+| --- | --- | --- |
+| Signal schemas | NimbleOptions and duplicate validation paths | Zoi only, with MFA callback values in schemas |
+| Wire format | Serializer framework, custom markers, and MessagePack | Canonical CloudEvents 1.0 maps, JSON, and safe Erlang terms |
+| Router | Large routing engine and cache | Exact-path map and compact wildcard trie |
+| Dispatch | Async, batch, retry, Fuse, and many adapters | Ordered delivery and a small adapter set |
+| Bus | Journal, partitions, middleware, snapshots, and dead-letter policy | Local ordered delivery, retained replay, durable cursors, and a Store seam |
+| Trace and extensions | Nested trace state and a schema extension registry | Explicit Trace values and flat CloudEvents context attributes |
+
+The main Signal, Router, Dispatch, and Bus boundaries continue in v3. Most
+removed APIs were policy systems inside those boundaries.
+
+## Use This Migration Order
+
+1. Find removed modules, options, and custom Dispatch adapters.
+2. Convert stored MessagePack and Journal data while the v2 readers are still available.
+3. Convert typed Signal schemas and custom Dispatch adapter schemas to Zoi.
+4. Update Signal creation and wire boundaries.
+5. Update Router, Dispatch, and Bus use.
+6. Run v2 fixture tests and failure-path tests before deployment.
+
 ## Upgrade the Dependency
 
 ```elixir
@@ -46,9 +74,9 @@ transform, and callback functions with named `{Module, :function, args}` MFA
 values. Lazy schemas are not supported. The compiler rejects these values when
 it expands `use Jido.Signal`.
 
-Typed Signal modules expose their definition through `metadata/0`. The old
-generated `to_json/0` function is removed because it returned definition data,
-not JSON.
+Typed Signal modules expose `type/0`, `default_source/0`,
+`datacontenttype/0`, `dataschema/0`, and `schema/0`. The old `metadata/0` and
+generated `to_json/0` functions are removed.
 
 ## Make Envelope Semantics Explicit
 
@@ -172,6 +200,9 @@ The exact-path map, wildcard trie, Router state, and matcher implementation are 
 execute it. A match function that raises or does not return `true` is treated
 as no match during routing.
 
+The v3 Router performs lookup only and emits no telemetry. Instrument the
+caller when route timing is useful.
+
 ## Move Dispatch Runtime Policy to the Caller
 
 Dispatch keeps target tuples and ordered synchronous delivery:
@@ -209,6 +240,47 @@ permits private network targets and does not protect against DNS rebinding.
 OTP 27 `:httpc` has no response body size limit for these requests. Use a
 custom adapter for untrusted targets or a strict response size limit.
 
+### Update Custom Dispatch Adapters
+
+In v2, each custom adapter parsed its own options with `validate_opts/1`:
+
+```elixir
+defmodule MyApp.CustomAdapter do
+  @behaviour Jido.Signal.Dispatch.Adapter
+
+  @impl true
+  def validate_opts(opts), do: MyApp.Options.validate(opts)
+
+  @impl true
+  def deliver(signal, opts), do: MyApp.Client.send(signal, opts)
+end
+```
+
+In v3, the adapter returns a Zoi schema. Dispatch parses the options before it
+calls `deliver/2`:
+
+```elixir
+defmodule MyApp.CustomAdapter do
+  @behaviour Jido.Signal.Dispatch.Adapter
+
+  @impl true
+  def options_schema do
+    Zoi.keyword(
+      [url: Zoi.string() |> Zoi.required()],
+      unrecognized_keys: :error
+    )
+  end
+
+  @impl true
+  def deliver(signal, opts) do
+    MyApp.Client.send(signal, Keyword.fetch!(opts, :url))
+  end
+end
+```
+
+Remove `validate_opts/1`. Add `options_schema/0`. Keep unknown keys as errors
+unless the adapter has a clear reason to accept them.
+
 ## Update Bus Configuration
 
 The common Bus boundary stays:
@@ -235,7 +307,15 @@ or Registry is necessary.
 
 ### Replay and Storage
 
-Replay stays behind the Bus-owned Store boundary:
+v2 replay started at a timestamp:
+
+```elixir
+{:ok, records} =
+  Jido.Signal.Bus.replay(:events, "user.**", start_timestamp, limit: 100)
+```
+
+v3 replay starts after a Store cursor and stays behind the Bus-owned Store
+boundary:
 
 ```elixir
 {:ok, records} =
@@ -369,13 +449,31 @@ events directly:
 
 Detach the handler when the test finishes.
 
+## Check the Compatibility Boundary
+
+v3 keeps these compatibility contracts:
+
+- Signal map and keyword constructors;
+- Router exact, `*`, and `**` precedence;
+- Dispatch `{adapter, options}` tuples;
+- `:named` Dispatch input as an alias for the local process adapter;
+- reads of wire `specversion` value `"1.0.2"`;
+- reads of legacy `jido_schema_version` 1 and 2 maps.
+
+v3 does not write the old wire form. It does not read MessagePack, restore a
+Journal, or run removed retry, partition, snapshot, middleware, and dead-letter
+policy. Convert that state before you deploy v3.
+
 ## Final Check
 
 Before deployment:
 
 1. Read old serialized fixtures with v3.
 2. Remove all NimbleOptions, Fuse, Journal, partition, and snapshot references.
-3. Test exact, `*`, and `**` route precedence.
-4. Test each Dispatch tuple that your application uses.
-5. Test Bus target exit, durable reattachment, replay bounds, and cursor acknowledgement order.
-6. Confirm that a selected durable Store fails startup clearly when unavailable.
+3. Confirm that each generic Signal constructor supplies `source`.
+4. Confirm that typed Signal schemas use static Zoi data and MFA callbacks.
+5. Confirm that custom Dispatch adapters return a Zoi schema.
+6. Test exact, `*`, and `**` route precedence.
+7. Test each Dispatch tuple that your application uses.
+8. Test Bus target exit, durable reattachment, replay bounds, and cursor acknowledgement order.
+9. Confirm that a selected durable Store fails startup clearly when unavailable.
