@@ -85,9 +85,7 @@ defmodule Jido.Signal.Ext.Dispatch do
       )
   """
 
-  use Jido.Signal.Ext,
-    namespace: "dispatch",
-    schema: []
+  use Jido.Signal.Ext, namespace: "dispatch", attributes: ["dispatch"]
 
   alias Jido.Signal.Dispatch
 

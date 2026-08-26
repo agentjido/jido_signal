@@ -1352,22 +1352,21 @@ defmodule Jido.Signal do
   end
 
   defp has_extension_attributes?(extension_module, attrs) do
-    case extension_module.schema() do
+    case extension_module.attributes() do
       [] ->
         {false, %{}}
 
-      schema_fields ->
-        find_matching_schema_attrs(schema_fields, attrs)
+      attribute_names ->
+        find_matching_extension_attrs(attribute_names, attrs)
     end
   end
 
-  defp find_matching_schema_attrs(schema_fields, attrs) do
-    schema_field_names = schema_fields |> Keyword.keys() |> Enum.map(&to_string/1)
+  defp find_matching_extension_attrs(attribute_names, attrs) do
     top_level_attrs = Map.drop(attrs, @core_cloudevents_fields)
 
     matching_attrs =
       top_level_attrs
-      |> Enum.filter(fn {key, _value} -> key in schema_field_names end)
+      |> Enum.filter(fn {key, _value} -> key in attribute_names end)
       |> Map.new()
 
     if Enum.empty?(matching_attrs), do: {false, %{}}, else: {true, matching_attrs}

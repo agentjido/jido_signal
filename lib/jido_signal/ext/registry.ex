@@ -30,7 +30,7 @@ defmodule Jido.Signal.Ext.Registry do
       defmodule MyApp.Auth do
         use Jido.Signal.Ext,
           namespace: "auth",
-          schema: [user_id: [type: :string, required: true]]
+          schema: Zoi.object(%{user_id: Zoi.string()})
       end
 
       # After compilation, the extension is automatically available:
@@ -129,7 +129,9 @@ defmodule Jido.Signal.Ext.Registry do
 
       # Automatic registration (preferred)
       defmodule MyExt do
-        use Jido.Signal.Ext, namespace: "my_ext"
+        use Jido.Signal.Ext,
+          namespace: "myext",
+          schema: Zoi.object(%{user_id: Zoi.string()})
       end
 
       # Manual registration (not typically needed)

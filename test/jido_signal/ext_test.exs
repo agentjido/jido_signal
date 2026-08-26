@@ -5,21 +5,23 @@ defmodule Jido.Signal.ExtTest do
   defmodule TestAuthExt do
     use Jido.Signal.Ext,
       namespace: "auth",
-      schema: [
-        user_id: [type: :string, required: true],
-        roles: [type: {:list, :string}, default: []],
-        expires_at: [type: :pos_integer]
-      ]
+      schema:
+        Zoi.object(%{
+          user_id: Zoi.string(),
+          roles: Zoi.array(Zoi.string()) |> Zoi.default([]),
+          expires_at: Zoi.integer() |> Zoi.positive() |> Zoi.optional()
+        })
   end
 
   defmodule TestTrackingExt do
     use Jido.Signal.Ext,
       namespace: "tracking",
-      schema: [
-        session_id: [type: :string, required: true],
-        user_agent: [type: :string],
-        ip_address: [type: :string]
-      ]
+      schema:
+        Zoi.object(%{
+          session_id: Zoi.string(),
+          user_agent: Zoi.string() |> Zoi.optional(),
+          ip_address: Zoi.string() |> Zoi.optional()
+        })
   end
 
   defmodule TestSimpleExt do
@@ -32,9 +34,8 @@ defmodule Jido.Signal.ExtTest do
   defmodule TestCustomSerializationExt do
     use Jido.Signal.Ext,
       namespace: "custom",
-      schema: [
-        content: [type: :string, required: true]
-      ]
+      schema: Zoi.object(%{content: Zoi.string()}),
+      attributes: ["custom_content"]
 
     @impl Jido.Signal.Ext
     def to_attrs(data) do
@@ -79,8 +80,8 @@ defmodule Jido.Signal.ExtTest do
   describe "__using__ macro" do
     test "creates extension with required callbacks" do
       assert TestAuthExt.namespace() == "auth"
-      assert is_list(TestAuthExt.schema())
-      refute Enum.empty?(TestAuthExt.schema())
+      assert %Zoi.Types.Map{} = TestAuthExt.schema()
+      assert Enum.sort(TestAuthExt.attributes()) == ["expires_at", "roles", "user_id"]
     end
 
     test "provides default to_attrs and from_attrs implementations" do
@@ -102,7 +103,8 @@ defmodule Jido.Signal.ExtTest do
 
     test "extension without schema works" do
       assert TestSimpleExt.namespace() == "simple"
-      assert TestSimpleExt.schema() == []
+      assert %Zoi.Types.Any{} = TestSimpleExt.schema()
+      assert TestSimpleExt.attributes() == []
     end
 
     test "validates namespace format at compile time" do
@@ -110,8 +112,7 @@ defmodule Jido.Signal.ExtTest do
         assert_raise CompileError, ~r/Extension namespace must be a lowercase string/, fn ->
           defmodule TestInvalidExt do
             use Jido.Signal.Ext,
-              namespace: invalid_ns,
-              schema: []
+              namespace: invalid_ns
           end
         end
       end
@@ -121,7 +122,7 @@ defmodule Jido.Signal.ExtTest do
       assert_raise CompileError, ~r/Extension must specify a :namespace option/, fn ->
         defmodule TestMissingNamespaceExt do
           use Jido.Signal.Ext,
-            schema: []
+            schema: Zoi.any()
         end
       end
     end
@@ -131,9 +132,7 @@ defmodule Jido.Signal.ExtTest do
         defmodule TestInvalidSchemaExt do
           use Jido.Signal.Ext,
             namespace: "test",
-            schema: [
-              invalid_field: [type: :invalid_type]
-            ]
+            schema: :not_a_zoi_schema
         end
       end
     end
@@ -158,7 +157,8 @@ defmodule Jido.Signal.ExtTest do
       # missing required user_id
       invalid_data = %{roles: ["admin"]}
       assert {:error, error} = TestAuthExt.validate_data(invalid_data)
-      assert error =~ "required :user_id option not found"
+      assert error =~ "user_id"
+      assert error =~ "required"
     end
 
     test "validates field types" do
@@ -172,7 +172,7 @@ defmodule Jido.Signal.ExtTest do
       # roles should be list
       invalid_data = %{user_id: "123", roles: "admin"}
       assert {:error, error} = TestAuthExt.validate_data(invalid_data)
-      assert error =~ "expected list"
+      assert error =~ "expected array"
     end
 
     test "extension without schema accepts any data" do
@@ -256,12 +256,10 @@ defmodule Jido.Signal.ExtTest do
       assert TestCustomSerializationExt.namespace() == "custom"
     end
 
-    test "schema function returns valid NimbleOptions schema" do
+    test "schema function returns a valid Zoi schema" do
       auth_schema = TestAuthExt.schema()
-      assert Keyword.keyword?(auth_schema)
-
-      # Should be able to create NimbleOptions validator
-      assert %NimbleOptions{} = NimbleOptions.new!(auth_schema)
+      assert %Zoi.Types.Map{} = auth_schema
+      assert {:ok, %{user_id: "123", roles: []}} = Zoi.parse(auth_schema, %{user_id: "123"})
     end
   end
 
@@ -291,11 +289,10 @@ defmodule Jido.Signal.ExtTest do
       assert error2 =~ "expected string"
     end
 
-    test "validate_data handles non-map data correctly" do
-      # Should work with keyword lists too
+    test "validate_data rejects non-map data for an object schema" do
       kw_data = [user_id: "123", roles: ["admin"]]
-      assert {:ok, validated} = TestAuthExt.validate_data(kw_data)
-      assert validated == [user_id: "123", roles: ["admin"]]
+      assert {:error, error} = TestAuthExt.validate_data(kw_data)
+      assert error =~ "expected map"
     end
   end
 end

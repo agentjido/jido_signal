@@ -7,9 +7,7 @@ defmodule Jido.Signal.Serialization.VersioningTest do
   defmodule TestExt do
     use Jido.Signal.Ext,
       namespace: "versiontest",
-      schema: [
-        message: [type: :string, required: true]
-      ]
+      schema: Zoi.object(%{message: Zoi.string()})
   end
 
   describe "JsonSerializer versioning" do

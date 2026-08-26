@@ -6,9 +6,7 @@ defmodule Jido.Signal.Ext.DispatchTest do
 
   # Define the test dispatch extension inline to avoid compilation issues
   defmodule TestDispatchExt do
-    use Jido.Signal.Ext,
-      namespace: "dispatch",
-      schema: []
+    use Jido.Signal.Ext, namespace: "dispatch", attributes: ["dispatch"]
 
     alias Jido.Signal.Dispatch
 
@@ -135,7 +133,7 @@ defmodule Jido.Signal.Ext.DispatchTest do
 
     test "schema returns valid structure" do
       schema = DispatchExt.schema()
-      assert is_list(schema)
+      assert %Zoi.Types.Any{} = schema
     end
   end
 

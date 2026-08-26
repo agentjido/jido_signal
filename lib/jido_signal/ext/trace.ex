@@ -36,13 +36,15 @@ defmodule Jido.Signal.Ext.Trace do
 
   use Jido.Signal.Ext,
     namespace: "correlation",
-    schema: [
-      trace_id: [type: :string, required: true, doc: "Shared trace identifier (32 hex chars)"],
-      span_id: [type: :string, required: true, doc: "Unique span identifier (16 hex chars)"],
-      parent_span_id: [type: :string, doc: "Parent span identifier"],
-      causation_id: [type: :string, doc: "Causing signal ID"],
-      tracestate: [type: :string, doc: "W3C tracestate for vendor-specific data"]
-    ]
+    schema:
+      Zoi.object(%{
+        trace_id: Zoi.string(description: "Shared trace identifier (32 hex chars)"),
+        span_id: Zoi.string(description: "Unique span identifier (16 hex chars)"),
+        parent_span_id: Zoi.string(description: "Parent span identifier") |> Zoi.optional(),
+        causation_id: Zoi.string(description: "Causing signal ID") |> Zoi.optional(),
+        tracestate:
+          Zoi.string(description: "W3C tracestate for vendor-specific data") |> Zoi.optional()
+      })
 
   @w3c_version "00"
   @sampled_flag "01"

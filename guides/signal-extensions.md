@@ -30,10 +30,10 @@ defmodule MyApp.Signal.Ext.Thread do
   
   use Jido.Signal.Ext,
     namespace: "thread",
-    schema: [
-      id: [type: :string, required: true, doc: "Unique thread identifier"],
-      parent_id: [type: :string, doc: "Parent message ID for threading"]
-    ]
+    schema: Zoi.object(%{
+      id: Zoi.string(description: "Unique thread identifier"),
+      parent_id: Zoi.string(description: "Parent message ID for threading") |> Zoi.optional()
+    })
 end
 ```
 
@@ -142,11 +142,12 @@ For more control over how extensions serialize, override the `to_attrs/1` and `f
 defmodule MyApp.Signal.Ext.CustomTrace do
   use Jido.Signal.Ext,
     namespace: "trace",
-    schema: [
-      trace_id: [type: :string, required: true],
-      span_id: [type: :string, required: true],
-      parent_span_id: [type: :string]
-    ]
+    schema: Zoi.object(%{
+      trace_id: Zoi.string(),
+      span_id: Zoi.string(),
+      parent_span_id: Zoi.string() |> Zoi.optional()
+    }),
+    attributes: ["traceid", "spanid", "parentspan"]
 
   # Custom serialization - multiple CloudEvents attributes
   def to_attrs(%{trace_id: trace_id, span_id: span_id, parent_span_id: parent_span_id}) do
@@ -165,13 +166,13 @@ defmodule MyApp.Signal.Ext.CustomTrace do
   # Custom deserialization  
   def from_attrs(attrs) do
     case Map.get(attrs, "traceid") do
-      nil -> {:ok, nil}
+      nil -> nil
       trace_id ->
-        {:ok, %{
+        %{
           trace_id: trace_id,
           span_id: Map.get(attrs, "spanid"),
           parent_span_id: Map.get(attrs, "parentspan")
-        }}
+        }
     end
   end
 end
@@ -209,13 +210,11 @@ trace_data = Jido.Signal.get_extension(deserialized_signal, "trace")
 
 ### Schema Design
 
-This section applies to modules that use `Jido.Signal.Ext`. Extension schemas
-still use NimbleOptions. For custom Signal data schemas defined with
-`use Jido.Signal`, use Zoi as the preferred format.
+All package and application Signal schemas use Zoi.
 
-- Use NimbleOptions schema format
-- Mark required fields with `required: true`
-- Add documentation with `doc:` option
+- Use `Zoi.object/1` for map-shaped extension data.
+- Object fields are required unless you use `Zoi.optional/1`.
+- Add defaults with `Zoi.default/2` and descriptions with schema options.
 - Keep data structures simple for serialization
 
 ### Example Patterns
@@ -225,11 +224,11 @@ still use NimbleOptions. For custom Signal data schemas defined with
 defmodule MyApp.Signal.Ext.Auth do
   use Jido.Signal.Ext,
     namespace: "auth",
-    schema: [
-      user_id: [type: :string, required: true],
-      permissions: [type: {:list, :string}, default: []],
-      session_id: [type: :string]
-    ]
+    schema: Zoi.object(%{
+      user_id: Zoi.string(),
+      permissions: Zoi.array(Zoi.string()) |> Zoi.default([]),
+      session_id: Zoi.string() |> Zoi.optional()
+    })
 end
 ```
 
@@ -238,11 +237,11 @@ end
 defmodule MyApp.Signal.Ext.Metrics do
   use Jido.Signal.Ext,
     namespace: "metrics", 
-    schema: [
-      duration_ms: [type: :integer],
-      memory_kb: [type: :integer],
-      tags: [type: :keyword_list, default: []]
-    ]
+    schema: Zoi.object(%{
+      duration_ms: Zoi.integer() |> Zoi.optional(),
+      memory_kb: Zoi.integer() |> Zoi.optional(),
+      tags: Zoi.map() |> Zoi.default(%{})
+    })
 end
 ```
 

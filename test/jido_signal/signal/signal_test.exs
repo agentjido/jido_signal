@@ -8,11 +8,12 @@ defmodule JidoTest.SignalTest do
   defmodule TestExtension do
     use Jido.Signal.Ext,
       namespace: "testext",
-      schema: [
-        user_id: [type: :string, required: true],
-        count: [type: :non_neg_integer, default: 0],
-        enabled: [type: :boolean, default: true]
-      ]
+      schema:
+        Zoi.object(%{
+          user_id: Zoi.string(),
+          count: Zoi.integer() |> Zoi.min(0) |> Zoi.default(0),
+          enabled: Zoi.boolean() |> Zoi.default(true)
+        })
   end
 
   defmodule TestPayload do
@@ -408,10 +409,11 @@ defmodule JidoTest.SignalTest do
       defmodule TestExtension2 do
         use Jido.Signal.Ext,
           namespace: "testext2",
-          schema: [
-            session_id: [type: :string, required: true],
-            timestamp: [type: :non_neg_integer, default: 0]
-          ]
+          schema:
+            Zoi.object(%{
+              session_id: Zoi.string(),
+              timestamp: Zoi.integer() |> Zoi.min(0) |> Zoi.default(0)
+            })
       end
 
       # Add multiple extensions

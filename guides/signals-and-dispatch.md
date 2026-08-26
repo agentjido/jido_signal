@@ -213,9 +213,7 @@ end
 Jido.Signal.Dispatch.dispatch(signal, {:pubsub, [target: :pubsub, topic: "user-events"]})
 ```
 
-Zoi is the preferred schema format for custom Signals. NimbleOptions keyword-list
-schemas remain supported for compatibility. NimbleOptions schema support will be
-deprecated in a later release after a migration period.
+Zoi is the schema format for custom Signals and Signal extensions.
 
 Zoi schemas must accept and return map-shaped data. Anonymous refinement
 functions are supported when the schema is declared inline and does not use

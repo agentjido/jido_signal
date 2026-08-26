@@ -353,28 +353,6 @@ defmodule Jido.Signal.Error do
     "Invalid configuration given to use Jido.#{module_type} (#{module}): #{inspect(error)}"
   end
 
-  @doc false
-  @spec format_nimble_validation_error(
-          NimbleOptions.ValidationError.t() | any(),
-          String.t(),
-          module()
-        ) :: String.t()
-  def format_nimble_validation_error(
-        %NimbleOptions.ValidationError{keys_path: [], message: message},
-        module_type,
-        module
-      ) do
-    "Invalid parameters for #{module_type} (#{module}): #{message}"
-  end
-
-  def format_nimble_validation_error(
-        %NimbleOptions.ValidationError{keys_path: keys_path, message: message},
-        module_type,
-        module
-      ) do
-    "Invalid parameters for #{module_type} (#{module}) at #{inspect(keys_path)}: #{message}"
-  end
-
   @doc """
   Formats a Zoi validation error for runtime parameter validation.
   """

@@ -19,11 +19,11 @@ defmodule Jido.Signal.Ext do
       defmodule MyApp.Signal.Ext.Auth do
         use Jido.Signal.Ext,
           namespace: "auth",
-          schema: [
-            user_id: [type: :string, required: true],
-            roles: [type: {:list, :string}, default: []],
-            expires_at: [type: :pos_integer]
-          ]
+          schema: Zoi.object(%{
+            user_id: Zoi.string(),
+            roles: Zoi.array(Zoi.string()) |> Zoi.default([]),
+            expires_at: Zoi.integer() |> Zoi.positive() |> Zoi.optional()
+          })
       end
 
   ## Extension Registration
@@ -41,12 +41,8 @@ defmodule Jido.Signal.Ext do
 
   ## Schema Validation
 
-  Extensions use NimbleOptions for schema validation:
-
-  - `:type` - Data type validation
-  - `:required` - Required fields
-  - `:default` - Default values
-  - Custom validators supported
+  Extensions use Zoi for schema validation. Zoi schemas define field types,
+  required fields, defaults, refinements, and transforms.
 
   ## Usage with Signals
 
@@ -80,12 +76,15 @@ defmodule Jido.Signal.Ext do
   @callback namespace() :: String.t()
 
   @doc """
-  Returns the NimbleOptions schema for validating extension data.
+  Returns the Zoi schema for validating extension data.
 
   The schema defines the structure, types, and validation rules
   for data within this extension's namespace.
   """
-  @callback schema() :: keyword()
+  @callback schema() :: Zoi.schema()
+
+  @doc false
+  @callback attributes() :: [String.t()]
 
   @doc """
   Converts extension data to Signal attributes format.
@@ -127,18 +126,19 @@ defmodule Jido.Signal.Ext do
   ## Options
 
   - `:namespace` - String namespace for the extension (required)
-  - `:schema` - NimbleOptions schema for validation (default: [])
+  - `:schema` - Zoi schema for validation (default: `Zoi.any/0`)
+  - `:attributes` - Top-level wire attributes for the default map transform
 
   ## Examples
 
       defmodule MyApp.Signal.Ext.Tracking do
         use Jido.Signal.Ext,
           namespace: "tracking",
-          schema: [
-            session_id: [type: :string, required: true],
-            user_agent: [type: :string],
-            ip_address: [type: :string]
-          ]
+          schema: Zoi.object(%{
+            session_id: Zoi.string(),
+            user_agent: Zoi.string() |> Zoi.optional(),
+            ip_address: Zoi.string() |> Zoi.optional()
+          })
       end
 
   The extension will be automatically registered and available for use:
@@ -166,7 +166,12 @@ defmodule Jido.Signal.Ext do
       end
 
       @ext_namespace Keyword.fetch!(opts, :namespace)
-      @ext_schema Keyword.get(opts, :schema, [])
+      @ext_schema Keyword.get(opts, :schema, Zoi.any())
+      @ext_attributes Keyword.get(
+                        opts,
+                        :attributes,
+                        Jido.Signal.Ext.schema_attributes(@ext_schema)
+                      )
 
       # Validate namespace format
       if !(is_binary(@ext_namespace) and
@@ -178,20 +183,11 @@ defmodule Jido.Signal.Ext do
           line: __ENV__.line
       end
 
-      # Validate schema if provided
-      if @ext_schema != [] do
-        try do
-          NimbleOptions.new!(@ext_schema)
-        rescue
-          e in ArgumentError ->
-            reraise CompileError,
-                    [
-                      description: "Invalid extension schema: #{Exception.message(e)}",
-                      file: __ENV__.file,
-                      line: __ENV__.line
-                    ],
-                    __STACKTRACE__
-        end
+      if Jido.Signal.Schema.schema_type(@ext_schema) != :zoi do
+        raise CompileError,
+          description: "Invalid extension schema: must be a Zoi schema",
+          file: __ENV__.file,
+          line: __ENV__.line
       end
 
       @impl Jido.Signal.Ext
@@ -199,6 +195,10 @@ defmodule Jido.Signal.Ext do
 
       @impl Jido.Signal.Ext
       def schema, do: @ext_schema
+
+      @doc false
+      @impl Jido.Signal.Ext
+      def attributes, do: @ext_attributes
 
       @impl Jido.Signal.Ext
       def to_attrs(data), do: data
@@ -225,30 +225,14 @@ defmodule Jido.Signal.Ext do
           iex> MyExt.validate_data(%{})
           {:error, "required :user_id option not found"}
       """
-      # Compile-time specialization removes unreachable code paths and
-      # silences Dialyzer's "pattern can never match" warning.
-      if @ext_schema == [] do
-        @spec validate_data(term()) :: {:ok, term()}
-        def validate_data(data), do: {:ok, data}
-      else
-        @spec validate_data(term()) :: {:ok, term()} | {:error, String.t()}
-        def validate_data(data) do
-          data_list = if is_map(data), do: Enum.to_list(data), else: data
+      @spec validate_data(term()) :: {:ok, term()} | {:error, String.t()}
+      def validate_data(data) do
+        case Zoi.parse(@ext_schema, data) do
+          {:ok, validated_data} ->
+            {:ok, validated_data}
 
-          case NimbleOptions.validate(data_list, @ext_schema) do
-            {:ok, validated_data} ->
-              {:ok, if(is_map(data), do: Map.new(validated_data), else: validated_data)}
-
-            {:error, %NimbleOptions.ValidationError{} = error} ->
-              reason =
-                Error.format_nimble_validation_error(
-                  error,
-                  "Extension",
-                  __MODULE__
-                )
-
-              {:error, reason}
-          end
+          {:error, errors} ->
+            {:error, Error.format_zoi_validation_error(errors, "Extension", __MODULE__)}
         end
       end
 
@@ -260,6 +244,16 @@ defmodule Jido.Signal.Ext do
       end
     end
   end
+
+  @doc false
+  @spec schema_attributes(Zoi.schema()) :: [String.t()]
+  def schema_attributes(%Zoi.Types.Map{fields: fields}) when is_list(fields) do
+    fields
+    |> Keyword.keys()
+    |> Enum.map(&to_string/1)
+  end
+
+  def schema_attributes(_schema), do: []
 
   @doc false
   @spec safe_call(module(), atom(), [term()]) :: {:ok, term()} | {:error, any()}

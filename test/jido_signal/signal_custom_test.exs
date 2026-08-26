@@ -108,25 +108,19 @@ defmodule Jido.Signal.CustomTest do
   defmodule RequiredPolicyExtension do
     use Jido.Signal.Ext,
       namespace: "requiredext",
-      schema: [
-        id: [type: :string, required: true]
-      ]
+      schema: Zoi.object(%{id: Zoi.string()})
   end
 
   defmodule OptionalPolicyExtension do
     use Jido.Signal.Ext,
       namespace: "optionalext",
-      schema: [
-        id: [type: :string, required: true]
-      ]
+      schema: Zoi.object(%{id: Zoi.string()})
   end
 
   defmodule ForbiddenPolicyExtension do
     use Jido.Signal.Ext,
       namespace: "forbiddenext",
-      schema: [
-        id: [type: :string, required: true]
-      ]
+      schema: Zoi.object(%{id: Zoi.string()})
   end
 
   defmodule PolicySignal do
@@ -510,7 +504,8 @@ defmodule Jido.Signal.CustomTest do
       assert error =~ "Signal #{inspect(PolicySignal)}"
       assert error =~ "\"requiredext\""
       assert error =~ "invalid data for extension namespace"
-      assert error =~ "required :id option not found"
+      assert error =~ "required"
+      assert error =~ "id"
     end
 
     test "returns error when explicit extensions map contains invalid required data" do
@@ -522,7 +517,8 @@ defmodule Jido.Signal.CustomTest do
       assert error =~ "Signal #{inspect(PolicySignal)}"
       assert error =~ "\"requiredext\""
       assert error =~ "invalid data for extension namespace"
-      assert error =~ "required :id option not found"
+      assert error =~ "required"
+      assert error =~ "id"
     end
   end
 

@@ -16,61 +16,67 @@ defmodule Jido.Signal.Ext.IntegrationTest do
     @moduledoc "Extension for LLM conversation threading"
     use Jido.Signal.Ext,
       namespace: "thread",
-      schema: [
-        id: [type: :string, required: true],
-        parent_id: [type: :string],
-        depth: [type: :non_neg_integer, default: 0],
-        model: [type: :string],
-        tokens_used: [type: :non_neg_integer]
-      ]
+      schema:
+        Zoi.object(%{
+          id: Zoi.string(),
+          parent_id: Zoi.string() |> Zoi.optional(),
+          depth: Zoi.integer() |> Zoi.min(0) |> Zoi.default(0),
+          model: Zoi.string() |> Zoi.optional(),
+          tokens_used: Zoi.integer() |> Zoi.min(0) |> Zoi.optional()
+        })
   end
 
   defmodule TraceExtension do
     @moduledoc "Extension for distributed tracing"
     use Jido.Signal.Ext,
       namespace: "trace",
-      schema: [
-        trace_id: [type: :string, required: true],
-        span_id: [type: :string, required: true],
-        parent_span_id: [type: :string],
-        baggage: [type: :map, default: %{}]
-      ]
+      schema:
+        Zoi.object(%{
+          trace_id: Zoi.string(),
+          span_id: Zoi.string(),
+          parent_span_id: Zoi.string() |> Zoi.optional(),
+          baggage: Zoi.map() |> Zoi.default(%{})
+        })
   end
 
   defmodule SecurityExtension do
     @moduledoc "Extension for security/auth context"
     use Jido.Signal.Ext,
       namespace: "security",
-      schema: [
-        user_id: [type: :string, required: true],
-        permissions: [type: {:list, :string}, default: []],
-        roles: [type: {:list, :string}, default: []],
-        session_id: [type: :string],
-        expires_at: [type: :pos_integer]
-      ]
+      schema:
+        Zoi.object(%{
+          user_id: Zoi.string(),
+          permissions: Zoi.array(Zoi.string()) |> Zoi.default([]),
+          roles: Zoi.array(Zoi.string()) |> Zoi.default([]),
+          session_id: Zoi.string() |> Zoi.optional(),
+          expires_at: Zoi.integer() |> Zoi.positive() |> Zoi.optional()
+        })
   end
 
   defmodule MetricsExtension do
     @moduledoc "Extension for metrics and monitoring"
     use Jido.Signal.Ext,
       namespace: "metrics",
-      schema: [
-        labels: [type: :map, default: %{}],
-        tags: [type: {:list, :string}, default: []],
-        counters: [type: :map, default: %{}],
-        gauges: [type: :map, default: %{}],
-        histograms: [type: :map, default: %{}]
-      ]
+      schema:
+        Zoi.object(%{
+          labels: Zoi.map() |> Zoi.default(%{}),
+          tags: Zoi.array(Zoi.string()) |> Zoi.default([]),
+          counters: Zoi.map() |> Zoi.default(%{}),
+          gauges: Zoi.map() |> Zoi.default(%{}),
+          histograms: Zoi.map() |> Zoi.default(%{})
+        })
   end
 
   defmodule CustomSerializationExtension do
     @moduledoc "Extension with custom serialization logic"
     use Jido.Signal.Ext,
       namespace: "custom.serialization",
-      schema: [
-        data: [type: :map, required: true],
-        format: [type: :string, default: "json"]
-      ]
+      schema:
+        Zoi.object(%{
+          data: Zoi.map(),
+          format: Zoi.string() |> Zoi.default("json")
+        }),
+      attributes: ["custom_data", "custom_format"]
 
     @impl Jido.Signal.Ext
     def to_attrs(data) do
@@ -418,7 +424,8 @@ defmodule Jido.Signal.Ext.IntegrationTest do
 
       # Try to add invalid data for thread extension (missing required id)
       assert {:error, error} = Signal.put_extension(signal, "thread", %{depth: 2})
-      assert error =~ "required :id option not found"
+      assert error =~ "required"
+      assert error =~ "id"
 
       # Try to add invalid data for trace extension (wrong type for trace_id)
       assert {:error, error} =
@@ -433,7 +440,7 @@ defmodule Jido.Signal.Ext.IntegrationTest do
                  permissions: "not-a-list"
                })
 
-      assert error =~ "expected list"
+      assert error =~ "expected array"
     end
 
     test "unknown extension namespaces return proper errors" do

@@ -209,28 +209,29 @@ defmodule Jido.SignalSerializationTest do
     defmodule SimpleTestExt do
       use Jido.Signal.Ext,
         namespace: "simpletest",
-        schema: [
-          message: [type: :string, required: true]
-        ]
+        schema: Zoi.object(%{message: Zoi.string()})
     end
 
     defmodule ComplexTestExt do
       use Jido.Signal.Ext,
         namespace: "complextest",
-        schema: [
-          complex_user_id: [type: :string, required: true],
-          complex_roles: [type: {:list, :string}, default: []],
-          count: [type: :non_neg_integer, default: 0]
-        ]
+        schema:
+          Zoi.object(%{
+            complex_user_id: Zoi.string(),
+            complex_roles: Zoi.array(Zoi.string()) |> Zoi.default([]),
+            count: Zoi.integer() |> Zoi.min(0) |> Zoi.default(0)
+          })
     end
 
     defmodule CustomSerializationTestExt do
       use Jido.Signal.Ext,
         namespace: "customtest",
-        schema: [
-          data: [type: :string, required: true],
-          prefix: [type: :string, default: "test"]
-        ]
+        schema:
+          Zoi.object(%{
+            data: Zoi.string(),
+            prefix: Zoi.string() |> Zoi.default("test")
+          }),
+        attributes: ["custom_data"]
 
       @impl Jido.Signal.Ext
       def to_attrs(%{data: data, prefix: prefix}) do
