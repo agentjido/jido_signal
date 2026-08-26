@@ -3,29 +3,17 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
 
   alias Jido.Signal
   alias Jido.Signal.Bus
-  alias Jido.Signal.Instance
-  alias Jido.Signal.Names
 
   setup do
-    instance1 = __MODULE__.First
-    instance2 = __MODULE__.Second
-
-    {:ok, sup1} = Instance.start_link(name: instance1)
-    {:ok, sup2} = Instance.start_link(name: instance2)
-
-    on_exit(fn ->
-      stop_supervisor(sup1)
-      stop_supervisor(sup2)
-    end)
-
-    {:ok, instance1: instance1, instance2: instance2}
+    {:ok, instance1: __MODULE__.First, instance2: __MODULE__.Second}
   end
 
-  test "uses the instance Registry", %{instance1: instance} do
+  test "uses one Registry with a scoped key", %{instance1: instance} do
     bus_name = "bus-#{System.unique_integer([:positive])}"
     {:ok, bus_pid} = Bus.start_link(name: bus_name, jido: instance)
 
-    assert [{^bus_pid, _}] = Registry.lookup(Names.registry(jido: instance), bus_name)
+    assert [{^bus_pid, _}] =
+             Registry.lookup(Jido.Signal.Registry, {instance, bus_name})
   end
 
   test "keeps Buses in different instances isolated", context do
@@ -59,13 +47,14 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
 
     assert {:ok, ^bus1} = Bus.whereis(bus_name, jido: context.instance1)
     assert {:ok, ^bus2} = Bus.whereis(bus_name, jido: context.instance2)
+    assert {:error, :not_found} = Bus.whereis(bus_name)
   end
 
-  defp stop_supervisor(supervisor) do
-    try do
-      if Process.alive?(supervisor), do: Supervisor.stop(supervisor, :normal, 100)
-    catch
-      :exit, _reason -> :ok
-    end
+  test "uses scoped child IDs", %{instance1: instance1, instance2: instance2} do
+    assert %{id: {:shared_bus, ^instance1}} =
+             Bus.child_spec(name: :shared_bus, jido: instance1)
+
+    assert %{id: {:shared_bus, ^instance2}} =
+             Bus.child_spec(name: :shared_bus, jido: instance2)
   end
 end

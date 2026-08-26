@@ -4,7 +4,6 @@ defmodule Jido.Signal.Dispatch.BusTest do
   alias Jido.Signal
   alias Jido.Signal.Bus
   alias Jido.Signal.Dispatch
-  alias Jido.Signal.Instance
 
   @moduletag :capture_log
 
@@ -26,7 +25,7 @@ defmodule Jido.Signal.Dispatch.BusTest do
       assert opts[:jido] == nil
     end
 
-    test "accepts valid target with jido instance" do
+    test "accepts a target with a jido scope" do
       assert {:ok, {:bus, opts}} =
                Dispatch.validate_opts({:bus, target: :my_bus, jido: MyApp.Jido})
 
@@ -84,42 +83,30 @@ defmodule Jido.Signal.Dispatch.BusTest do
     end
   end
 
-  describe "deliver/2 with instance isolation" do
+  describe "deliver/2 with a jido scope" do
     setup do
-      instance = __MODULE__.Isolated
-      {:ok, sup} = Instance.start_link(name: instance)
-
+      scope = __MODULE__.Isolated
       bus_name = __MODULE__.IsolatedBus
-      {:ok, _bus_pid} = Bus.start_link(name: bus_name, jido: instance)
+      start_supervised!({Bus, name: bus_name, jido: scope})
 
-      on_exit(fn ->
-        try do
-          if Process.alive?(sup), do: Supervisor.stop(sup, :normal, 100)
-        catch
-          :exit, _ -> :ok
-        end
-      end)
-
-      {:ok, bus_name: bus_name, instance: instance}
+      {:ok, bus_name: bus_name, scope: scope}
     end
 
-    test "delivers signal to instance-scoped bus", %{bus_name: bus_name, instance: instance} do
+    test "delivers a signal to a scoped Bus", %{bus_name: bus_name, scope: scope} do
       signal = make_signal()
 
-      # Subscribe via the bus pid (already resolved)
-      {:ok, bus_pid} = Bus.whereis(bus_name, jido: instance)
+      {:ok, bus_pid} = Bus.whereis(bus_name, jido: scope)
       {:ok, _sub_id} = Bus.subscribe(bus_pid, "test.signal")
 
-      assert :ok = Dispatch.dispatch(signal, {:bus, target: bus_name, jido: instance})
+      assert :ok = Dispatch.dispatch(signal, {:bus, target: bus_name, jido: scope})
 
       assert_receive {:signal, received_signal}, 1000
       assert received_signal.type == "test.signal"
     end
 
-    test "returns error when bus not in instance scope" do
+    test "returns an error when the Bus is not in the scope" do
       signal = make_signal()
 
-      # Use a bogus instance that has no bus registered
       assert {:error, :bus_not_found} =
                Dispatch.dispatch(
                  signal,

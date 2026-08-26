@@ -138,25 +138,22 @@ config = {:pid, [target: dead_pid, delivery_mode: :async]}
 {:error, :process_not_alive} = Jido.Signal.Dispatch.dispatch(signal, config)
 ```
 
-## Instance Isolation
+## Scoped Buses
 
-For a fixed application domain or isolated testing, start an isolated instance:
+Use `jido:` to isolate a Bus name for an application domain or test:
 
 ```elixir
-# Start isolated instance
-{:ok, _} = Jido.Signal.Instance.start_link(name: MyApp.Jido)
-
-# Start bus scoped to the instance
 {:ok, _} = Jido.Signal.Bus.start_link(name: :my_bus, jido: MyApp.Jido)
+{:ok, bus} = Jido.Signal.Bus.whereis(:my_bus, jido: MyApp.Jido)
 ```
 
-The instance name must be a fixed module or atom from application code. Do not
-create it from a tenant ID or other runtime input.
+The package Registry uses `{MyApp.Jido, "my_bus"}` as the key. No separate
+instance supervisor or Registry is necessary.
 
-See [Event Bus](event-bus.md#instance-isolation) for complete examples.
+See [Event Bus](event-bus.md#scoped-buses) for complete examples.
 
 ## Next Steps
 
 - [Signals and Dispatch](signals-and-dispatch.md) - Signal structure, dispatch adapters, and custom signal types
-- [Event Bus](event-bus.md) - Pub/sub, durable subscriptions, replay, Store, and instance isolation
+- [Event Bus](event-bus.md) - Pub/sub, durable subscriptions, replay, Store, and scoped Buses
 - [Serialization](serialization.md) - Canonical maps and binary formats for application-owned storage

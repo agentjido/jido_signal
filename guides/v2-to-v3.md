@@ -228,10 +228,10 @@ on Bus state, subscriber, partition, or worker structs.
 name-resolution and value-sanitization helpers are internal and are not
 application APIs.
 
-`Jido.Signal.Instance` validates its options with Zoi. Use a fixed module or
-atom from application code as its name. Do not make instance atoms from tenant
-IDs or other runtime values. An instance now starts only its supervisor and
-Registry. The middleware Task Supervisor is removed.
+`Jido.Signal.Instance` and `Jido.Signal.Names` are removed. The `jido:` Bus
+option is now a Registry namespace. The package stores a scoped Bus under a
+`{jido, bus_name}` key in `Jido.Signal.Registry`. No separate instance process
+or Registry is necessary.
 
 ### Replay and Storage
 

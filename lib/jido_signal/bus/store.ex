@@ -32,4 +32,52 @@ defmodule Jido.Signal.Bus.Store do
   @callback list_subscriptions(state()) :: {:ok, [subscription()]} | {:error, term()}
   @callback put_subscription(subscription(), state()) :: {:ok, state()} | {:error, term()}
   @callback delete_subscription(subscription_id(), state()) :: {:ok, state()} | {:error, term()}
+
+  @doc false
+  @spec init_adapter(module(), keyword()) :: {:ok, state()} | {:error, term()}
+  def init_adapter(module, opts) do
+    case safe_apply(module, :init, [opts]) do
+      {:ok, state} -> {:ok, state}
+      {:error, reason} -> {:error, {:store_init_failed, reason}}
+      other -> {:error, {:store_init_failed, {:invalid_return, other}}}
+    end
+  end
+
+  @doc false
+  @spec read(module(), state(), atom(), [term()]) :: {:ok, term()} | {:error, term()}
+  def read(module, state, callback, args) do
+    case safe_apply(module, callback, args ++ [state]) do
+      {:ok, value} -> {:ok, value}
+      {:error, reason} -> {:error, {:store_error, callback, reason}}
+      other -> {:error, {:store_error, callback, {:invalid_return, other}}}
+    end
+  end
+
+  @doc false
+  @spec read(map(), atom(), [term()]) :: {:ok, term()} | {:error, term()}
+  def read(bus_state, callback, args) do
+    read(bus_state.store_module, bus_state.store_state, callback, args)
+  end
+
+  @doc false
+  @spec write(map(), atom(), [term()]) :: {:ok, map()} | {:error, term()}
+  def write(bus_state, callback, args) do
+    case safe_apply(
+           bus_state.store_module,
+           callback,
+           args ++ [bus_state.store_state]
+         ) do
+      {:ok, store_state} -> {:ok, %{bus_state | store_state: store_state}}
+      {:error, reason} -> {:error, {:store_error, callback, reason}}
+      other -> {:error, {:store_error, callback, {:invalid_return, other}}}
+    end
+  end
+
+  defp safe_apply(module, callback, args) do
+    apply(module, callback, args)
+  rescue
+    error -> {:error, {:exception, error}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
 end

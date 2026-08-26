@@ -29,7 +29,7 @@ Model domain events as validated signals and route them predictably through disp
 - Expect at-least-once delivery and make durable handlers idempotent.
 - Keep retry, concurrency, and rate-limit policy in the calling application.
 - Keep domain fields in Signal `data`, not in context attributes.
-- Use fixed application modules or atoms as `Jido.Signal.Instance` names. Never create them from runtime tenant data.
+- Use `jido:` as a stable Registry namespace when the same Bus name needs separate scopes.
 
 ## QA Patterns
 - Test route precedence and wildcard matching (`exact`, `*`, `**`).

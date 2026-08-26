@@ -9,7 +9,7 @@ defmodule Jido.Signal.Dispatch.Bus do
   ## Configuration Options
 
   * `:target` - (required) The atom name of the target bus
-  * `:jido` - (optional) The instance module for instance-scoped bus lookup
+  * `:jido` - (optional) The Registry namespace for scoped Bus lookup
 
   ## Signal Bus Integration
 
@@ -24,7 +24,7 @@ defmodule Jido.Signal.Dispatch.Bus do
         target: :my_bus
       ]}
 
-      # Instance-scoped bus lookup
+      # Scoped Bus lookup
       config = {:bus, [
         target: :my_bus,
         jido: MyApp.Jido
@@ -84,7 +84,7 @@ defmodule Jido.Signal.Dispatch.Bus do
   ## Options
 
   * `:target` - (required) The atom name of the target bus
-  * `:jido` - (optional) The instance module for scoped lookup
+  * `:jido` - (optional) The Registry namespace for scoped lookup
 
   ## Returns
 

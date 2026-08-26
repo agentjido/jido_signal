@@ -117,9 +117,6 @@ defmodule Jido.Signal.MixProject do
         Serialization: [
           Jido.Signal.Serialization
         ],
-        "System Infrastructure": [
-          Jido.Signal.Instance
-        ],
         "Errors & Exceptions": [
           Jido.Signal.Error.DispatchError,
           Jido.Signal.Error.Execution,

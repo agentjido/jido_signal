@@ -175,17 +175,17 @@ The Bus emits these events:
 Delivery events include trace metadata when the Signal has a valid
 `Jido.Signal.Trace` value.
 
-## Instance Isolation
+## Scoped Buses
 
-Use a fixed instance name to get an isolated Registry:
+Use `jido:` to isolate a Bus name in the package Registry:
 
 ```elixir
-{:ok, _instance} = Jido.Signal.Instance.start_link(name: TenantA.Jido)
 {:ok, bus} = Bus.start_link(name: :events, jido: TenantA.Jido)
 {:ok, ^bus} = Bus.whereis(:events, jido: TenantA.Jido)
 ```
 
-Do not make instance atoms from tenant IDs or other runtime values.
+The scope is a Registry key value. It does not start a process or make a new
+Registry.
 
 ## Removed v2 Bus Features
 

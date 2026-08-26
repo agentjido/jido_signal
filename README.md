@@ -69,7 +69,7 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - Stored-before-send, ordered, at-least-once durable delivery
 - Bounded replay through a Bus-owned Store boundary
 - Application-owned retry, dead-letter, rate-limit, and workload-isolation policy
-- Instance isolation for fixed application domains
+- Registry-key isolation for fixed application domains
 
 ### **Advanced Routing Engine**
 - Trie-based pattern matching for optimal performance
@@ -420,32 +420,23 @@ durability:
 )
 ```
 
-### Instance Isolation
+### Scoped Buses
 
-For fixed application domains or tests, create isolated signal infrastructure:
+Use `jido:` to put a Bus in a separate Registry namespace:
 
 ```elixir
-# Start an isolated instance with its own Registry.
-{:ok, _} = Jido.Signal.Instance.start_link(name: MyApp.Jido)
-
-# Start buses scoped to the instance
 {:ok, _} = Jido.Signal.Bus.start_link(name: :tenant_bus, jido: MyApp.Jido)
 
-# Lookup uses the correct instance registry
+# Lookup uses the same scope.
 {:ok, bus_pid} = Jido.Signal.Bus.whereis(:tenant_bus, jido: MyApp.Jido)
 
-# Multiple instances are completely isolated
-{:ok, _} = Jido.Signal.Instance.start_link(name: TenantA.Jido)
-{:ok, _} = Jido.Signal.Instance.start_link(name: TenantB.Jido)
-
-# Same bus name, different instances = different processes
+# The same Bus name can exist in two scopes.
 {:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantA.Jido)
 {:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantB.Jido)
 ```
 
-Use only fixed module or atom names from application code. Do not create an
-instance name from a tenant ID or other runtime input. Instance scoping creates
-process-name atoms that remain in the VM atom table.
+The package uses one Registry. It stores scoped Buses under `{jido, bus_name}`
+keys. No separate instance process is necessary.
 
 ## Use Cases
 

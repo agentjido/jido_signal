@@ -25,7 +25,7 @@ Model domain events as validated signals and route them predictably through bus/
 - `Jido.Signal.Bus`: pub/sub bus with routing, middleware, and persistence hooks
 - `Jido.Signal.Router`: indexed matcher (exact, `*`, `**`) with priority ordering
 - `Jido.Signal.Dispatch`: adapter layer (`:pid`, `:pubsub`, `:http`, `:bus`, `:logger`, etc.)
-- `Jido.Signal.Instance`: isolated multi-tenant signal infrastructure via `jido:` option
+- Bus `jido:` option: isolated Registry-key namespace without extra processes
 
 ## Standards
 - Use clear dot-delimited signal types and validate boundaries aggressively

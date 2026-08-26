@@ -144,31 +144,22 @@ application. The Bus also does not run retries or circuit breakers.
 
 ## Testing Approaches
 
-### Instance Isolation for Tests
+### Scoped Buses for Tests
 
-Use isolated instances to prevent test interference:
+Use a module as the `jido:` scope to prevent test interference:
 
 ```elixir
 defmodule MyApp.SignalTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Signal.Instance
   alias Jido.Signal.Bus
 
   setup do
-    # This fixed module name is safe to use as an instance name.
-    instance = __MODULE__.SignalInstance
-    {:ok, sup} = Instance.start_link(name: instance)
-
-    on_exit(fn ->
-      if Process.alive?(sup), do: Supervisor.stop(sup, :normal, 100)
-    end)
-
-    {:ok, instance: instance}
+    {:ok, scope: __MODULE__.SignalScope}
   end
 
-  test "isolated bus operations", %{instance: instance} do
-    {:ok, bus} = Bus.start_link(name: :test_bus, jido: instance)
+  test "isolated bus operations", %{scope: scope} do
+    {:ok, bus} = Bus.start_link(name: :test_bus, jido: scope)
     {:ok, _} = Bus.subscribe(bus, "test.*")
     
     signal = Jido.Signal.new!("test.event", %{value: 42})
@@ -180,8 +171,7 @@ defmodule MyApp.SignalTest do
 end
 ```
 
-Do not create instance atoms at runtime. Use a fixed module or atom declared in
-application or test code. Runtime atoms remain in the VM atom table.
+The scope is data in the Registry key. It does not need a supervisor.
 
 ### Mock Adapters
 
