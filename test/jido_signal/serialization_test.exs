@@ -113,6 +113,43 @@ defmodule Jido.Signal.SerializationTest do
       assert {:error, {:unsupported_format, :msgpack}} = Signal.serialize([], format: :msgpack)
     end
 
+    test "rejects invalid option and decoded payload shapes" do
+      signal = Signal.new!(type: "test.created", source: "/test")
+
+      assert {:error, {:invalid_options, "expected a keyword list"}} =
+               Serialization.serialize(signal, %{})
+
+      assert {:error, {:invalid_payload, "expected a binary"}} =
+               Serialization.deserialize(:not_binary)
+
+      assert {:error, {:invalid_options, "expected a keyword list"}} =
+               Serialization.deserialize("{}", %{})
+
+      assert {:error, {:invalid_wire_data, message}} =
+               Serialization.deserialize("[1]")
+
+      assert message =~ "expected a map"
+    end
+
+    test "rejects an invalid payload limit" do
+      signal = Signal.new!(type: "test.created", source: "/test")
+
+      assert {:error, {:invalid_max_payload_bytes, -1}} =
+               Serialization.serialize(signal, max_payload_bytes: -1)
+
+      assert {:error, {:invalid_max_payload_bytes, :infinity}} =
+               Serialization.deserialize("{}", max_payload_bytes: :infinity)
+    end
+
+    test "normalizes an unexpected canonical map failure" do
+      signal = Signal.new!(type: "test.created", source: "/test")
+
+      assert {:error, {:serialization_failed, message}} =
+               Serialization.serialize(%{signal | extensions: :invalid})
+
+      assert is_binary(message)
+    end
+
     test "enforces the payload size for encode and decode" do
       signal = Signal.new!(type: "test.created", source: "/test")
       assert {:ok, json} = Signal.serialize(signal)

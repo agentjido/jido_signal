@@ -8,6 +8,39 @@ defmodule Jido.Signal.BusTest do
     def init(_opts), do: {:error, :unavailable}
   end
 
+  defmodule InvalidInitStore do
+    def init(_opts), do: :invalid
+  end
+
+  defmodule RaisingInitStore do
+    def init(_opts), do: raise("store failed")
+  end
+
+  defmodule StartupStore do
+    @behaviour Jido.Signal.Bus.Store
+
+    @impl true
+    def init(opts), do: {:ok, Map.new(opts)}
+
+    @impl true
+    def append(_records, state), do: {:ok, state}
+
+    @impl true
+    def read(_opts, _state), do: {:ok, []}
+
+    @impl true
+    def latest_cursor(state), do: Map.get(state, :latest_cursor, {:ok, 0})
+
+    @impl true
+    def list_subscriptions(state), do: Map.get(state, :subscriptions, {:ok, []})
+
+    @impl true
+    def put_subscription(_subscription, state), do: {:ok, state}
+
+    @impl true
+    def delete_subscription(_id, state), do: {:ok, state}
+  end
+
   defmodule ObservingStore do
     @behaviour Jido.Signal.Bus.Store
 
@@ -143,6 +176,56 @@ defmodule Jido.Signal.BusTest do
              Bus.start_link(name: name, store: FailingStore)
   end
 
+  test "rejects invalid and failed Store initialization" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, {:store_init_failed, {:invalid_return, :invalid}}} =
+             Bus.start_link(name: unique_name("invalid_store"), store: InvalidInitStore)
+
+    assert {:error, {:store_init_failed, {:exception, %RuntimeError{message: "store failed"}}}} =
+             Bus.start_link(name: unique_name("raising_store"), store: RaisingInitStore)
+  end
+
+  test "rejects invalid persisted Store state" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, {:store_init_failed, :list_subscriptions, {:invalid_return, :invalid}}} =
+             Bus.start_link(
+               name: unique_name("invalid_list_return"),
+               store: StartupStore,
+               store_opts: [subscriptions: :invalid]
+             )
+
+    assert {:error, :invalid_store_subscriptions} =
+             Bus.start_link(
+               name: unique_name("invalid_subscriptions"),
+               store: StartupStore,
+               store_opts: [subscriptions: {:ok, :invalid}]
+             )
+
+    assert {:error, :invalid_store_cursor} =
+             Bus.start_link(
+               name: unique_name("invalid_cursor"),
+               store: StartupStore,
+               store_opts: [latest_cursor: {:ok, :invalid}]
+             )
+
+    definition = %{
+      "format_version" => 1,
+      "id" => "ahead",
+      "path" => "stored.*",
+      "cursor" => 1,
+      "created_at" => DateTime.to_iso8601(DateTime.utc_now())
+    }
+
+    assert {:error, :invalid_store_subscription_cursor} =
+             Bus.start_link(
+               name: unique_name("ahead_cursor"),
+               store: StartupStore,
+               store_opts: [subscriptions: {:ok, [definition]}]
+             )
+  end
+
   test "rejects unknown start options through the Zoi schema" do
     assert {:error, {:invalid_options, message}} =
              Bus.start_link(name: unique_name("invalid_options"), unexpected: true)
@@ -152,6 +235,52 @@ defmodule Jido.Signal.BusTest do
     assert_raise ArgumentError, ~r/unrecognized key: unexpected/, fn ->
       Bus.child_spec(name: unique_name("invalid_child_spec"), unexpected: true)
     end
+  end
+
+  test "validates all startup boundaries" do
+    for opts <- [
+          [],
+          [name: ""],
+          [name: nil],
+          [name: :bus, registry: nil],
+          [name: :bus, store: nil],
+          [name: :bus, max_log_size: 0],
+          [name: :bus, store_opts: :invalid]
+        ] do
+      assert {:error, {:invalid_options, message}} = Bus.start_link(opts)
+      assert is_binary(message)
+    end
+  end
+
+  test "supports PID and explicit Registry lookup" do
+    registry = __MODULE__.CustomRegistry
+    start_supervised!({Registry, keys: :unique, name: registry})
+
+    {:ok, bus} = Bus.start_link(name: :custom_bus, registry: registry)
+
+    assert Bus.via_tuple({:custom_bus, registry}) ==
+             {:via, Registry, {registry, "custom_bus"}}
+
+    assert {:ok, ^bus} = Bus.whereis(bus)
+    assert {:ok, ^bus} = Bus.whereis({:custom_bus, registry})
+
+    assert {:ok, _id} = Bus.subscribe({:custom_bus, registry}, "custom.*")
+    event = signal("custom.created")
+    assert {:ok, [_record]} = Bus.publish({:custom_bus, registry}, [event])
+    assert_receive {:signal, ^event}
+
+    dead = spawn(fn -> :ok end)
+    monitor = Process.monitor(dead)
+    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}
+    assert {:error, :not_found} = Bus.whereis(dead)
+    assert {:error, :not_found} = Bus.whereis(:missing, registry: __MODULE__.MissingRegistry)
+  end
+
+  test "handles empty, invalid, and missing publish targets" do
+    assert {:ok, []} = Bus.publish(:not_started, [])
+    assert {:error, :invalid_signals} = Bus.publish(:not_started, :invalid)
+    assert {:error, :not_found} = Bus.publish(:not_started, [signal("missing.event")])
+    assert {:error, :invalid_options} = Bus.subscribe(:not_started, "**", :invalid)
   end
 
   test "rejects removed dispatch and persistent subscription options" do

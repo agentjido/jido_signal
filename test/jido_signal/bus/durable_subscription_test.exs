@@ -209,6 +209,101 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
              Bus.subscribe(bus, "new.*", durable: "old-agent", start_from: :origin)
   end
 
+  test "validates durable acknowledgement state" do
+    bus = start_bus()
+
+    assert {:error, :subscription_not_found} = Bus.ack(bus, "missing", 1)
+    assert {:error, :invalid_cursor} = Bus.ack(bus, "missing", -1)
+
+    assert {:ok, "normal"} =
+             Bus.subscribe(bus, "normal.*", subscription_id: "normal")
+
+    assert {:error, :subscription_not_durable} = Bus.ack(bus, "normal", 1)
+
+    assert {:ok, "waiting"} = Bus.subscribe(bus, "waiting.*", durable: "waiting")
+    assert {:error, :no_record_in_flight} = Bus.ack(bus, "waiting", 1)
+  end
+
+  test "validates durable start cursors" do
+    bus = start_bus()
+
+    assert {:ok, [_first, _second]} =
+             Bus.publish(bus, [signal("cursor.first"), signal("cursor.second")])
+
+    assert {:ok, "cursor-one"} =
+             Bus.subscribe(bus, "cursor.*", durable: "cursor-one", start_from: 1)
+
+    assert_receive {:signal, "cursor-one", %RecordedSignal{cursor: 2}}
+
+    assert {:error, {:invalid_option, :start_from}} =
+             Bus.subscribe(bus, "cursor.*", durable: "future", start_from: 3)
+
+    assert {:error, {:invalid_option, :start_from}} =
+             Bus.subscribe(bus, "cursor.*", durable: "invalid", start_from: :invalid)
+  end
+
+  test "returns the existing durable subscription for the same target" do
+    bus = start_bus()
+
+    assert {:ok, "same"} = Bus.subscribe(bus, "same.*", durable: "same")
+    assert {:ok, "same"} = Bus.subscribe(bus, "same.*", durable: "same")
+  end
+
+  test "rejects identity conflicts and invalid subscription options" do
+    bus = start_bus()
+
+    assert {:error, {:conflicting_options, [:durable, :subscription_id]}} =
+             Bus.subscribe(bus, "**", durable: "one", subscription_id: "two")
+
+    assert {:error, {:requires_option, :start_from, :durable}} =
+             Bus.subscribe(bus, "**", start_from: :origin)
+
+    assert {:error, {:invalid_option, :durable}} =
+             Bus.subscribe(bus, "**", durable: "")
+
+    assert {:error, {:invalid_option, :subscription_id}} =
+             Bus.subscribe(bus, "**", subscription_id: "")
+
+    assert {:ok, "shared"} =
+             Bus.subscribe(bus, "normal.*", subscription_id: "shared")
+
+    assert {:error, :subscription_already_exists} =
+             Bus.subscribe(bus, "durable.*", durable: "shared")
+  end
+
+  test "validates unsubscribe, delete, replay, and target inputs" do
+    bus = start_bus()
+
+    assert {:error, :subscription_not_found} = Bus.unsubscribe(bus, "missing")
+    assert {:error, :invalid_options} = Bus.unsubscribe(bus, "missing", force: true)
+    assert {:error, :subscription_not_found} = Bus.delete_subscription(bus, "missing")
+    assert {:error, _reason} = Bus.subscribe(bus, "bad.***")
+    assert {:error, :invalid_target} = Bus.subscribe(bus, "**", target: :not_a_pid)
+
+    dead = spawn(fn -> :ok end)
+    monitor = Process.monitor(dead)
+    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}
+    assert {:error, :target_not_alive} = Bus.subscribe(bus, "**", target: dead)
+
+    assert {:error, :invalid_options} = Bus.replay(bus, "**", :invalid)
+    assert {:error, {:unsupported_option, :unknown}} = Bus.replay(bus, "**", unknown: true)
+    assert {:error, {:invalid_option, :after}} = Bus.replay(bus, "**", after: -1)
+    assert {:error, {:invalid_option, :limit}} = Bus.replay(bus, "**", limit: 0)
+    assert {:error, _reason} = Bus.replay(bus, "bad.***")
+  end
+
+  test "removes an ephemeral subscription without changing other routes" do
+    bus = start_bus()
+    assert {:ok, "first"} = Bus.subscribe(bus, "kept.*", subscription_id: "first")
+    assert {:ok, "second"} = Bus.subscribe(bus, "kept.*", subscription_id: "second")
+
+    assert :ok = Bus.delete_subscription(bus, "first")
+    event = signal("kept.event")
+    assert {:ok, [_record]} = Bus.publish(bus, [event])
+    assert_receive {:signal, ^event}
+    refute_receive {:signal, ^event}, 20
+  end
+
   defp start_bus(opts \\ []) do
     name = unique_name("durable_bus")
     start_supervised!({Bus, Keyword.put(opts, :name, name)})
