@@ -1,63 +1,17 @@
 defmodule Jido.Signal.Dispatch.LoggerAdapter do
   @moduledoc """
-  An adapter for dispatching signals through Elixir's Logger system.
+  Sends a Signal to Elixir Logger.
 
-  This adapter implements the `Jido.Signal.Dispatch.Adapter` behaviour and provides
-  functionality to log signals using Elixir's built-in Logger. It supports both
-  structured and unstructured logging formats and respects configured log levels.
+  The adapter supports plain text and structured map messages. Signal data is
+  sanitized before it enters a log message.
 
-  ## Configuration Options
+  Options:
 
-  * `:level` - (optional) The log level to use, one of [:debug, :info, :warning, :error], defaults to `:info`
-  * `:structured` - (optional) Whether to use structured logging format, defaults to `false`
+  - `:level` or `:log_level` sets `:debug`, `:info`, `:warning`, or `:error`.
+  - `:structured` selects a map message. The default is plain text.
+  - `:include_data` includes sanitized Signal data. The default is `true`.
 
-  ## Logging Formats
-
-  ### Unstructured (default)
-  ```
-  Signal dispatched: signal_type from source with data={...}
-  ```
-
-  ### Structured
-  ```elixir
-  %{
-    event: "signal_dispatched",
-    id: "signal_id",
-    type: "signal_type",
-    data: {...},
-    source: "source"
-  }
-  ```
-
-  ## Examples
-
-      # Basic usage with default level
-      config = {:logger, []}
-
-      # Custom log level
-      config = {:logger, [
-        level: :debug
-      ]}
-
-      # Structured logging
-      config = {:logger, [
-        level: :info,
-        structured: true
-      ]}
-
-  ## Integration with Logger
-
-  The adapter integrates with Elixir's Logger system, which means:
-  * Log messages respect the global Logger configuration
-  * Metadata and formatting can be customized through Logger backends
-  * Log levels can be filtered at runtime
-  * Structured logging can be processed by log aggregators
-
-  ## Notes
-
-  * Consider using structured logging when integrating with log aggregation systems
-  * Log levels should be chosen based on the signal's importance
-  * High-volume signals should use `:debug` level to avoid log spam
+      Jido.Signal.Dispatch.dispatch(signal, {:logger, level: :info})
   """
 
   @behaviour Jido.Signal.Dispatch.Adapter
