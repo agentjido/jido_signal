@@ -9,6 +9,7 @@ Model domain events as validated signals and route them predictably through disp
 - Always supply `source`, unless a typed Signal defines `default_source`.
 - Use dot-delimited event types (`user.created`, `order.shipped`).
 - Use static Zoi schemas for typed Signal data. Use named MFA callbacks only.
+- Handle the Zoi errors returned by typed Signal validation without a package wrapper.
 - Use flat CloudEvents context attributes only for routing or processing metadata.
 - Use JSON serialization by default. Use `format: :erlang_term` only between trusted Erlang systems.
 - Use `Signal.to_map/1` and `Signal.from_map/1` as the only map conversion boundary.

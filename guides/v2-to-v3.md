@@ -34,7 +34,12 @@ end
 ```
 
 Remove NimbleOptions schema declarations and error conversion from your Signal
-modules. Zoi errors pass through the Jido Signal structured error boundary.
+modules. Typed Signal `validate_data/1` and `new/2` calls return the Zoi parse
+result directly. `new!/2` raises the Zoi parse exception when data validation
+fails.
+
+Custom Signal schemas can accept any data value. They do not have an
+Action-style map requirement.
 
 Zoi schemas must be static module data. Replace anonymous refinement,
 transform, and callback functions with named `{Module, :function, args}` MFA

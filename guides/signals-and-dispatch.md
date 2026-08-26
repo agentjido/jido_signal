@@ -211,8 +211,9 @@ end
 Jido.Signal.Dispatch.dispatch(signal, {:pubsub, [target: :pubsub, topic: "user-events"]})
 ```
 
-Zoi is the schema format for custom Signals. Zoi schemas must accept and return
-map-shaped data. Schemas must be static module data. Use named MFA values for
+Zoi is the schema format for custom Signals. A schema can accept any Signal
+data value. `validate_data/1` and `new/2` return Zoi validation errors without
+a Jido wrapper. Schemas must be static module data. Use named MFA values for
 all Zoi callbacks:
 
 ```elixir

@@ -227,10 +227,14 @@ end
 # reason identifies the missing email field.
 ```
 
-Zoi is the schema format for custom Signals. Zoi schemas must accept and return
-map-shaped data. Schemas must be static module data. Use named
-`{Module, :function, args}` MFA values for refinements, transforms, and other
-callbacks. Anonymous functions and lazy schemas are rejected at compile time.
+Zoi is the schema format for custom Signals. A schema can accept any Signal
+data value, including a map, list, scalar, binary, or other Erlang term.
+`validate_data/1` and `new/2` return Zoi validation errors without a Jido
+wrapper. `new!/2` raises the Zoi parse exception for invalid data.
+
+Schemas must be static module data. Use named `{Module, :function, args}` MFA
+values for refinements, transforms, and other callbacks. Anonymous functions
+and lazy schemas are rejected at compile time.
 
 CloudEvents extension context attributes are flat transport metadata. They are
 optional and do not replace a custom Signal data schema:

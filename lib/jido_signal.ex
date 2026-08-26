@@ -43,6 +43,10 @@ defmodule Jido.Signal do
   Custom schemas must be static module data. Zoi refinements, transforms, and
   other callbacks must use named `{Module, :function, args}` MFA values.
   Anonymous functions and lazy schemas are not accepted.
+
+  A custom schema can accept any Signal data value. Its `validate_data/1` and
+  `new/2` functions return Zoi validation errors directly. Its `new!/2`
+  function raises the Zoi parse exception when data validation fails.
   """
 
   alias Jido.Signal.Context
@@ -51,6 +55,34 @@ defmodule Jido.Signal do
   alias Jido.Signal.Serialization
 
   @wire_version 3
+  @default_data_schema Zoi.any()
+
+  @definition_defaults %{
+    datacontenttype: nil,
+    dataschema: nil,
+    default_source: nil,
+    schema: @default_data_schema
+  }
+
+  @definition_schema Zoi.keyword(
+                       [
+                         type: Zoi.string() |> Zoi.min(1) |> Zoi.required(),
+                         default_source:
+                           Zoi.string()
+                           |> Zoi.min(1)
+                           |> Zoi.refine({__MODULE__, :validate_uri_reference, []}),
+                         datacontenttype: Zoi.string() |> Zoi.min(1),
+                         dataschema:
+                           Zoi.string()
+                           |> Zoi.min(1)
+                           |> Zoi.refine({__MODULE__, :validate_absolute_uri, []}),
+                         schema:
+                           Zoi.any()
+                           |> Zoi.refine({__MODULE__, :validate_definition_schema, []})
+                           |> Zoi.default(@default_data_schema)
+                       ],
+                       unrecognized_keys: :error
+                     )
 
   @signal_schema Zoi.struct(
                    __MODULE__,
@@ -93,9 +125,120 @@ defmodule Jido.Signal do
   def wire_version, do: @wire_version
 
   @doc "Defines a custom Signal module with a static Zoi data schema."
-  defmacro __using__(opts) do
-    quote do
-      use Jido.Signal.Definition, unquote(opts)
+  defmacro __using__(opts_ast) do
+    quote location: :keep do
+      @signal_definition Jido.Signal.__compile_definition__(unquote(opts_ast), __ENV__)
+
+      @doc "Returns the Signal type."
+      @spec type() :: String.t()
+      def type, do: @signal_definition[:type]
+
+      @doc "Returns the default source, if one is configured."
+      @spec default_source() :: String.t() | nil
+      def default_source, do: @signal_definition[:default_source]
+
+      @doc "Returns the configured data content type."
+      @spec datacontenttype() :: String.t() | nil
+      def datacontenttype, do: @signal_definition[:datacontenttype]
+
+      @doc "Returns the configured data schema URI."
+      @spec dataschema() :: String.t() | nil
+      def dataschema, do: @signal_definition[:dataschema]
+
+      @doc "Returns the static Zoi data schema."
+      @spec schema() :: Zoi.schema()
+      def schema, do: @signal_definition[:schema]
+
+      @doc "Returns the typed Signal metadata."
+      @spec metadata() :: map()
+      def metadata, do: @signal_definition
+
+      @doc "Validates data with the static Zoi schema."
+      @spec validate_data(term()) :: Zoi.result()
+      def validate_data(data), do: Zoi.parse(schema(), data)
+
+      @doc "Creates a Signal with the configured type and validated data."
+      @spec new(term(), keyword() | map()) ::
+              {:ok, Jido.Signal.t()} | {:error, [Zoi.Error.t()] | String.t()}
+      def new(data \\ %{}, opts \\ []) do
+        defaults =
+          %{
+            "source" => default_source(),
+            "datacontenttype" => datacontenttype(),
+            "dataschema" => dataschema()
+          }
+          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+          |> Map.new()
+
+        with {:ok, validated_data} <- validate_data(data),
+             {:ok, attrs} <- Jido.Signal.__normalize_definition_attrs__(opts, defaults) do
+          attrs
+          |> Map.put("type", type())
+          |> Map.put("data", validated_data)
+          |> Jido.Signal.new()
+        end
+      end
+
+      @doc "Creates a Signal and raises when the data or envelope is invalid."
+      @spec new!(term(), keyword() | map()) :: Jido.Signal.t() | no_return()
+      def new!(data \\ %{}, opts \\ []) do
+        case new(data, opts) do
+          {:ok, signal} ->
+            signal
+
+          {:error, errors} when is_list(errors) ->
+            raise Zoi.ParseError, errors: errors
+
+          {:error, reason} ->
+            raise ArgumentError, "invalid signal: #{reason}"
+        end
+      end
+    end
+  end
+
+  @doc false
+  @spec __compile_definition__(keyword(), Macro.Env.t()) :: map() | no_return()
+  def __compile_definition__(raw_opts, env) do
+    case Zoi.parse(@definition_schema, raw_opts) do
+      {:ok, validated_opts} ->
+        definition = Map.merge(@definition_defaults, Map.new(validated_opts))
+        ensure_static_schema!(definition.schema, env)
+        definition
+
+      {:error, errors} ->
+        raise CompileError,
+          description:
+            "Invalid configuration given to use Jido.Signal (#{env.module}): " <>
+              Zoi.prettify_errors(errors),
+          file: env.file,
+          line: env.line
+    end
+  end
+
+  @doc false
+  @spec __normalize_definition_attrs__(keyword() | map(), map()) ::
+          {:ok, map()} | {:error, String.t()}
+  def __normalize_definition_attrs__(opts, defaults) when is_list(opts) or is_map(opts) do
+    attrs =
+      opts
+      |> Map.new()
+      |> Map.new(fn {key, value} -> {to_string(key), value} end)
+
+    {:ok, Map.merge(defaults, attrs)}
+  rescue
+    _exception -> {:error, "expected Signal options to be a map or keyword list"}
+  end
+
+  def __normalize_definition_attrs__(_opts, _defaults),
+    do: {:error, "expected Signal options to be a map or keyword list"}
+
+  @doc false
+  @spec validate_definition_schema(term(), keyword()) :: :ok | {:error, String.t()}
+  def validate_definition_schema(value, _opts) do
+    if is_struct(value) and Zoi.Type.impl_for(value) != nil do
+      :ok
+    else
+      {:error, "must be a Zoi schema"}
     end
   end
 
@@ -232,6 +375,135 @@ defmodule Jido.Signal do
       {:error, reason} -> {:error, "must be an RFC 3339 timestamp: #{inspect(reason)}"}
     end
   end
+
+  defp ensure_static_schema!(schema, env) do
+    case static_schema_data(schema, []) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise CompileError,
+          description:
+            ":schema must be static module data; #{reason}. " <>
+              "Use named MFA effects such as {Module, :function, args}",
+          file: env.file,
+          line: env.line
+    end
+
+    try do
+      Macro.escape(schema)
+      :ok
+    rescue
+      ArgumentError ->
+        raise CompileError,
+          description:
+            ":schema must be static module data that can be stored in the Signal module. " <>
+              "Use named MFA effects such as {Module, :function, args}",
+          file: env.file,
+          line: env.line
+    end
+  end
+
+  defp static_schema_data(%Zoi.Types.Lazy{}, path),
+    do: static_data_error("lazy schemas are not supported", path)
+
+  defp static_schema_data(%Zoi.Types.Meta{} = meta, path) do
+    with :ok <- static_schema_effects(meta.effects, path ++ [:effects]) do
+      meta
+      |> Map.from_struct()
+      |> Map.delete(:effects)
+      |> static_schema_data(path)
+    end
+  end
+
+  defp static_schema_data(term, path) when is_function(term),
+    do: static_data_error("anonymous functions are not supported", path)
+
+  defp static_schema_data(term, path)
+       when is_pid(term) or is_port(term) or is_reference(term),
+       do: static_data_error("runtime process values are not supported", path)
+
+  defp static_schema_data(term, path) when is_map(term) do
+    term
+    |> Map.to_list()
+    |> Enum.sort_by(fn {key, _value} -> :erlang.term_to_binary(key) end)
+    |> Enum.reduce_while(:ok, fn {key, value}, :ok ->
+      with :ok <- static_schema_data(key, path ++ [:key]),
+           :ok <- static_schema_data(value, path ++ [key]) do
+        {:cont, :ok}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp static_schema_data(term, path) when is_list(term) do
+    static_schema_list_data(term, path, 0)
+  end
+
+  defp static_schema_data(term, path) when is_tuple(term) do
+    term
+    |> Tuple.to_list()
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {value, index}, :ok ->
+      case static_schema_data(value, path ++ [index]) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp static_schema_data(_term, _path), do: :ok
+
+  defp static_schema_effects(effects, path) when is_list(effects) do
+    effects
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {effect, index}, :ok ->
+      case static_schema_effect(effect, path ++ [index]) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp static_schema_effects(_effects, path),
+    do: static_data_error("schema effects must be a list", path)
+
+  defp static_schema_effect({kind, {module, function, args}}, path)
+       when kind in [:refine, :transform] and is_atom(module) and is_atom(function) and
+              is_list(args) do
+    static_schema_data(args, path ++ [kind, :args])
+  end
+
+  defp static_schema_effect({kind, effect}, path)
+       when kind in [:refine, :transform] and is_function(effect) do
+    static_data_error("anonymous functions are not supported", path)
+  end
+
+  defp static_schema_effect(_effect, path) do
+    static_data_error(
+      "custom schema effects must use {Module, :function, args} MFA values",
+      path
+    )
+  end
+
+  defp static_schema_list_data([], _path, _index), do: :ok
+
+  defp static_schema_list_data([value | rest], path, index) when is_list(rest) do
+    case static_schema_data(value, path ++ [index]) do
+      :ok -> static_schema_list_data(rest, path, index + 1)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp static_schema_list_data([value | _tail], path, index) do
+    with :ok <- static_schema_data(value, path ++ [index]) do
+      static_data_error("improper list tails are not supported", path ++ [index + 1])
+    end
+  end
+
+  defp static_data_error(reason, []), do: {:error, reason}
+  defp static_data_error(reason, path), do: {:error, "#{reason} at #{inspect(path)}"}
 
   defp stringify_keys(map) do
     Map.new(map, fn {key, value} -> {to_string(key), value} end)

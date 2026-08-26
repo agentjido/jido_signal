@@ -25,6 +25,19 @@ defmodule Jido.Signal.CustomTest do
       schema: Zoi.object(%{value: Zoi.string()})
   end
 
+  defmodule TextMessage do
+    use Jido.Signal,
+      type: "text.message",
+      default_source: "/messages",
+      schema: Zoi.string()
+  end
+
+  defmodule OpaqueMessage do
+    use Jido.Signal,
+      type: "opaque.message",
+      default_source: "/messages"
+  end
+
   describe "typed Signal construction" do
     test "uses configured envelope values and validates data" do
       assert {:ok, signal} =
@@ -58,12 +71,25 @@ defmodule Jido.Signal.CustomTest do
       assert signal.source == "/test"
     end
 
-    test "returns a useful Zoi validation error" do
-      assert {:error, error} =
+    test "returns Zoi validation errors without a package wrapper" do
+      assert {:error, [%Zoi.Error{} = error]} =
                UserCreated.new(%{user_id: "123", email: "not-an-email"})
 
-      assert error =~ "email"
-      assert error =~ "must contain @"
+      assert error.path == [:email]
+      assert error.message == "must contain @"
+
+      assert_raise Zoi.ParseError, fn ->
+        UserCreated.new!(%{user_id: "123", email: "not-an-email"})
+      end
+    end
+
+    test "accepts non-map data defined by Zoi" do
+      assert {:ok, text_signal} = TextMessage.new("hello")
+      assert text_signal.data == "hello"
+
+      value = {:binary, <<0, 1, 2>>}
+      assert {:ok, opaque_signal} = OpaqueMessage.new(value)
+      assert opaque_signal.data == value
     end
 
     test "keeps type and data fixed by the definition" do
@@ -200,6 +226,25 @@ defmodule Jido.Signal.CustomTest do
           end
         )
       end
+    end
+
+    test "supports a static schema stored in a module-body variable" do
+      module = unique_module("SchemaVariable")
+
+      create_module(
+        module,
+        quote do
+          data_schema = Zoi.list(Zoi.integer())
+
+          use Jido.Signal,
+            type: "schema.variable",
+            default_source: "/test",
+            schema: data_schema
+        end
+      )
+
+      assert {:ok, signal} = module.new([1, 2, 3])
+      assert signal.data == [1, 2, 3]
     end
   end
 
