@@ -48,7 +48,7 @@ defmodule Jido.Signal.DispatchValidationTest do
     refute_receive :validated, 100
   end
 
-  test "validates options exactly once in batch dispatch" do
+  test "validates options exactly once for a larger target list" do
     {:ok, signal} = Signal.new("test.event", %{})
 
     configs =
@@ -57,7 +57,7 @@ defmodule Jido.Signal.DispatchValidationTest do
       end
 
     # Should validate exactly once per config (10 total)
-    :ok = Dispatch.dispatch_batch(signal, configs, batch_size: 5)
+    :ok = Dispatch.dispatch(signal, configs)
 
     # Check exactly ten validations
     for _i <- 1..10 do

@@ -30,19 +30,15 @@ defmodule JidoTest.Signal.Dispatch.ConsoleAdapterTest do
       assert {:ok, ^opts} = ConsoleAdapter.validate_opts(opts)
     end
 
-    test "accepts non-keyword list options" do
-      assert {:ok, %{any: "map"}} = ConsoleAdapter.validate_opts(%{any: "map"})
-      assert {:ok, "string"} = ConsoleAdapter.validate_opts("string")
+    test "rejects options that are not a keyword list" do
+      assert {:error, _reason} = ConsoleAdapter.validate_opts(%{any: "map"})
+      assert {:error, _reason} = ConsoleAdapter.validate_opts("string")
     end
 
-    test "always returns :ok tuple" do
+    test "accepts keyword options" do
       test_cases = [
         [],
-        [option: "value"],
-        %{map: "option"},
-        "string",
-        123,
-        nil
+        [option: "value"]
       ]
 
       for opts <- test_cases do

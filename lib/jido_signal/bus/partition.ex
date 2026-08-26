@@ -228,7 +228,7 @@ defmodule Jido.Signal.Bus.Partition do
   end
 
   defp dispatch_to_subscription(
-         state,
+         _state,
          signal,
          subscription,
          _subscription_id,
@@ -247,7 +247,7 @@ defmodule Jido.Signal.Bus.Partition do
           {:error, :timeout}
       end
     else
-      Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: state.task_supervisor)
+      Dispatch.dispatch(signal, subscription.dispatch)
     end
   end
 

@@ -22,6 +22,16 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     def deliver(_signal, _opts), do: raise("adapter crashed")
   end
 
+  defmodule URLReportingAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def validate_opts(opts), do: {:ok, opts}
+
+    @impl true
+    def deliver(_signal, _opts), do: {:error, :not_sent}
+  end
+
   setup do
     Application.delete_env(:jido_signal, :normalize_dispatch_errors)
     Application.delete_env(:jido, :normalize_dispatch_errors)
@@ -54,7 +64,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert Exception.message(error) =~ "Signal dispatch failed"
   end
 
-  test "dispatch_batch normalizes errors when enabled" do
+  test "multi-target dispatch normalizes errors when enabled" do
     Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
 
@@ -65,10 +75,10 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
       {:named, [target: {:name, :nonexistent_process}, delivery_mode: :async]}
     ]
 
-    result = Dispatch.dispatch_batch(signal, configs, [])
+    result = Dispatch.dispatch(signal, configs)
 
-    assert {:error, [{1, %Error.DispatchError{}}]} = result
-    {:error, [{1, error}]} = result
+    assert {:error, [%Error.DispatchError{}]} = result
+    {:error, [error]} = result
 
     assert Exception.message(error) =~ "Signal dispatch failed"
   end
@@ -148,7 +158,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
-    config = {:http, [url: "https://user:pass@example.com/path?token=secret"]}
+    config = {URLReportingAdapter, [url: "https://user:pass@example.com/path?token=secret"]}
 
     assert {:error, _reason} = Dispatch.dispatch(signal, config)
 

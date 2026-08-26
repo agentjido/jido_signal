@@ -14,10 +14,7 @@ defmodule Jido.Signal.Dispatch.Http do
   * `:timeout` - (optional) Request timeout in milliseconds, defaults to 5000
   * `:ssl_options` - (optional) Additional TLS options. Certificate and hostname
     verification are always enforced for HTTPS requests.
-  * `:retry` - (optional) Retry configuration map with keys:
-    * `:max_attempts` - Maximum number of retry attempts (default: 3)
-    * `:base_delay` - Base delay between retries in milliseconds (default: 1000)
-    * `:max_delay` - Maximum delay between retries in milliseconds (default: 5000)
+  The adapter makes one request. The caller or Bus owns retry policy.
 
   ## Examples
 
@@ -31,12 +28,7 @@ defmodule Jido.Signal.Dispatch.Http do
         url: "https://api.example.com/events",
         method: :put,
         headers: [{"content-type", "application/json"}, {"x-api-key", "secret"}],
-        timeout: 10_000,
-        retry: %{
-          max_attempts: 5,
-          base_delay: 2000,
-          max_delay: 10000
-        }
+        timeout: 10_000
       ]}
 
   ## Error Handling
@@ -46,52 +38,43 @@ defmodule Jido.Signal.Dispatch.Http do
   * `:invalid_url` - The URL is not valid
   * `:connection_error` - Failed to establish connection
   * `:timeout` - Request timed out
-  * `:retry_failed` - All retry attempts failed
   * Other HTTP status codes and errors
   """
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.CircuitBreaker
-  alias Jido.Signal.Sanitizer
-  alias Jido.Signal.Util
+  alias Jido.Signal.Dispatch.Adapter
 
   @default_timeout 5000
   @default_method :post
-  @default_retry %{
-    max_attempts: 3,
-    base_delay: 1000,
-    max_delay: 5000
-  }
   @max_timeout 60_000
-  @max_retry_attempts 10
-  @max_retry_delay 60_000
   @valid_methods [:post, :put, :patch]
   @header_name_pattern ~r/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
   @header_value_control_pattern ~r/[\x00-\x1F\x7F]/
   @url_unsafe_pattern ~r/[\x00-\x20\x7F]/
   @protected_ssl_options [:verify, :verify_fun, :customize_hostname_check]
+  @options_schema Zoi.keyword(
+                    url: Zoi.string() |> Zoi.required(),
+                    method: Zoi.enum(@valid_methods) |> Zoi.default(@default_method),
+                    headers: Zoi.list() |> Zoi.default([]),
+                    timeout: Zoi.integer() |> Zoi.min(1) |> Zoi.default(@default_timeout),
+                    ssl_options: Zoi.list() |> Zoi.default([]),
+                    retry: Zoi.any() |> Zoi.optional()
+                  )
 
   @type http_method :: :post | :put | :patch
   @type header :: {String.t(), String.t()}
-  @type retry_config :: %{
-          max_attempts: pos_integer(),
-          base_delay: pos_integer(),
-          max_delay: pos_integer()
-        }
   @type delivery_opts :: [
           url: String.t(),
           method: http_method(),
           headers: [header()],
           timeout: pos_integer(),
-          ssl_options: keyword(),
-          retry: retry_config()
+          ssl_options: keyword()
         ]
   @type delivery_error ::
           :invalid_url
           | :connection_error
           | :timeout
-          | :retry_failed
           | {:status_error, pos_integer()}
           | term()
 
@@ -109,7 +92,6 @@ defmodule Jido.Signal.Dispatch.Http do
   * `:method` - Must be one of #{inspect(@valid_methods)}
   * `:headers` - Must be a list of string tuples
   * `:timeout` - Must be a positive integer
-  * `:retry` - Must be a valid retry configuration map
 
   ## Returns
 
@@ -118,12 +100,12 @@ defmodule Jido.Signal.Dispatch.Http do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
   def validate_opts(opts) do
-    with {:ok, url} <- validate_url(Keyword.get(opts, :url)),
+    with {:ok, opts} <- Adapter.validate(@options_schema, opts),
+         {:ok, url} <- validate_url(Keyword.get(opts, :url)),
          {:ok, method} <- validate_method(Keyword.get(opts, :method, @default_method)),
          {:ok, headers} <- validate_headers(Keyword.get(opts, :headers, [])),
          {:ok, timeout} <- validate_timeout(Keyword.get(opts, :timeout, @default_timeout)),
-         {:ok, ssl_options} <- validate_ssl_options(Keyword.get(opts, :ssl_options, [])),
-         {:ok, retry} <- validate_retry(Keyword.get(opts, :retry, @default_retry)) do
+         {:ok, ssl_options} <- validate_ssl_options(Keyword.get(opts, :ssl_options, [])) do
       {:ok,
        opts
        |> Keyword.put(:url, url)
@@ -131,9 +113,12 @@ defmodule Jido.Signal.Dispatch.Http do
        |> Keyword.put(:headers, headers)
        |> Keyword.put(:timeout, timeout)
        |> Keyword.put(:ssl_options, ssl_options)
-       |> Keyword.put(:retry, retry)}
+       |> Keyword.delete(:retry)}
     end
   end
+
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -158,11 +143,7 @@ defmodule Jido.Signal.Dispatch.Http do
   @spec deliver(Jido.Signal.t(), delivery_opts()) :: :ok | {:error, delivery_error()}
   def deliver(signal, opts) do
     with {:ok, opts} <- validate_opts(opts) do
-      CircuitBreaker.install(:http)
-
-      CircuitBreaker.run(:http, fn ->
-        do_deliver(signal, opts)
-      end)
+      do_deliver(signal, opts)
     end
   end
 
@@ -174,13 +155,11 @@ defmodule Jido.Signal.Dispatch.Http do
     headers = Keyword.fetch!(opts, :headers)
     timeout = Keyword.fetch!(opts, :timeout)
     ssl_options = Keyword.get(opts, :ssl_options, [])
-    retry_config = Keyword.fetch!(opts, :retry)
-
     body = signal |> Jido.Signal.to_map() |> Jason.encode!()
     default_headers = [{"content-type", "application/json"}]
     headers = default_headers ++ headers
 
-    do_request_with_retry(method, url, headers, body, timeout, ssl_options, retry_config)
+    do_request(method, url, headers, body, timeout, ssl_options)
   end
 
   # Private Helpers
@@ -276,128 +255,6 @@ defmodule Jido.Signal.Dispatch.Http do
     Enum.find(@protected_ssl_options, &Keyword.has_key?(opts, &1))
   end
 
-  defp validate_retry(%{} = retry) do
-    with {:ok, max_attempts} <- fetch_retry_integer(retry, :max_attempts),
-         {:ok, base_delay} <- fetch_retry_integer(retry, :base_delay),
-         {:ok, max_delay} <- fetch_retry_integer(retry, :max_delay),
-         {:ok, max_attempts} <-
-           validate_positive_integer(max_attempts, :max_attempts, @max_retry_attempts),
-         {:ok, base_delay} <-
-           validate_positive_integer(base_delay, :base_delay, @max_retry_delay),
-         {:ok, max_delay} <- validate_positive_integer(max_delay, :max_delay, @max_retry_delay),
-         :ok <- validate_retry_delay_order(base_delay, max_delay) do
-      {:ok,
-       %{
-         max_attempts: max_attempts,
-         base_delay: base_delay,
-         max_delay: max_delay
-       }}
-    end
-  end
-
-  defp validate_retry(invalid), do: {:error, "invalid retry configuration: #{inspect(invalid)}"}
-
-  defp fetch_retry_integer(retry, field) do
-    case Map.fetch(retry, field) do
-      {:ok, value} -> {:ok, value}
-      :error -> {:error, "retry configuration missing #{field}"}
-    end
-  end
-
-  defp validate_positive_integer(value, _field, max)
-       when is_integer(value) and value > 0 and value <= max,
-       do: {:ok, value}
-
-  defp validate_positive_integer(value, field, max) when is_integer(value) and value > max,
-    do: {:error, "#{field} must be less than or equal to #{max}, got: #{inspect(value)}"}
-
-  defp validate_positive_integer(invalid, field, _max),
-    do: {:error, "#{field} must be a positive integer, got: #{inspect(invalid)}"}
-
-  defp validate_retry_delay_order(base_delay, max_delay) when max_delay >= base_delay, do: :ok
-
-  defp validate_retry_delay_order(_base_delay, _max_delay) do
-    {:error, "max_delay must be greater than or equal to base_delay"}
-  end
-
-  defp do_request_with_retry(
-         method,
-         url,
-         headers,
-         body,
-         timeout,
-         ssl_options,
-         retry_config,
-         attempt \\ 1
-       ) do
-    request = %{
-      method: method,
-      url: url,
-      headers: headers,
-      body: body,
-      timeout: timeout,
-      ssl_options: ssl_options,
-      retry_config: retry_config,
-      attempt: attempt
-    }
-
-    method
-    |> do_request(url, headers, body, timeout, ssl_options)
-    |> handle_request_result(request)
-  end
-
-  defp handle_request_result(:ok, _request), do: :ok
-
-  defp handle_request_result({:error, reason} = error, request) do
-    %{attempt: attempt, retry_config: retry_config} = request
-
-    if should_retry?(attempt, retry_config) do
-      retry_request(request, reason)
-    else
-      log_request_failure(attempt, reason)
-      error
-    end
-  end
-
-  defp log_request_failure(attempt, reason) do
-    Util.cond_log(Util.default_log_level(), :error, fn ->
-      "HTTP dispatch failed attempts=#{attempt} reason=#{Sanitizer.preview(reason, :telemetry)}"
-    end)
-  end
-
-  defp retry_request(request, reason) do
-    %{
-      method: method,
-      url: url,
-      headers: headers,
-      body: body,
-      timeout: timeout,
-      ssl_options: ssl_options,
-      retry_config: retry_config,
-      attempt: attempt
-    } = request
-
-    delay = calculate_delay(attempt, retry_config)
-
-    Util.cond_log(Util.default_log_level(), :info, fn ->
-      "HTTP dispatch retry attempt=#{attempt} delay_ms=#{delay} " <>
-        "reason=#{Sanitizer.preview(reason, :telemetry)}"
-    end)
-
-    Process.sleep(delay)
-
-    do_request_with_retry(
-      method,
-      url,
-      headers,
-      body,
-      timeout,
-      ssl_options,
-      retry_config,
-      attempt + 1
-    )
-  end
-
   defp do_request(method, url, headers, body, timeout, ssl_options) do
     url_charlist = to_charlist(url)
 
@@ -444,12 +301,5 @@ defmodule Jido.Signal.Dispatch.Http do
         match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
       ]
     ]
-  end
-
-  defp should_retry?(attempt, %{max_attempts: max_attempts}), do: attempt < max_attempts
-
-  defp calculate_delay(attempt, %{base_delay: base_delay, max_delay: max_delay}) do
-    delay = trunc(base_delay * :math.pow(2, attempt - 1))
-    min(delay, max_delay)
   end
 end

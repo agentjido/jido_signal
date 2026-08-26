@@ -373,9 +373,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   defp safe_extract_timestamp(_), do: :error
 
   defp dispatch_replay_signal(signal, state) do
-    case Dispatch.dispatch(signal, state.bus_subscription.dispatch,
-           task_supervisor: state.task_supervisor
-         ) do
+    case Dispatch.dispatch(signal, state.bus_subscription.dispatch) do
       :ok ->
         :ok
 
@@ -592,10 +590,7 @@ defmodule Jido.Signal.Bus.PersistentSubscription do
   @spec dispatch_signal(t(), String.t(), term()) :: t()
   defp dispatch_signal(state, signal_log_id, signal) do
     if state.bus_subscription.dispatch do
-      result =
-        Dispatch.dispatch(signal, state.bus_subscription.dispatch,
-          task_supervisor: state.task_supervisor
-        )
+      result = Dispatch.dispatch(signal, state.bus_subscription.dispatch)
 
       handle_dispatch_result(result, state, signal_log_id, signal)
     else

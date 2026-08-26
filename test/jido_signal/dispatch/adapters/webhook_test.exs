@@ -11,7 +11,7 @@ defmodule Jido.Signal.Dispatch.WebhookTest do
       assert opts[:method] == :post
       assert opts[:headers] == []
       assert opts[:timeout] == 5000
-      assert opts[:retry] == %{max_attempts: 3, base_delay: 1000, max_delay: 5000}
+      refute Keyword.has_key?(opts, :retry)
     end
 
     test "validates optional secret" do

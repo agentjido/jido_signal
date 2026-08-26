@@ -127,7 +127,6 @@ defmodule Jido.Signal.MixProject do
         "Signal Dispatch": [
           Jido.Signal.Dispatch,
           Jido.Signal.Dispatch.Adapter,
-          Jido.Signal.Dispatch.CircuitBreaker,
           Jido.Signal.Dispatch.ConsoleAdapter,
           Jido.Signal.Dispatch.Http,
           Jido.Signal.Dispatch.LoggerAdapter,
@@ -202,7 +201,6 @@ defmodule Jido.Signal.MixProject do
       {:telemetry, "~> 1.3"},
       {:splode, "~> 0.3.0"},
       {:zoi, "~> 0.18.1"},
-      {:fuse, "~> 2.5"},
 
       # Development & Test Dependencies
       {:credo, "~> 1.7", only: [:dev, :test]},

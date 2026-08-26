@@ -79,15 +79,14 @@ Structured callers can serialize the public contract through `Error.to_map/1`:
 } = Jido.Signal.Error.to_map(error)
 ```
 
-### Batch Error Handling
+### Multiple Target Error Handling
 
 ```elixir
 configs = List.duplicate({:http, [url: "http://unreachable"]}, 100)
 
-case Dispatch.dispatch_batch(signal, configs) do
+case Dispatch.dispatch(signal, configs) do
   :ok -> :all_delivered
   {:error, errors} ->
-    # errors is [{index, reason}, ...]
     failed_count = length(errors)
     success_count = length(configs) - failed_count
     Logger.warning("#{failed_count}/#{length(configs)} dispatches failed")
@@ -97,8 +96,8 @@ end
 ### Timeout Handling
 
 ```elixir
-# Async dispatch with timeout
-{:ok, task} = Dispatch.dispatch_async(signal, config)
+# The caller owns the asynchronous Task and timeout.
+task = Task.async(fn -> Dispatch.dispatch(signal, config) end)
 
 case Task.yield(task, 5000) do
   {:ok, :ok} -> :success
@@ -137,27 +136,8 @@ For reliable message delivery, persistent subscriptions provide:
 
 See [Event Bus guide](event-bus.md) for DLQ management APIs.
 
-### Circuit Breaker for External Services
-
-Combine circuit breakers with dispatch for fault isolation:
-
-```elixir
-alias Jido.Signal.Dispatch.CircuitBreaker
-
-# Install once at startup
-:ok = CircuitBreaker.install(:webhook)
-
-# Use in dispatch
-case CircuitBreaker.run(:webhook, fn ->
-       Dispatch.dispatch(signal, {:http, [url: webhook_url]})
-     end) do
-  :ok -> :ok
-  {:error, :circuit_open} -> queue_for_later(signal)
-  {:error, reason} -> handle_error(reason)
-end
-```
-
-See [Signals and Dispatch guide](signals-and-dispatch.md) for full circuit breaker documentation.
+Direct Dispatch does not own circuit breakers. Apply this policy in the calling
+application or use a Bus-owned delivery policy.
 
 ## Testing Approaches
 
@@ -255,14 +235,17 @@ end
 
 ## Performance Considerations
 
-### Batch Processing
+### High-Volume Delivery
 
 Use batching for high-volume dispatch scenarios:
 
 ```elixir
-# Process 10,000 signals in batches of 100 with max 10 concurrent batches
+# The application owns batching and concurrency.
 configs = generate_configs(10_000)
-Dispatch.dispatch_batch(signal, configs, batch_size: 100, max_concurrency: 10)
+configs
+|> Enum.chunk_every(100)
+|> Task.async_stream(&Dispatch.dispatch(signal, &1), max_concurrency: 10)
+|> Stream.run()
 ```
 
 ### Memory Management

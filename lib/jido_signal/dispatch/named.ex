@@ -53,6 +53,17 @@ defmodule Jido.Signal.Dispatch.Named do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Dispatch.Adapter
+
+  @options_schema Zoi.keyword(
+                    target:
+                      Zoi.tuple({Zoi.literal(:name), Zoi.atom()})
+                      |> Zoi.required(),
+                    delivery_mode: Zoi.enum([:sync, :async]) |> Zoi.default(:async),
+                    timeout: Zoi.integer() |> Zoi.min(1) |> Zoi.optional(),
+                    message_format: Zoi.function(arity: 1) |> Zoi.optional()
+                  )
+
   @type delivery_target :: {:name, atom()}
   @type delivery_mode :: :sync | :async
   @type message_format :: (Jido.Signal.t() -> term())
@@ -88,23 +99,10 @@ defmodule Jido.Signal.Dispatch.Named do
   * `{:error, :invalid_delivery_mode}` - Delivery mode is invalid
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
-  def validate_opts(opts) do
-    with {:ok, target} <- validate_target(Keyword.get(opts, :target)),
-         {:ok, mode} <- validate_mode(Keyword.get(opts, :delivery_mode, :async)) do
-      {:ok,
-       opts
-       |> Keyword.put(:target, target)
-       |> Keyword.put(:delivery_mode, mode)}
-    end
-  end
+  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
 
-  # Private helper to validate the target name tuple
-  defp validate_target({:name, name}) when is_atom(name), do: {:ok, {:name, name}}
-  defp validate_target(_), do: {:error, :invalid_target}
-
-  # Private helper to validate the delivery mode
-  defp validate_mode(mode) when mode in [:sync, :async], do: {:ok, mode}
-  defp validate_mode(_), do: {:error, :invalid_delivery_mode}
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """

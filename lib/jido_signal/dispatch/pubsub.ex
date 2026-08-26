@@ -49,6 +49,16 @@ defmodule Jido.Signal.Dispatch.PubSub do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Dispatch.Adapter
+
+  @options_schema Zoi.keyword(
+                    target:
+                      Zoi.atom()
+                      |> Zoi.refine({__MODULE__, :not_nil?, []})
+                      |> Zoi.required(),
+                    topic: Zoi.string() |> Zoi.required()
+                  )
+
   require Logger
 
   @type delivery_target :: atom()
@@ -80,15 +90,14 @@ defmodule Jido.Signal.Dispatch.PubSub do
   * `{:error, reason}` - Options are invalid with string reason
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
-  def validate_opts(opts) do
-    with {:ok, target} <- validate_target(Keyword.get(opts, :target)),
-         {:ok, topic} <- validate_topic(Keyword.get(opts, :topic)) do
-      {:ok,
-       opts
-       |> Keyword.put(:target, target)
-       |> Keyword.put(:topic, topic)}
-    end
-  end
+  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
+
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
+
+  @doc false
+  def not_nil?(nil, _opts), do: {:error, "must not be nil"}
+  def not_nil?(_value, _opts), do: :ok
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -150,12 +159,4 @@ defmodule Jido.Signal.Dispatch.PubSub do
       {:error, {:missing_dependency, :phoenix_pubsub}}
     end
   end
-
-  # Private helper to validate the target PubSub server
-  defp validate_target(name) when is_atom(name) and not is_nil(name), do: {:ok, name}
-  defp validate_target(_), do: {:error, "target must be an atom"}
-
-  # Private helper to validate the topic string
-  defp validate_topic(topic) when is_binary(topic) and not is_nil(topic), do: {:ok, topic}
-  defp validate_topic(_), do: {:error, "topic must be a string"}
 end

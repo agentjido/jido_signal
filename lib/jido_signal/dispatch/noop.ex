@@ -43,6 +43,10 @@ defmodule Jido.Signal.Dispatch.NoopAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Dispatch.Adapter
+
+  @options_schema Zoi.keyword([])
+
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
   Validates the noop adapter configuration options.
@@ -59,7 +63,10 @@ defmodule Jido.Signal.Dispatch.NoopAdapter do
   * `{:ok, opts}` - Always returns ok with the unchanged options
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()}
-  def validate_opts(opts), do: {:ok, opts}
+  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
+
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """

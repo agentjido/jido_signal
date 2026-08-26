@@ -62,7 +62,10 @@ defmodule Jido.Signal.Dispatch.ConsoleAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Dispatch.Adapter
   alias Jido.Signal.Sanitizer
+
+  @options_schema Zoi.keyword(include_data: Zoi.boolean() |> Zoi.optional())
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -80,10 +83,10 @@ defmodule Jido.Signal.Dispatch.ConsoleAdapter do
   * `{:ok, opts}` - Always returns ok with the unchanged options
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()}
-  def validate_opts(opts) do
-    # No special validation needed for console adapter
-    {:ok, opts}
-  end
+  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
+
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """

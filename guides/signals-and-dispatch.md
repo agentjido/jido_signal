@@ -128,12 +128,13 @@ config = {:http, [
   url: "https://api.example.com/events",
   method: :post,
   headers: [{"x-api-key", "secret"}],
-  timeout: 5000,
-  retry: %{max_attempts: 3, base_delay: 1000}
+  timeout: 5000
 ]}
 ```
 
-## Sync vs Async Patterns
+The HTTP adapter makes one request. The caller or Bus owns retry policy.
+
+## Dispatch Execution
 
 ### Synchronous Dispatch
 
@@ -143,27 +144,11 @@ Blocks until all deliveries complete:
 :ok = Jido.Signal.Dispatch.dispatch(signal, config)
 ```
 
-### Asynchronous Dispatch
-
-Returns task immediately:
+To run delivery asynchronously, start the Task in the calling application:
 
 ```elixir
-{:ok, task} = Jido.Signal.Dispatch.dispatch_async(signal, config)
-:ok = Task.await(task)
-```
-
-### Batch Dispatch
-
-Multiple destinations with concurrency control:
-
-```elixir
-configs = List.duplicate({:pid, [target: pid]}, 1000)
-:ok = Jido.Signal.Dispatch.dispatch_batch(
-  signal, 
-  configs, 
-  batch_size: 100,
-  max_concurrency: 5
-)
+task = Task.async(fn -> Jido.Signal.Dispatch.dispatch(signal, config) end)
+result = Task.await(task)
 ```
 
 ### Multiple Destinations
@@ -284,63 +269,15 @@ By default, dispatch returns raw error atoms. Structured errors (`Jido.Signal.Er
   Jido.Signal.Dispatch.dispatch(signal, {:http, [url: "...", timeout: 1]})
 ```
 
-### Batch Errors
+### Multiple Target Errors
 
 ```elixir
 # Some failures
-{:error, errors} = Jido.Signal.Dispatch.dispatch_batch(signal, configs)
-# errors = [{index, reason}, ...]
+{:error, reasons} = Jido.Signal.Dispatch.dispatch(signal, configs)
 ```
 
-## Circuit Breaker
-
-The `Jido.Signal.Dispatch.CircuitBreaker` module provides fault isolation for dispatch adapters using the `:fuse` library. Circuits are per-adapter-type, providing bulk protection without per-endpoint overhead.
-
-### Configuration
-
-Default settings:
-- 5 failures in 10 seconds triggers the circuit to open
-- 30 second reset time before allowing requests again
-
-### Usage
-
-```elixir
-alias Jido.Signal.Dispatch.CircuitBreaker
-
-# Install circuit breaker (once at application startup)
-:ok = CircuitBreaker.install(:http, 
-  strategy: {:standard, 5, 10_000},  # 5 failures in 10 seconds
-  refresh: 30_000                     # 30 second reset
-)
-
-# Wrap dispatch calls with circuit breaker protection
-case CircuitBreaker.run(:http, fn ->
-       Jido.Signal.Dispatch.dispatch(signal, {:http, [url: "https://api.example.com/events"]})
-     end) do
-  :ok -> 
-    :ok
-  {:error, :circuit_open} -> 
-    # Circuit is open, degrade gracefully
-    Logger.warning("HTTP circuit open, queuing for retry")
-    {:error, :circuit_open}
-  {:error, reason} -> 
-    {:error, reason}
-end
-
-# Check circuit status
-:ok = CircuitBreaker.status(:http)    # Circuit closed (healthy)
-:blown = CircuitBreaker.status(:http) # Circuit open (failing)
-
-# Manually reset circuit
-:ok = CircuitBreaker.reset(:http)
-```
-
-### Telemetry Events
-
-The circuit breaker emits telemetry events:
-- `[:jido, :dispatch, :circuit, :melt]` - Failure recorded
-- `[:jido, :dispatch, :circuit, :rejected]` - Request rejected (circuit open)
-- `[:jido, :dispatch, :circuit, :reset]` - Circuit reset
+Dispatch does not own retries, concurrency, Tasks, or circuit breakers. Add these
+policies at the application boundary where ownership and failure handling are clear.
 
 ## Next Steps
 

@@ -34,21 +34,23 @@ defmodule Jido.Signal.Dispatch.BusTest do
     end
 
     test "rejects nil target" do
-      assert {:error, "target must be a bus name atom"} = BusAdapter.validate_opts(target: nil)
+      assert {:error, error} = BusAdapter.validate_opts(target: nil)
+      assert error =~ "target"
     end
 
     test "rejects non-atom target" do
-      assert {:error, "target must be a bus name atom"} =
-               BusAdapter.validate_opts(target: "my_bus")
+      assert {:error, error} = BusAdapter.validate_opts(target: "my_bus")
+      assert error =~ "target"
     end
 
     test "rejects missing target" do
-      assert {:error, "target must be a bus name atom"} = BusAdapter.validate_opts([])
+      assert {:error, error} = BusAdapter.validate_opts([])
+      assert error =~ "target"
     end
 
     test "rejects non-atom jido" do
-      assert {:error, "jido must be an atom or nil"} =
-               BusAdapter.validate_opts(target: :my_bus, jido: "invalid")
+      assert {:error, error} = BusAdapter.validate_opts(target: :my_bus, jido: "invalid")
+      assert error =~ "jido"
     end
   end
 

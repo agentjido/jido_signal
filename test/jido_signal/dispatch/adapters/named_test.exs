@@ -51,18 +51,22 @@ defmodule Jido.Signal.Dispatch.NamedTest do
     end
 
     test "rejects invalid target format" do
-      assert {:error, :invalid_target} = Named.validate_opts(target: :invalid)
-      assert {:error, :invalid_target} = Named.validate_opts(target: {:invalid, :name})
-      assert {:error, :invalid_target} = Named.validate_opts(target: {:name, "string"})
+      for target <- [:invalid, {:invalid, :name}, {:name, "string"}] do
+        assert {:error, error} = Named.validate_opts(target: target)
+        assert error =~ "target"
+      end
     end
 
     test "rejects invalid delivery mode" do
-      assert {:error, :invalid_delivery_mode} =
+      assert {:error, error} =
                Named.validate_opts(target: {:name, :test}, delivery_mode: :invalid)
+
+      assert error =~ "delivery_mode"
     end
 
     test "requires target option" do
-      assert {:error, :invalid_target} = Named.validate_opts([])
+      assert {:error, error} = Named.validate_opts([])
+      assert error =~ "target"
     end
   end
 

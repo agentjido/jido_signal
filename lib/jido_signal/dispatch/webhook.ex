@@ -7,7 +7,6 @@ defmodule Jido.Signal.Dispatch.Webhook do
 
   * Signature generation for webhook payloads
   * Standard webhook headers
-  * Webhook-specific retry policies
   * Event type mapping
 
   ## Configuration Options
@@ -37,12 +36,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
           "user:created" => "user.created",
           "user:updated" => "user.updated"
         },
-        timeout: 10_000,
-        retry: %{
-          max_attempts: 5,
-          base_delay: 2000,
-          max_delay: 10000
-        }
+        timeout: 10_000
       ]}
 
   ## Webhook Signatures
@@ -73,12 +67,18 @@ defmodule Jido.Signal.Dispatch.Webhook do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.CircuitBreaker
+  alias Jido.Signal.Dispatch.Adapter
   alias Jido.Signal.Dispatch.Http
 
   @default_signature_header "x-webhook-signature"
   @default_event_type_header "x-webhook-event"
   @default_timestamp_header "x-webhook-timestamp"
+  @options_schema Zoi.keyword(
+                    secret: Zoi.string() |> Zoi.nullable() |> Zoi.optional(),
+                    signature_header: Zoi.string() |> Zoi.optional(),
+                    event_type_header: Zoi.string() |> Zoi.optional(),
+                    event_type_map: Zoi.map() |> Zoi.nullable() |> Zoi.optional()
+                  )
 
   @type webhook_opts :: [
           url: String.t(),
@@ -116,7 +116,8 @@ defmodule Jido.Signal.Dispatch.Webhook do
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
   def validate_opts(opts) do
-    with {:ok, http_opts} <- Http.validate_opts(opts),
+    with {:ok, _webhook_opts} <- Adapter.validate(@options_schema, opts),
+         {:ok, http_opts} <- Http.validate_opts(opts),
          {:ok, secret} <- validate_secret(Keyword.get(opts, :secret)),
          {:ok, signature_header} <-
            validate_header_name(
@@ -138,6 +139,9 @@ defmodule Jido.Signal.Dispatch.Webhook do
        |> Keyword.put(:event_type_map, event_type_map)}
     end
   end
+
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -162,11 +166,7 @@ defmodule Jido.Signal.Dispatch.Webhook do
   @spec deliver(Jido.Signal.t(), webhook_opts()) :: :ok | {:error, webhook_error()}
   def deliver(signal, opts) do
     with {:ok, opts} <- validate_opts(opts) do
-      CircuitBreaker.install(:webhook)
-
-      CircuitBreaker.run(:webhook, fn ->
-        do_deliver(signal, opts)
-      end)
+      do_deliver(signal, opts)
     end
   end
 

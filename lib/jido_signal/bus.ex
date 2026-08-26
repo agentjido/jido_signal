@@ -927,9 +927,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp redrive_single_entry(state, entry, subscription, clear_on_success) do
-    case Dispatch.dispatch(entry.signal, subscription.dispatch,
-           task_supervisor: Names.task_supervisor(jido: state.jido)
-         ) do
+    case Dispatch.dispatch(entry.signal, subscription.dispatch) do
       :ok ->
         if clear_on_success,
           do: state.journal_adapter.delete_dlq_entry(entry.id, state.journal_pid)
@@ -1136,9 +1134,9 @@ defmodule Jido.Signal.Bus do
   defp dispatch_to_subscription(
          signal,
          subscription,
-         task_supervisor
+         _task_supervisor
        ) do
-    Dispatch.dispatch(signal, subscription.dispatch, task_supervisor: task_supervisor)
+    Dispatch.dispatch(signal, subscription.dispatch)
   end
 
   defp validate_signals(signals) do

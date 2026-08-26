@@ -73,10 +73,9 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 
 ### **Pluggable Dispatch System**
 - Multiple delivery adapters (PID, PubSub, HTTP, Logger, Console)
-- Synchronous and asynchronous delivery modes
-- Batch processing for high-throughput scenarios
-- Configurable timeout and retry mechanisms
-- Circuit breaker wrapper for fault isolation (using `:fuse`)
+- Ordered synchronous delivery
+- Zoi-validated target options
+- Application-owned concurrency, retry, and circuit-breaking policy
 
 ### **Causality & Conversation Tracking**
 - Complete signal relationship graphs
@@ -316,10 +315,11 @@ dispatch_configs = [
 
 # Synchronous dispatch
 :ok = Dispatch.dispatch(signal, dispatch_configs)
-
-# Asynchronous dispatch
-{:ok, task} = Dispatch.dispatch_async(signal, dispatch_configs)
 ```
+
+Dispatch is ordered and synchronous. Start a Task in the calling application if
+delivery must run asynchronously. Retry and circuit-breaking policy also belongs
+to the calling application or the Bus.
 
 ## Advanced Features
 

@@ -52,7 +52,8 @@ defmodule JidoTest.Signal.Dispatch.PubSubTest do
 
     test "fails when target is missing" do
       opts = [topic: "test.events"]
-      assert {:error, "target must be an atom"} = PubSub.validate_opts(opts)
+      assert {:error, error} = PubSub.validate_opts(opts)
+      assert error =~ "target"
     end
 
     test "fails when target is not an atom" do
@@ -60,13 +61,15 @@ defmodule JidoTest.Signal.Dispatch.PubSubTest do
 
       for target <- invalid_targets do
         opts = [target: target, topic: "test.events"]
-        assert {:error, "target must be an atom"} = PubSub.validate_opts(opts)
+        assert {:error, error} = PubSub.validate_opts(opts)
+        assert error =~ "target"
       end
     end
 
     test "fails when topic is missing" do
       opts = [target: @test_pubsub]
-      assert {:error, "topic must be a string"} = PubSub.validate_opts(opts)
+      assert {:error, error} = PubSub.validate_opts(opts)
+      assert error =~ "topic"
     end
 
     test "fails when topic is not a string" do
@@ -74,7 +77,8 @@ defmodule JidoTest.Signal.Dispatch.PubSubTest do
 
       for topic <- invalid_topics do
         opts = [target: @test_pubsub, topic: topic]
-        assert {:error, "topic must be a string"} = PubSub.validate_opts(opts)
+        assert {:error, error} = PubSub.validate_opts(opts)
+        assert error =~ "topic"
       end
     end
 

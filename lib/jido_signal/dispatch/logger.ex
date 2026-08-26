@@ -62,12 +62,19 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  alias Jido.Signal.Dispatch.Adapter
   alias Jido.Signal.Sanitizer
   alias Jido.Signal.Util
 
   require Logger
 
   @valid_levels [:debug, :info, :warning, :error]
+  @options_schema Zoi.keyword(
+                    level: Zoi.enum(@valid_levels) |> Zoi.optional(),
+                    log_level: Zoi.enum(@valid_levels) |> Zoi.optional(),
+                    structured: Zoi.boolean() |> Zoi.optional(),
+                    include_data: Zoi.boolean() |> Zoi.optional()
+                  )
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -88,26 +95,10 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   * `{:error, reason}` - Options are invalid with string reason
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, String.t()}
-  def validate_opts(opts) do
-    raw_level = Keyword.get(opts, :log_level, Keyword.get(opts, :level, :info))
-    structured = Keyword.get(opts, :structured, false)
-    include_data = Keyword.get(opts, :include_data, true)
+  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
 
-    cond do
-      raw_level not in @valid_levels ->
-        {:error,
-         "Invalid log level: #{inspect(raw_level)}. Must be one of #{inspect(@valid_levels)}"}
-
-      not is_boolean(structured) ->
-        {:error, "structured must be a boolean"}
-
-      not is_boolean(include_data) ->
-        {:error, "include_data must be a boolean"}
-
-      true ->
-        {:ok, opts}
-    end
-  end
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """

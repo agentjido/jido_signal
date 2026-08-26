@@ -41,7 +41,16 @@ defmodule Jido.Signal.Dispatch.Bus do
   @behaviour Jido.Signal.Dispatch.Adapter
 
   alias Jido.Signal.Bus
+  alias Jido.Signal.Dispatch.Adapter
   alias Jido.Signal.Sanitizer
+
+  @options_schema Zoi.keyword(
+                    target:
+                      Zoi.atom()
+                      |> Zoi.refine({__MODULE__, :not_nil?, []})
+                      |> Zoi.required(),
+                    jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional()
+                  )
 
   require Logger
 
@@ -73,15 +82,14 @@ defmodule Jido.Signal.Dispatch.Bus do
   * `{:error, reason}` - Options are invalid with string reason
   """
   @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
-  def validate_opts(opts) do
-    with {:ok, target} <- validate_target(Keyword.get(opts, :target)),
-         {:ok, jido} <- validate_jido(Keyword.get(opts, :jido)) do
-      {:ok,
-       opts
-       |> Keyword.put(:target, target)
-       |> Keyword.put(:jido, jido)}
-    end
-  end
+  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
+
+  @impl Jido.Signal.Dispatch.Adapter
+  def options_schema, do: @options_schema
+
+  @doc false
+  def not_nil?(nil, _opts), do: {:error, "must not be nil"}
+  def not_nil?(_value, _opts), do: :ok
 
   @impl Jido.Signal.Dispatch.Adapter
   @doc """
@@ -132,11 +140,4 @@ defmodule Jido.Signal.Dispatch.Bus do
         {:error, :bus_not_found}
     end
   end
-
-  defp validate_target(name) when is_atom(name) and not is_nil(name), do: {:ok, name}
-  defp validate_target(_), do: {:error, "target must be a bus name atom"}
-
-  defp validate_jido(nil), do: {:ok, nil}
-  defp validate_jido(jido) when is_atom(jido), do: {:ok, jido}
-  defp validate_jido(_), do: {:error, "jido must be an atom or nil"}
 end

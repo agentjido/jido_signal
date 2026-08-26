@@ -27,6 +27,7 @@ defmodule Jido.Signal.Dispatch.Adapter do
 
   ## Required Callbacks
 
+  * `options_schema/0` - Returns the adapter's Zoi options schema
   * `validate_opts/1` - Validates adapter-specific options before use
   * `deliver/2` - Handles the actual delivery of signals to their destination
 
@@ -50,6 +51,9 @@ defmodule Jido.Signal.Dispatch.Adapter do
   """
   @callback validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
 
+  @doc "Returns the Zoi schema for adapter options."
+  @callback options_schema() :: Zoi.schema()
+
   @doc """
   Delivers a signal using the validated options.
 
@@ -67,4 +71,15 @@ defmodule Jido.Signal.Dispatch.Adapter do
   * `{:error, reason}` - Delivery failed with reason for failure
   """
   @callback deliver(Jido.Signal.t(), Keyword.t()) :: :ok | {:error, term()}
+
+  @optional_callbacks options_schema: 0
+
+  @doc false
+  @spec validate(Zoi.schema(), keyword()) :: {:ok, keyword()} | {:error, String.t()}
+  def validate(schema, opts) do
+    case Zoi.parse(schema, opts) do
+      {:ok, validated} -> {:ok, Keyword.merge(opts, validated)}
+      {:error, errors} -> {:error, Zoi.prettify_errors(errors)}
+    end
+  end
 end
