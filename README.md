@@ -78,7 +78,7 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - Custom pattern matching functions
 
 ### **Pluggable Dispatch System**
-- Multiple delivery adapters (PID, PubSub, HTTP, Logger, Console)
+- Multiple delivery adapters (PID, PubSub, HTTP, Logger, Bus)
 - Ordered synchronous delivery
 - Zoi-validated target options
 - Application-owned concurrency, retry, and circuit-breaking policy
