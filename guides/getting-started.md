@@ -155,5 +155,5 @@ See [Event Bus](event-bus.md#instance-isolation) for complete multi-tenant examp
 ## Next Steps
 
 - [Signals and Dispatch](signals-and-dispatch.md) - Signal structure, dispatch adapters, and custom signal types
-- [Event Bus](event-bus.md) - Pub/sub messaging, persistent subscriptions, Dead Letter Queue, instance isolation, and horizontal scaling
-- [Signal Journal](signal-journal.md) - Persistence adapters (ETS, Mnesia), checkpointing, and causality tracking
+- [Event Bus](event-bus.md) - Pub/sub messaging, persistent subscriptions, DLQ, Store, and instance isolation
+- [Serialization](serialization.md) - Canonical maps and binary formats for application-owned storage

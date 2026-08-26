@@ -60,7 +60,7 @@ defmodule Jido.Signal.MixProject do
 
   def application do
     [
-      extra_applications: [:crypto, :logger, :mnesia],
+      extra_applications: [:crypto, :logger],
       mod: {Jido.Signal.Application, []}
     ]
   end
@@ -81,7 +81,6 @@ defmodule Jido.Signal.MixProject do
         "guides/event-bus.md",
         "guides/signal-router.md",
         "guides/signal-extensions.md",
-        "guides/signal-journal.md",
         "guides/serialization.md",
         "guides/advanced.md"
       ],
@@ -128,13 +127,6 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Dispatch.PidAdapter,
           Jido.Signal.Dispatch.PubSub,
           Jido.Signal.Dispatch.Webhook
-        ],
-        "Signal Journal": [
-          Jido.Signal.Journal,
-          Jido.Signal.Journal.Adapters.ETS,
-          Jido.Signal.Journal.Adapters.InMemory,
-          Jido.Signal.Journal.Adapters.Mnesia,
-          Jido.Signal.Journal.Persistence
         ],
         Serialization: [
           Jido.Signal.Serialization.Config,

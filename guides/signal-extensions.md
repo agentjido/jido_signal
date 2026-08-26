@@ -350,5 +350,5 @@ Extensions provide a powerful way to add domain-specific functionality to Signal
 
 ## Next Steps
 
-- [Signal Journal](signal-journal.md) - Durable append-only storage with causality tracking and replay capability
+- [Event Bus](event-bus.md) - Publish, retain, and replay extended Signals
 - [Serialization](serialization.md) - Convert signals to binary format for storage and transmission

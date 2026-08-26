@@ -129,4 +129,4 @@ Router.matches?("user.profile.updated", "user.*")  # false
 ## Next Steps
 
 - [Signal Extensions](signal-extensions.md) - Add custom metadata to signals with CloudEvents compliance
-- [Signal Journal](signal-journal.md) - Durable storage with causality tracking and conversation management
+- [Event Bus](event-bus.md) - Subscribe with the same path patterns and replay retained records

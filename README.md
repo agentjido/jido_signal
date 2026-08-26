@@ -26,14 +26,14 @@ Elixir's strength lies in lightweight processes that communicate via message pas
 
 - **Phoenix Channels** need structured event broadcasting across connections
 - **GenServers** require reliable inter-process communication with context
-- **Agent Systems** demand traceable conversations between autonomous processes
+- **Agent Systems** need stable message envelopes between autonomous processes
 - **Distributed Services** need standardized message formats across nodes
 
 Traditional Elixir messaging (`send`, `GenServer.cast/call`) works great for simple scenarios, but falls short when you need:
 
 - **Standardized Message Format**: Raw tuples and maps lack structure and metadata
 - **Event Routing**: Broadcasting to multiple interested processes based on patterns
-- **Conversation Tracking**: Understanding which message caused which response
+- **Trace Context**: Keeping correlation data across process boundaries
 - **Reliable Delivery**: Ensuring critical messages aren't lost if a process crashes
 - **Cross-System Integration**: Communicating with external services via webhooks/HTTP
 
@@ -76,12 +76,6 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - Ordered synchronous delivery
 - Zoi-validated target options
 - Application-owned concurrency, retry, and circuit-breaking policy
-
-### **Causality & Conversation Tracking**
-- Complete signal relationship graphs
-- Cause-effect chain analysis
-- Conversation grouping and temporal ordering
-- Comprehensive system traceability for debugging and auditing
 
 ## Installation
 
@@ -403,29 +397,6 @@ Jido.Signal.Error.to_map(error)
 # => }
 ```
 
-### Causality Tracking
-
-Track signal relationships for complete system observability:
-
-```elixir
-alias Jido.Signal.Journal
-
-# Create journal
-journal = Journal.new()
-
-# Record causal relationships
-Journal.record(journal, initial_signal, nil)  # Root cause
-Journal.record(journal, response_signal, initial_signal.id)  # Caused by initial_signal
-Journal.record(journal, side_effect, initial_signal.id)     # Also caused by initial_signal
-
-# Analyze relationships
-effects = Journal.get_effects(journal, initial_signal.id)
-# => [response_signal, side_effect]
-
-cause = Journal.get_cause(journal, response_signal.id)
-# => initial_signal
-```
-
 ### Retained Replay
 
 Read the bounded Bus log:
@@ -502,8 +473,8 @@ Bus.publish(:event_bus, [signal])
 {:ok, command_signal} = CreateUser.new(user_data)
 {:ok, event_signal} = UserCreated.new(user_data, cause: command_signal.id)
 
-# Store in journal for complete audit trail
-Journal.record(journal, event_signal, command_signal.id)
+# Store the canonical map in the application event store.
+MyApp.EventStore.append(Jido.Signal.to_map(event_signal))
 ```
 
 ### Distributed Workflows
@@ -524,7 +495,6 @@ workflow_signals = [
 - **[Event Bus](guides/event-bus.md)** - Pub/sub messaging with middleware
 - **[Signal Router](guides/signal-router.md)** - Pattern matching and routing
 - **[Signal Extensions](guides/signal-extensions.md)** - Custom Signal metadata extensions
-- **[Signal Journal](guides/signal-journal.md)** - Causality tracking and persistence
 - **[Serialization](guides/serialization.md)** - JSON, optional MessagePack, and Erlang Term formats
 - **[Advanced Topics](guides/advanced.md)** - Custom adapters, performance, and testing
 - **[API Reference](https://hexdocs.pm/jido_signal)** - Complete function documentation
