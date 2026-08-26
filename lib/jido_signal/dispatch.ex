@@ -7,11 +7,37 @@ defmodule Jido.Signal.Dispatch do
   retries, concurrency limits, and circuit breaking.
 
   Built-in adapters are `:pid`, `:named`, `:pubsub`, `:bus`, `:logger`,
-  `:console`, `:noop`, and `:http`. A custom adapter can implement
+  `:noop`, and `:http`. The `:named` input uses the process adapter. The
+  `:noop` input has no adapter module. A custom adapter can implement
   `Jido.Signal.Dispatch.Adapter`.
   """
 
-  alias Jido.Signal.Dispatch.Target
+  defmodule Target do
+    @moduledoc false
+
+    @schema Zoi.struct(
+              __MODULE__,
+              %{
+                adapter: Zoi.atom(),
+                module: Zoi.any() |> Zoi.nullable(),
+                opts: Zoi.list()
+              }
+            )
+
+    @type t :: unquote(Zoi.type_spec(@schema))
+    @enforce_keys Zoi.Struct.enforce_keys(@schema)
+    defstruct Zoi.Struct.struct_fields(@schema)
+
+    @spec new(atom(), module() | nil, keyword()) :: {:ok, t()} | {:error, term()}
+    def new(adapter, module, opts) do
+      Zoi.parse(@schema, %__MODULE__{adapter: adapter, module: module, opts: opts})
+    end
+
+    @spec to_tuple(t()) :: {atom(), keyword()}
+    def to_tuple(%__MODULE__{adapter: adapter, opts: opts}), do: {adapter, opts}
+  end
+
+  alias __MODULE__.Target
   alias Jido.Signal.Error
   alias Jido.Signal.Telemetry
 
@@ -21,7 +47,6 @@ defmodule Jido.Signal.Dispatch do
           | :named
           | :pubsub
           | :logger
-          | :console
           | :noop
           | :http
           | nil
@@ -37,14 +62,15 @@ defmodule Jido.Signal.Dispatch do
 
   @builtin_adapters %{
     pid: Jido.Signal.Dispatch.PidAdapter,
-    named: Jido.Signal.Dispatch.Named,
+    named: Jido.Signal.Dispatch.PidAdapter,
     pubsub: Jido.Signal.Dispatch.PubSub,
     bus: Jido.Signal.Dispatch.Bus,
     logger: Jido.Signal.Dispatch.LoggerAdapter,
-    console: Jido.Signal.Dispatch.ConsoleAdapter,
-    noop: Jido.Signal.Dispatch.NoopAdapter,
+    noop: nil,
     http: Jido.Signal.Dispatch.Http
   }
+
+  @noop_options_schema Zoi.keyword([], unrecognized_keys: :error)
 
   @doc """
   Validates one target tuple or a list of target tuples.
@@ -118,7 +144,7 @@ defmodule Jido.Signal.Dispatch do
     opts = strip_internal_opts(opts)
 
     with {:ok, adapter_module} <- resolve_adapter(adapter),
-         {:ok, validated_opts} <- adapter_module.validate_opts(opts),
+         {:ok, validated_opts} <- parse_adapter_options(adapter_module, opts),
          {:ok, target} <- Target.new(adapter, adapter_module, validated_opts) do
       {:ok, target}
     else
@@ -129,6 +155,10 @@ defmodule Jido.Signal.Dispatch do
   defp normalize_target(invalid_config), do: invalid_dispatch_config(invalid_config)
 
   defp deliver(_signal, %Target{adapter: nil}), do: :ok
+
+  defp deliver(signal, %Target{adapter: :noop} = target) do
+    with_dispatch_telemetry(signal, target, fn -> :ok end)
+  end
 
   defp deliver(signal, %Target{} = target) do
     with_dispatch_telemetry(signal, target, fn ->
@@ -276,7 +306,7 @@ defmodule Jido.Signal.Dispatch do
 
   defp dispatch_adapter_module?(adapter) do
     Code.ensure_loaded?(adapter) and
-      function_exported?(adapter, :validate_opts, 1) and
+      function_exported?(adapter, :options_schema, 0) and
       function_exported?(adapter, :deliver, 2) and
       Jido.Signal.Dispatch.Adapter in (adapter.module_info(:attributes)[:behaviour] || [])
   rescue
@@ -285,8 +315,29 @@ defmodule Jido.Signal.Dispatch do
 
   defp invalid_adapter_message(adapter) do
     "#{inspect(adapter)} is not a valid adapter - must be one of :pid, :named, " <>
-      ":pubsub, :bus, :logger, :console, :noop, :http or a module " <>
+      ":pubsub, :bus, :logger, :noop, :http or a module " <>
       "implementing Jido.Signal.Dispatch.Adapter"
+  end
+
+  defp parse_adapter_options(nil, opts), do: parse_options(@noop_options_schema, opts)
+
+  defp parse_adapter_options(adapter_module, opts) do
+    schema = adapter_module.options_schema()
+
+    if is_struct(schema) and Zoi.Type.impl_for(schema) != nil do
+      parse_options(schema, opts)
+    else
+      {:error, {:invalid_options_schema, adapter_module}}
+    end
+  rescue
+    error -> {:error, {:invalid_options_schema, Exception.message(error)}}
+  end
+
+  defp parse_options(schema, opts) do
+    case Zoi.parse(schema, opts) do
+      {:ok, validated_opts} -> {:ok, validated_opts}
+      {:error, errors} -> {:error, Zoi.prettify_errors(errors)}
+    end
   end
 
   defp strip_internal_opts(opts), do: Keyword.delete(opts, :__validated__)

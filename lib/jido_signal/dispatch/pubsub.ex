@@ -49,14 +49,15 @@ defmodule Jido.Signal.Dispatch.PubSub do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.Adapter
-
   @options_schema Zoi.keyword(
-                    target:
-                      Zoi.atom()
-                      |> Zoi.refine({__MODULE__, :not_nil?, []})
-                      |> Zoi.required(),
-                    topic: Zoi.string() |> Zoi.required()
+                    [
+                      target:
+                        Zoi.atom()
+                        |> Zoi.refine({__MODULE__, :not_nil?, []})
+                        |> Zoi.required(),
+                      topic: Zoi.string() |> Zoi.required()
+                    ],
+                    unrecognized_keys: :error
                   )
 
   require Logger
@@ -72,27 +73,6 @@ defmodule Jido.Signal.Dispatch.PubSub do
           | term()
 
   @impl Jido.Signal.Dispatch.Adapter
-  @doc """
-  Validates the PubSub adapter configuration options.
-
-  ## Parameters
-
-  * `opts` - Keyword list of options to validate
-
-  ## Options
-
-  * `:target` - Must be an atom representing the PubSub server name
-  * `:topic` - Must be a string
-
-  ## Returns
-
-  * `{:ok, validated_opts}` - Options are valid
-  * `{:error, reason}` - Options are invalid with string reason
-  """
-  @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
-  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
-
-  @impl Jido.Signal.Dispatch.Adapter
   def options_schema, do: @options_schema
 
   @doc false
@@ -106,7 +86,7 @@ defmodule Jido.Signal.Dispatch.PubSub do
   ## Parameters
 
   * `signal` - The signal to broadcast
-  * `opts` - Validated options from `validate_opts/1`
+  * `opts` - Options parsed by Dispatch
 
   ## Options
 

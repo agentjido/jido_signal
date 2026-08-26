@@ -31,7 +31,6 @@ defmodule Jido.Signal.Dispatch.Http do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.Adapter
   alias Jido.Signal.Serialization
 
   @content_type ~c"application/cloudevents+json"
@@ -92,10 +91,6 @@ defmodule Jido.Signal.Dispatch.Http do
           | {:http_status, non_neg_integer()}
           | {:serialization, term()}
           | {:transport, term()}
-
-  @impl Jido.Signal.Dispatch.Adapter
-  @spec validate_opts(keyword()) :: {:ok, keyword()} | {:error, term()}
-  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
 
   @impl Jido.Signal.Dispatch.Adapter
   def options_schema, do: @options_schema

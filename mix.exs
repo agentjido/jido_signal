@@ -109,11 +109,8 @@ defmodule Jido.Signal.MixProject do
         "Signal Dispatch": [
           Jido.Signal.Dispatch,
           Jido.Signal.Dispatch.Adapter,
-          Jido.Signal.Dispatch.ConsoleAdapter,
           Jido.Signal.Dispatch.Http,
           Jido.Signal.Dispatch.LoggerAdapter,
-          Jido.Signal.Dispatch.Named,
-          Jido.Signal.Dispatch.NoopAdapter,
           Jido.Signal.Dispatch.PidAdapter,
           Jido.Signal.Dispatch.PubSub
         ],

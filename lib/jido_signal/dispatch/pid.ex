@@ -1,65 +1,31 @@
 defmodule Jido.Signal.Dispatch.PidAdapter do
   @moduledoc """
-  An adapter for dispatching signals directly to Erlang processes using PIDs.
+  Delivers a Signal to a local process.
 
-  This adapter implements the `Jido.Signal.Dispatch.Adapter` behaviour and provides
-  functionality to send signals to specific processes either synchronously or
-  asynchronously.
-
-  ## Configuration Options
-
-  * `:target` - (required) The PID of the destination process
-  * `:delivery_mode` - (optional) Either `:sync` or `:async`, defaults to `:async`
-  * `:timeout` - (optional) Timeout for synchronous delivery in milliseconds, defaults to 5000
-  * `:message_format` - (optional) Function to format the signal before sending, defaults to wrapping in `{:signal, signal}`
-
-  ## Delivery Modes
-
-  * `:async` - Uses `send/2` to deliver the signal without waiting for a response
-  * `:sync` - Uses `GenServer.call/3` to deliver the signal and wait for a response
-
-  ## Examples
-
-      # Asynchronous delivery
-      config = {:pid, [
-        target: destination_pid,
-        delivery_mode: :async
-      ]}
-
-      # Synchronous delivery with custom timeout
-      config = {:pid, [
-        target: destination_pid,
-        delivery_mode: :sync,
-        timeout: 10_000
-      ]}
-
-      # Custom message format
-      config = {:pid, [
-        target: destination_pid,
-        message_format: fn signal -> {:custom_signal, signal} end
-      ]}
-
-  ## Error Handling
-
-  The adapter handles various error conditions:
-
-  * `:process_not_alive` - The target process is not alive
-  * `:timeout` - Synchronous delivery timed out
-  * Other errors from the target process
+  The `:pid` and `:named` dispatch inputs use this adapter. A target is a PID
+  or `{:name, registered_name}`. Async delivery sends a message. Sync delivery
+  uses `GenServer.call/3`.
   """
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.Adapter
+  @target_schema Zoi.union([
+                   Zoi.pid(),
+                   Zoi.tuple({Zoi.literal(:name), Zoi.atom()})
+                 ])
+                 |> Zoi.refine({__MODULE__, :validate_target, []})
 
   @options_schema Zoi.keyword(
-                    target: Zoi.pid() |> Zoi.required(),
-                    delivery_mode: Zoi.enum([:sync, :async]) |> Zoi.default(:async),
-                    timeout: Zoi.integer() |> Zoi.min(1) |> Zoi.optional(),
-                    message_format: Zoi.function(arity: 1) |> Zoi.optional()
+                    [
+                      target: @target_schema |> Zoi.required(),
+                      delivery_mode: Zoi.enum([:sync, :async]) |> Zoi.default(:async),
+                      timeout: Zoi.integer() |> Zoi.min(1) |> Zoi.default(5_000),
+                      message_format: Zoi.function(arity: 1) |> Zoi.optional()
+                    ],
+                    unrecognized_keys: :error
                   )
 
-  @type delivery_target :: pid()
+  @type delivery_target :: pid() | {:name, atom()}
   @type delivery_mode :: :sync | :async
   @type message_format :: (Jido.Signal.t() -> term())
   @type delivery_opts :: [
@@ -68,96 +34,60 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
           timeout: timeout(),
           message_format: message_format()
         ]
-  @type delivery_error ::
-          :process_not_alive
-          | :timeout
-          | term()
-
-  @impl Jido.Signal.Dispatch.Adapter
-  @doc """
-  Validates the PID adapter configuration options.
-
-  ## Parameters
-
-  * `opts` - Keyword list of options to validate
-
-  ## Options
-
-  * `:target` - Must be a valid PID
-  * `:delivery_mode` - Must be either `:sync` or `:async`
-
-  ## Returns
-
-  * `{:ok, validated_opts}` - Options are valid
-  * `{:error, :invalid_target}` - Target is not a valid PID
-  * `{:error, :invalid_delivery_mode}` - Delivery mode is invalid
-  """
-  @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, term()}
-  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
 
   @impl Jido.Signal.Dispatch.Adapter
   def options_schema, do: @options_schema
 
   @impl Jido.Signal.Dispatch.Adapter
-  @doc """
-  Delivers a signal to the target process.
-
-  ## Parameters
-
-  * `signal` - The signal to deliver
-  * `opts` - Validated options from `validate_opts/1`
-
-  ## Options
-
-  * `:target` - (required) Target PID to deliver to
-  * `:delivery_mode` - (required) Either `:sync` or `:async`
-  * `:timeout` - (optional) Timeout for sync delivery, defaults to 5000ms
-  * `:message_format` - (optional) Function to format the signal
-
-  ## Returns
-
-  * `:ok` - Signal delivered successfully (async mode)
-  * `{:ok, term()}` - Signal delivered and response received (sync mode)
-  * `{:error, reason}` - Delivery failed
-  """
-  @spec deliver(Jido.Signal.t(), delivery_opts()) ::
-          :ok | {:ok, term()} | {:error, delivery_error()}
+  @spec deliver(Jido.Signal.t(), delivery_opts()) :: :ok | {:error, term()}
   def deliver(signal, opts) do
-    target = Keyword.fetch!(opts, :target)
-    mode = Keyword.fetch!(opts, :delivery_mode)
-    timeout = Keyword.get(opts, :timeout, 5000)
-    message_format = Keyword.get(opts, :message_format, &default_message_format/1)
-
-    case mode do
-      :async ->
-        if Process.alive?(target) do
-          send(target, message_format.(signal))
-          :ok
-        else
-          {:error, :process_not_alive}
-        end
-
-      :sync ->
-        if Process.alive?(target) do
-          try do
-            message = message_format.(signal)
-
-            if target == self() do
-              {:error, {:calling_self, {GenServer, :call, [target, message, timeout]}}}
-            else
-              GenServer.call(target, message, timeout)
-            end
-          catch
-            :exit, {:timeout, _} -> {:error, :timeout}
-            :exit, {:noproc, _} -> {:error, :process_not_alive}
-            :exit, reason -> {:error, reason}
-          end
-        else
-          {:error, :process_not_alive}
-        end
+    with {:ok, pid} <- resolve_target(Keyword.fetch!(opts, :target)) do
+      deliver_to_process(
+        pid,
+        Keyword.fetch!(opts, :delivery_mode),
+        Keyword.fetch!(opts, :timeout),
+        format_message(signal, opts)
+      )
     end
   end
 
-  # Default message format wraps signal in a tuple
+  @doc false
+  def validate_target({:name, nil}, _opts), do: {:error, "registered name must not be nil"}
+  def validate_target(_target, _opts), do: :ok
+
+  defp resolve_target(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: {:ok, pid}, else: {:error, :process_not_alive}
+  end
+
+  defp resolve_target({:name, name}) do
+    case Process.whereis(name) do
+      nil -> {:error, :process_not_found}
+      pid -> resolve_target(pid)
+    end
+  end
+
+  defp deliver_to_process(pid, :async, _timeout, message) do
+    send(pid, message)
+    :ok
+  end
+
+  defp deliver_to_process(pid, :sync, timeout, message) when pid == self() do
+    {:error, {:calling_self, {GenServer, :call, [pid, message, timeout]}}}
+  end
+
+  defp deliver_to_process(pid, :sync, timeout, message) do
+    GenServer.call(pid, message, timeout)
+  catch
+    :exit, {:timeout, _details} -> {:error, :timeout}
+    :exit, {:noproc, _details} -> {:error, :process_not_alive}
+    :exit, reason -> {:error, reason}
+  end
+
+  defp format_message(signal, opts) do
+    opts
+    |> Keyword.get(:message_format, &default_message_format/1)
+    |> then(& &1.(signal))
+  end
+
   defp default_message_format(signal), do: {:signal, signal}
 end

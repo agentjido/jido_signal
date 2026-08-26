@@ -8,10 +8,15 @@ defmodule Jido.Signal.Dispatch.TargetContractTest do
     @behaviour Jido.Signal.Dispatch.Adapter
 
     @impl true
-    def validate_opts(opts) do
-      if Keyword.keyword?(opts),
-        do: {:ok, Keyword.put_new(opts, :validated, true)},
-        else: {:error, :invalid}
+    def options_schema do
+      Zoi.keyword(
+        [
+          target: Zoi.pid() |> Zoi.required(),
+          sequence: Zoi.integer() |> Zoi.required(),
+          validated: Zoi.boolean() |> Zoi.default(true)
+        ],
+        unrecognized_keys: :error
+      )
     end
 
     @impl true

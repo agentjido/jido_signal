@@ -309,8 +309,8 @@ dispatch_configs = [
   # Log structured data
   {:logger, level: :info, structured: true},
   
-  # Console output
-  {:console, format: :pretty}
+  # Debug logging
+  {:logger, level: :debug}
 ]
 
 # Synchronous dispatch

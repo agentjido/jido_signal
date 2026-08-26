@@ -62,39 +62,20 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  alias Jido.Signal.Dispatch.Adapter
   alias Jido.Signal.Sanitizer
 
   require Logger
 
   @valid_levels [:debug, :info, :warning, :error]
   @options_schema Zoi.keyword(
-                    level: Zoi.enum(@valid_levels) |> Zoi.optional(),
-                    log_level: Zoi.enum(@valid_levels) |> Zoi.optional(),
-                    structured: Zoi.boolean() |> Zoi.optional(),
-                    include_data: Zoi.boolean() |> Zoi.optional()
+                    [
+                      level: Zoi.enum(@valid_levels) |> Zoi.optional(),
+                      log_level: Zoi.enum(@valid_levels) |> Zoi.optional(),
+                      structured: Zoi.boolean() |> Zoi.optional(),
+                      include_data: Zoi.boolean() |> Zoi.optional()
+                    ],
+                    unrecognized_keys: :error
                   )
-
-  @impl Jido.Signal.Dispatch.Adapter
-  @doc """
-  Validates the logger adapter configuration options.
-
-  ## Parameters
-
-  * `opts` - Keyword list of options to validate
-
-  ## Options
-
-  * `:level` - (optional) One of #{inspect(@valid_levels)}, defaults to `:info`
-  * `:structured` - (optional) Boolean, defaults to `false`
-
-  ## Returns
-
-  * `{:ok, validated_opts}` - Options are valid
-  * `{:error, reason}` - Options are invalid with string reason
-  """
-  @spec validate_opts(Keyword.t()) :: {:ok, Keyword.t()} | {:error, String.t()}
-  def validate_opts(opts), do: Adapter.validate(@options_schema, opts)
 
   @impl Jido.Signal.Dispatch.Adapter
   def options_schema, do: @options_schema

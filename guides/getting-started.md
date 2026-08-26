@@ -88,7 +88,7 @@ config = {:pid, [target: pid, delivery_mode: :async]}
 # Process receives: {:signal, signal}
 ```
 
-Named process dispatch:
+Named process dispatch uses the same local-process adapter as PID dispatch:
 
 ```elixir
 config = {:named, [target: {:name, :my_process}, delivery_mode: :async]}

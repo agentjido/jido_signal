@@ -98,7 +98,8 @@ config = {:pid, [
 
 ### Named Process Adapter
 
-Delivery to registered processes:
+Delivery to registered processes uses the same local-process adapter as PID
+delivery:
 
 ```elixir
 config = {:named, [

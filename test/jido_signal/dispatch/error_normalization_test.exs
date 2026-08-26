@@ -17,7 +17,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     @behaviour Jido.Signal.Dispatch.Adapter
 
     @impl true
-    def validate_opts(opts), do: {:ok, opts}
+    def options_schema, do: Zoi.keyword([], unrecognized_keys: :error)
 
     @impl true
     def deliver(_signal, _opts), do: raise("adapter crashed")
@@ -27,7 +27,16 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     @behaviour Jido.Signal.Dispatch.Adapter
 
     @impl true
-    def validate_opts(opts), do: {:ok, opts}
+    def options_schema do
+      Zoi.keyword(
+        [
+          url: Zoi.string() |> Zoi.required(),
+          headers: Zoi.list() |> Zoi.optional(),
+          secret: Zoi.string() |> Zoi.optional()
+        ],
+        unrecognized_keys: :error
+      )
+    end
 
     @impl true
     def deliver(_signal, _opts), do: {:error, :not_sent}

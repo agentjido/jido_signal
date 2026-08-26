@@ -17,12 +17,14 @@ defmodule MyApp.CustomAdapter do
   @behaviour Jido.Signal.Dispatch.Adapter
 
   @impl true
-  def validate_opts(opts) do
-    required = [:target, :format]
-    case Enum.find(required, &(!Keyword.has_key?(opts, &1))) do
-      nil -> {:ok, opts}
-      missing -> {:error, "Missing required option: #{missing}"}
-    end
+  def options_schema do
+    Zoi.keyword(
+      [
+        target: Zoi.string() |> Zoi.required(),
+        format: Zoi.atom() |> Zoi.required()
+      ],
+      unrecognized_keys: :error
+    )
   end
 
   @impl true
@@ -187,7 +189,12 @@ application or test code. Runtime atoms remain in the VM atom table.
 defmodule MockAdapter do
   @behaviour Jido.Signal.Dispatch.Adapter
 
-  def validate_opts(opts), do: {:ok, opts}
+  def options_schema do
+    Zoi.keyword(
+      [test_pid: Zoi.pid() |> Zoi.required()],
+      unrecognized_keys: :error
+    )
+  end
   
   def deliver(signal, opts) do
     send(opts[:test_pid], {:signal_received, signal, opts})
@@ -209,8 +216,8 @@ end
 ```elixir
 defmodule FailingAdapter do
   @behaviour Jido.Signal.Dispatch.Adapter
-  
-  def validate_opts(_), do: {:ok, []}
+
+  def options_schema, do: Zoi.keyword([], unrecognized_keys: :error)
   def deliver(_, _), do: {:error, :simulated_failure}
 end
 

@@ -3,11 +3,10 @@ defmodule Jido.Signal.Dispatch.HttpTest do
 
   alias Jido.Signal
   alias Jido.Signal.Dispatch
-  alias Jido.Signal.Dispatch.Http
 
   test "validates the small HTTP target contract" do
     assert {:ok, opts} =
-             Http.validate_opts(
+             validate_opts(
                url: "https://example.com/events",
                headers: [{"authorization", "Bearer token"}]
              )
@@ -26,7 +25,7 @@ defmodule Jido.Signal.Dispatch.HttpTest do
           [ssl_options: [verify: :verify_none]]
         ] do
       assert {:error, _reason} =
-               Http.validate_opts(Keyword.merge([url: "https://example.com/events"], option))
+               validate_opts(Keyword.merge([url: "https://example.com/events"], option))
     end
   end
 
@@ -40,7 +39,7 @@ defmodule Jido.Signal.Dispatch.HttpTest do
           <<"https://example.com/", 255>>,
           "https://example.com/" <> String.duplicate("a", 8_193)
         ] do
-      assert {:error, _reason} = Http.validate_opts(url: url)
+      assert {:error, _reason} = validate_opts(url: url)
     end
 
     for header <- [
@@ -52,11 +51,11 @@ defmodule Jido.Signal.Dispatch.HttpTest do
           {"ce-type", "forged.event"}
         ] do
       assert {:error, _reason} =
-               Http.validate_opts(url: "https://example.com", headers: [header])
+               validate_opts(url: "https://example.com", headers: [header])
     end
 
     assert {:error, _reason} =
-             Http.validate_opts(
+             validate_opts(
                url: "https://example.com",
                headers: [{"authorization", "one"}, {"Authorization", "two"}]
              )
@@ -65,7 +64,7 @@ defmodule Jido.Signal.Dispatch.HttpTest do
       Enum.map(1..33, fn number -> {"x-test-#{number}", Integer.to_string(number)} end)
 
     assert {:error, _reason} =
-             Http.validate_opts(url: "https://example.com", headers: too_many_headers)
+             validate_opts(url: "https://example.com", headers: too_many_headers)
   end
 
   test "posts canonical structured CloudEvents JSON through OTP httpc" do
@@ -116,6 +115,13 @@ defmodule Jido.Signal.Dispatch.HttpTest do
              Dispatch.dispatch(signal, {:http, url: url, timeout: 2_000})
 
     assert_receive {:http_request, ^server, _request}
+  end
+
+  defp validate_opts(opts) do
+    case Dispatch.validate_opts({:http, opts}) do
+      {:ok, {:http, validated}} -> {:ok, validated}
+      {:error, _reason} = error -> error
+    end
   end
 
   defp start_server(status, body \\ "", headers \\ []) do

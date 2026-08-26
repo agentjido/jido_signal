@@ -4,7 +4,6 @@ defmodule Jido.Signal.Dispatch.BusTest do
   alias Jido.Signal
   alias Jido.Signal.Bus
   alias Jido.Signal.Dispatch
-  alias Jido.Signal.Dispatch.Bus, as: BusAdapter
   alias Jido.Signal.Instance
 
   @moduletag :capture_log
@@ -22,34 +21,38 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
   describe "validate_opts/1" do
     test "accepts valid target atom" do
-      assert {:ok, opts} = BusAdapter.validate_opts(target: :my_bus)
+      assert {:ok, {:bus, opts}} = Dispatch.validate_opts({:bus, target: :my_bus})
       assert opts[:target] == :my_bus
       assert opts[:jido] == nil
     end
 
     test "accepts valid target with jido instance" do
-      assert {:ok, opts} = BusAdapter.validate_opts(target: :my_bus, jido: MyApp.Jido)
+      assert {:ok, {:bus, opts}} =
+               Dispatch.validate_opts({:bus, target: :my_bus, jido: MyApp.Jido})
+
       assert opts[:target] == :my_bus
       assert opts[:jido] == MyApp.Jido
     end
 
     test "rejects nil target" do
-      assert {:error, error} = BusAdapter.validate_opts(target: nil)
+      assert {:error, error} = Dispatch.validate_opts({:bus, target: nil})
       assert error =~ "target"
     end
 
     test "rejects non-atom target" do
-      assert {:error, error} = BusAdapter.validate_opts(target: "my_bus")
+      assert {:error, error} = Dispatch.validate_opts({:bus, target: "my_bus"})
       assert error =~ "target"
     end
 
     test "rejects missing target" do
-      assert {:error, error} = BusAdapter.validate_opts([])
+      assert {:error, error} = Dispatch.validate_opts({:bus, []})
       assert error =~ "target"
     end
 
     test "rejects non-atom jido" do
-      assert {:error, error} = BusAdapter.validate_opts(target: :my_bus, jido: "invalid")
+      assert {:error, error} =
+               Dispatch.validate_opts({:bus, target: :my_bus, jido: "invalid"})
+
       assert error =~ "jido"
     end
   end
@@ -67,7 +70,7 @@ defmodule Jido.Signal.Dispatch.BusTest do
       # Subscribe to receive signals
       {:ok, _sub_id} = Bus.subscribe(bus_name, "test.signal")
 
-      assert :ok = BusAdapter.deliver(signal, target: bus_name)
+      assert :ok = Dispatch.dispatch(signal, {:bus, target: bus_name})
 
       assert_receive {:signal, received_signal}, 1000
       assert received_signal.type == "test.signal"
@@ -77,7 +80,7 @@ defmodule Jido.Signal.Dispatch.BusTest do
       signal = make_signal()
 
       assert {:error, :bus_not_found} =
-               BusAdapter.deliver(signal, target: :nonexistent_bus_xyz)
+               Dispatch.dispatch(signal, {:bus, target: :nonexistent_bus_xyz})
     end
   end
 
@@ -107,7 +110,7 @@ defmodule Jido.Signal.Dispatch.BusTest do
       {:ok, bus_pid} = Bus.whereis(bus_name, jido: instance)
       {:ok, _sub_id} = Bus.subscribe(bus_pid, "test.signal")
 
-      assert :ok = BusAdapter.deliver(signal, target: bus_name, jido: instance)
+      assert :ok = Dispatch.dispatch(signal, {:bus, target: bus_name, jido: instance})
 
       assert_receive {:signal, received_signal}, 1000
       assert received_signal.type == "test.signal"
@@ -118,9 +121,9 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
       # Use a bogus instance that has no bus registered
       assert {:error, :bus_not_found} =
-               BusAdapter.deliver(signal,
-                 target: :nonexistent_bus,
-                 jido: __MODULE__.Missing
+               Dispatch.dispatch(
+                 signal,
+                 {:bus, target: :nonexistent_bus, jido: __MODULE__.Missing}
                )
     end
   end

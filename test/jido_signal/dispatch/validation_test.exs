@@ -7,13 +7,25 @@ defmodule Jido.Signal.DispatchValidationTest do
   defmodule CountingAdapter do
     @behaviour Jido.Signal.Dispatch.Adapter
 
-    def validate_opts(opts) do
-      # Increment counter
-      pid = Keyword.fetch!(opts, :counter_pid)
-      send(pid, :validated)
-      {:ok, opts}
+    @impl true
+    def options_schema do
+      Zoi.keyword(
+        [
+          counter_pid:
+            Zoi.pid()
+            |> Zoi.refine({__MODULE__, :count_validation, []})
+            |> Zoi.required()
+        ],
+        unrecognized_keys: :error
+      )
     end
 
+    def count_validation(pid, _opts) do
+      send(pid, :validated)
+      :ok
+    end
+
+    @impl true
     def deliver(_signal, _opts), do: :ok
   end
 
