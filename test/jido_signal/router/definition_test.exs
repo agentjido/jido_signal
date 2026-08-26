@@ -150,6 +150,27 @@ defmodule Jido.Signal.RouterDefinitionTest do
       assert Router.count(unchanged) == 1
     end
 
+    test "updates exact and wildcard indexes during add and remove" do
+      router = Router.new!({"user.created", :exact})
+
+      assert {:ok, router} =
+               Router.add(router, [
+                 {"user.*", :single},
+                 {"user.**", :multi}
+               ])
+
+      signal = %Jido.Signal{id: "indexes", source: "/test", type: "user.created"}
+      assert {:ok, [:exact, :single, :multi]} = Router.route(router, signal)
+
+      assert {:ok, router} = Router.remove(router, "user.*")
+      assert {:ok, [:exact, :multi]} = Router.route(router, signal)
+      refute Router.has_route?(router, "user.*")
+
+      assert {:ok, router} = Router.remove(router, ["user.created", "user.**"])
+      assert Router.empty?(router)
+      assert {:error, %Jido.Signal.Error.RoutingError{}} = Router.route(router, signal)
+    end
+
     test "merges Routers by appending their Routes" do
       first = Router.new!([{"one", :one}, {"two", :two}])
       second = Router.new!([{"three", :three}, {"four", :four}])

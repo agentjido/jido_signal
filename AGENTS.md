@@ -23,7 +23,7 @@ Model domain events as validated signals and route them predictably through bus/
 ## Architecture Snapshot
 - `Jido.Signal`: CloudEvents-style signal envelope + constructor/validation API
 - `Jido.Signal.Bus`: pub/sub bus with routing, middleware, and persistence hooks
-- `Jido.Signal.Router`: deterministic matcher (exact, `*`, `**`) with priority ordering
+- `Jido.Signal.Router`: indexed matcher (exact, `*`, `**`) with priority ordering
 - `Jido.Signal.Dispatch`: adapter layer (`:pid`, `:pubsub`, `:http`, `:bus`, `:logger`, etc.)
 - `Jido.Signal.Instance`: isolated multi-tenant signal infrastructure via `jido:` option
 

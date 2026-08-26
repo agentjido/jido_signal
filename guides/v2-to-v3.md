@@ -149,7 +149,7 @@ Router precedence is unchanged:
 4. Higher priority runs before lower priority for equal specificity.
 5. Registration order breaks the final tie.
 
-Router state and matcher implementation are internal. Use
+The exact-path map, wildcard trie, Router state, and matcher implementation are internal. Use
 `Jido.Signal.Router` and `Jido.Signal.Router.Route` only. Use `count/1`,
 `empty?/1`, `list/1`, and `has_route?/2` instead of reading Router fields.
 `count/1` counts Route values, not the number of targets inside each Route.

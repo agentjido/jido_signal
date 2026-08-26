@@ -94,5 +94,42 @@ defmodule Jido.Signal.Router.PatternEquivalenceTest do
       assert Router.matches?("user.profile.address.created", "user.**.created")
       refute Router.matches?("user.updated", "user.**.created")
     end
+
+    test "trie routing agrees with matches?/2" do
+      patterns = [
+        "user.created",
+        "user.*",
+        "user.*.created",
+        "user.**",
+        "user.**.created",
+        "**.created",
+        "a.**.c.**.f",
+        "**"
+      ]
+
+      types = [
+        "user",
+        "user.created",
+        "user.profile.created",
+        "user.profile.address.updated",
+        "a.c.f",
+        "a.b.c.d.e.f",
+        "system.completed"
+      ]
+
+      Enum.each(patterns, fn pattern ->
+        router = Router.new!({pattern, :matched})
+
+        Enum.each(types, fn type ->
+          signal = %Jido.Signal{id: "equivalence", source: "/test", type: type}
+
+          assert match_result(Router.route(router, signal)) == Router.matches?(type, pattern),
+                 "route mismatch for type #{inspect(type)} and pattern #{inspect(pattern)}"
+        end)
+      end)
+    end
   end
+
+  defp match_result({:ok, [:matched]}), do: true
+  defp match_result({:error, %Jido.Signal.Error.RoutingError{}}), do: false
 end

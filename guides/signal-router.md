@@ -4,6 +4,11 @@
 `Jido.Signal.Router` maps Signal type patterns to ordered targets. It performs
 lookup only. It does not execute targets or validate Dispatch configuration.
 
+The Router compiles exact paths into a map and wildcard paths into a private
+segment trie. The trie tracks exact, `*`, and `**` transitions. `**` traversal
+memoizes node and segment positions so the same state is not processed twice.
+The index is an implementation detail.
+
 ## Create a Router
 
 The short tuple forms are the easiest way to define routes:
@@ -170,3 +175,18 @@ route = %Jido.Signal.Router.Route{
 
 The Route schema uses Zoi. Router targets remain generic terms. Dispatch
 validates a target when delivery starts.
+
+## Benchmark Lookup
+
+Run the included lookup benchmark for exact, `*`, `**`, and mixed route sets:
+
+```bash
+mix run bench/router_lookup.exs
+```
+
+It tests 1,000, 10,000, and 100,000 Routes by default. Pass other route counts
+as arguments when needed:
+
+```bash
+mix run bench/router_lookup.exs 5000 50000
+```
