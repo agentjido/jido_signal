@@ -527,7 +527,7 @@ defmodule CrossPlatformSignal do
     %__MODULE__{
       type: attrs[:type],
       source: attrs[:source], 
-      id: attrs[:id] || UUID.uuid4(),
+      id: attrs[:id] || Jido.Signal.ID.generate!(),
       time: attrs[:time] || DateTime.utc_now() |> DateTime.to_iso8601(),
       data: ensure_string_keys(attrs[:data] || %{}),
       metadata: attrs[:metadata] || %{}

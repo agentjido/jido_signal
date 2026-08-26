@@ -20,7 +20,7 @@ Signals implement the CloudEvents v1.0.2 specification with Jido extensions:
 })
 
 # Signal fields
-signal.id              # UUID v4 (auto-generated)
+signal.id              # UUID7 (auto-generated)
 signal.specversion     # "1.0.2"
 signal.type            # "user.created"
 signal.source          # "/auth/service"

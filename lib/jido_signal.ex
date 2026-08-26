@@ -21,7 +21,7 @@ defmodule Jido.Signal do
   Each Signal implements the CloudEvents v1.0.2 specification with these required fields:
 
   - `specversion`: Always "1.0.2"
-  - `id`: Unique identifier (UUID v4)
+  - `id`: Unique identifier (UUID7 for Jido-generated Signals)
   - `source`: Origin of the event ("/service/component")
   - `type`: Classification of the event ("domain.entity.action")
 
