@@ -316,9 +316,9 @@ Remove these startup options and calls:
 - `dlq_entries/2`, `redrive_dlq/3`, and `clear_dlq/2`;
 - public Bus state and persistent worker access.
 
-Old Journal and partition startup options return
-`{:unsupported_option, option}`. Use separate Bus processes for workload
-isolation. Use cursor-based `replay/3` instead of snapshots.
+The v3 Bus accepts only its documented startup options. Unknown options return
+an `:invalid_options` error. Use separate Bus processes for workload isolation.
+Use cursor-based `replay/3` instead of snapshots.
 
 ## Replace the Standalone Journal
 

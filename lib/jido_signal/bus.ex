@@ -38,23 +38,33 @@ defmodule Jido.Signal.Bus do
   @type subscription_id :: String.t()
   @type durable_id :: String.t()
 
-  @removed_start_options [
-    :journal_adapter,
-    :journal_adapter_opts,
-    :journal_pid,
-    :partition_count,
-    :partition_rate_limit_per_sec,
-    :partition_burst_size,
-    :log_ttl_ms,
-    :middleware,
-    :middleware_timeout_ms
-  ]
+  @start_options_schema Zoi.keyword(
+                          [
+                            name:
+                              Zoi.union([Zoi.atom(), Zoi.string()])
+                              |> Zoi.refine({__MODULE__, :validate_name, []})
+                              |> Zoi.required(),
+                            jido: Zoi.atom() |> Zoi.nullable() |> Zoi.optional(),
+                            registry:
+                              Zoi.atom()
+                              |> Zoi.refine({__MODULE__, :not_nil, []})
+                              |> Zoi.optional(),
+                            store:
+                              Zoi.atom()
+                              |> Zoi.refine({__MODULE__, :not_nil, []})
+                              |> Zoi.optional(),
+                            store_opts: Zoi.keyword(Zoi.any()) |> Zoi.default([]),
+                            max_log_size: Zoi.integer() |> Zoi.min(1) |> Zoi.optional()
+                          ],
+                          unrecognized_keys: :error
+                        )
 
   @subscription_options [:target, :subscription_id, :durable, :start_from]
 
   @doc "Returns a child specification for a named Bus."
   @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
+    opts = validate_start_options!(opts)
     name = Keyword.fetch!(opts, :name)
 
     %{
@@ -77,12 +87,14 @@ defmodule Jido.Signal.Bus do
   - `:store_opts` configures the selected store.
   - `:max_log_size` sets the memory-store record bound. The default is 100,000.
 
-  Removed Journal, partition, and middleware options return a startup error.
+  Unknown options return an `:invalid_options` error.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    name = Keyword.fetch!(opts, :name)
-    GenServer.start_link(__MODULE__, {name, opts}, name: via_tuple(name, opts))
+    with {:ok, opts} <- validate_start_options(opts) do
+      name = Keyword.fetch!(opts, :name)
+      GenServer.start_link(__MODULE__, {name, opts}, name: via_tuple(name, opts))
+    end
   end
 
   @doc "Returns the Registry tuple for a Bus name."
@@ -194,8 +206,7 @@ defmodule Jido.Signal.Bus do
 
   @impl GenServer
   def init({name, opts}) do
-    with :ok <- reject_removed_options(opts),
-         {:ok, store_module, store_state} <- init_store(opts),
+    with {:ok, store_module, store_state} <- init_store(opts),
          {:ok, definitions} <- store_read(store_module, store_state, :list_subscriptions, []),
          {:ok, latest_cursor} <- store_read(store_module, store_state, :latest_cursor, []),
          :ok <- validate_latest_cursor(latest_cursor),
@@ -962,10 +973,27 @@ defmodule Jido.Signal.Bus do
     )
   end
 
-  defp reject_removed_options(opts) do
-    case Enum.find(@removed_start_options, &Keyword.has_key?(opts, &1)) do
-      nil -> :ok
-      option -> {:error, {:unsupported_option, option}}
+  @doc false
+  def validate_name(name, _opts) when is_atom(name) and not is_nil(name), do: :ok
+
+  def validate_name(name, _opts) when is_binary(name) and byte_size(name) > 0, do: :ok
+  def validate_name(_name, _opts), do: {:error, "must be a non-empty atom or string"}
+
+  @doc false
+  def not_nil(nil, _opts), do: {:error, "must not be nil"}
+  def not_nil(_value, _opts), do: :ok
+
+  defp validate_start_options(opts) do
+    case Zoi.parse(@start_options_schema, opts) do
+      {:ok, validated_opts} -> {:ok, validated_opts}
+      {:error, errors} -> {:error, {:invalid_options, Zoi.prettify_errors(errors)}}
+    end
+  end
+
+  defp validate_start_options!(opts) do
+    case validate_start_options(opts) do
+      {:ok, validated_opts} -> validated_opts
+      {:error, {:invalid_options, message}} -> raise ArgumentError, message
     end
   end
 

@@ -348,17 +348,15 @@ defmodule Jido.Signal.Bus.V3BusTest do
              Bus.start_link(name: name, store: FailingStore)
   end
 
-  test "rejects removed Journal, partition, and middleware options" do
-    Process.flag(:trap_exit, true)
+  test "rejects unknown start options through the Zoi schema" do
+    assert {:error, {:invalid_options, message}} =
+             Bus.start_link(name: unique_name("invalid_options"), unexpected: true)
 
-    assert {:error, {:unsupported_option, :journal_adapter}} =
-             Bus.start_link(name: unique_name("journal"), journal_adapter: ExampleJournal)
+    assert message =~ "unrecognized key: unexpected"
 
-    assert {:error, {:unsupported_option, :partition_count}} =
-             Bus.start_link(name: unique_name("partition"), partition_count: 2)
-
-    assert {:error, {:unsupported_option, :middleware}} =
-             Bus.start_link(name: unique_name("middleware"), middleware: [])
+    assert_raise ArgumentError, ~r/unrecognized key: unexpected/, fn ->
+      Bus.child_spec(name: unique_name("invalid_child_spec"), unexpected: true)
+    end
   end
 
   test "rejects the removed dispatch and persistent subscription options" do
