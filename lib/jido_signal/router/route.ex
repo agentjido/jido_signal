@@ -1,0 +1,109 @@
+defmodule Jido.Signal.Router.Route do
+  @moduledoc """
+  A validated Signal routing rule.
+
+  `path` selects Signal types. `target` is any value returned by the Router.
+  `priority` orders routes with equal path specificity. An optional `match`
+  predicate can inspect the full Signal after the path matches.
+  """
+
+  alias Jido.Signal
+
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              path:
+                Zoi.any()
+                |> Zoi.refine({__MODULE__, :validate_path, []}),
+              target: Zoi.any(),
+              priority:
+                Zoi.any()
+                |> Zoi.refine({__MODULE__, :validate_priority, []})
+                |> Zoi.default(0)
+                |> Zoi.optional(),
+              match:
+                Zoi.any()
+                |> Zoi.refine({__MODULE__, :validate_match, []})
+                |> Zoi.nullable()
+                |> Zoi.optional()
+            }
+          )
+
+  @type t :: %__MODULE__{
+          path: String.t(),
+          target: term(),
+          priority: -100..100,
+          match: nil | (Signal.t() -> boolean())
+        }
+
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
+
+  @doc "Returns the Zoi schema for a Route."
+  @spec schema() :: Zoi.schema()
+  def schema, do: @schema
+
+  @doc false
+  def validate_path(path, _opts) when not is_binary(path),
+    do: {:error, "Path must be a string"}
+
+  def validate_path(path, _opts) do
+    segments = String.split(path, ".")
+
+    cond do
+      String.contains?(path, "..") ->
+        {:error, "Path cannot contain consecutive dots"}
+
+      consecutive_multi_wildcards?(segments) ->
+        {:error, "Path cannot contain multiple wildcards"}
+
+      invalid = Enum.find(segments, &(not valid_segment?(&1))) ->
+        invalid_segment_error(invalid)
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc false
+  def validate_priority(nil, _opts), do: :ok
+
+  def validate_priority(priority, _opts) when is_integer(priority) and priority > 100,
+    do: {:error, "Priority value exceeds maximum allowed"}
+
+  def validate_priority(priority, _opts) when is_integer(priority) and priority < -100,
+    do: {:error, "Priority value below minimum allowed"}
+
+  def validate_priority(priority, _opts) when is_integer(priority), do: :ok
+  def validate_priority(_priority, _opts), do: {:error, "Priority must be an integer"}
+
+  @doc false
+  def validate_match(nil, _opts), do: :ok
+  def validate_match(match, _opts) when is_function(match, 1), do: :ok
+
+  def validate_match(_match, _opts),
+    do: {:error, "Match must be a function that takes one argument"}
+
+  defp consecutive_multi_wildcards?(segments) do
+    segments
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.any?(fn [left, right] -> left == "**" and right == "**" end)
+  end
+
+  defp valid_segment?("*"), do: true
+  defp valid_segment?("**"), do: true
+  defp valid_segment?(segment), do: String.match?(segment, ~r/^[a-zA-Z0-9_-]+$/)
+
+  defp invalid_segment_error(segment) do
+    cond do
+      String.contains?(segment, "**") ->
+        {:error, "Path cannot contain '**' sequence"}
+
+      String.contains?(segment, "*") ->
+        {:error, "Path cannot contain '*' within a segment"}
+
+      true ->
+        {:error, "Path contains invalid characters"}
+    end
+  end
+end

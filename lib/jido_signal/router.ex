@@ -42,6 +42,7 @@ defmodule Jido.Signal.Router do
 
   alias Jido.Signal
   alias Jido.Signal.Error
+  alias Jido.Signal.Router.Index
   alias Jido.Signal.Telemetry
 
   @type path :: String.t()
@@ -54,116 +55,6 @@ defmodule Jido.Signal.Router do
           | {path(), target(), priority()}
           | {path(), match(), target()}
           | {path(), match(), target(), priority()}
-
-  defmodule Route do
-    @moduledoc """
-    A validated Signal routing rule.
-
-    `path` selects Signal types. `target` is any value returned by the Router.
-    `priority` orders routes with equal path specificity. An optional `match`
-    predicate can inspect the full Signal after the path matches.
-    """
-
-    alias Jido.Signal
-
-    @schema Zoi.struct(
-              __MODULE__,
-              %{
-                path:
-                  Zoi.any()
-                  |> Zoi.refine({__MODULE__, :validate_path, []}),
-                target: Zoi.any(),
-                priority:
-                  Zoi.any()
-                  |> Zoi.refine({__MODULE__, :validate_priority, []})
-                  |> Zoi.default(0)
-                  |> Zoi.optional(),
-                match:
-                  Zoi.any()
-                  |> Zoi.refine({__MODULE__, :validate_match, []})
-                  |> Zoi.nullable()
-                  |> Zoi.optional()
-              }
-            )
-
-    @type t :: %__MODULE__{
-            path: String.t(),
-            target: term(),
-            priority: -100..100,
-            match: nil | (Signal.t() -> boolean())
-          }
-
-    @enforce_keys Zoi.Struct.enforce_keys(@schema)
-    defstruct Zoi.Struct.struct_fields(@schema)
-
-    @doc "Returns the Zoi schema for a Route."
-    @spec schema() :: Zoi.schema()
-    def schema, do: @schema
-
-    @doc false
-    def validate_path(path, _opts) when not is_binary(path),
-      do: {:error, "Path must be a string"}
-
-    def validate_path(path, _opts) do
-      segments = String.split(path, ".")
-
-      cond do
-        String.contains?(path, "..") ->
-          {:error, "Path cannot contain consecutive dots"}
-
-        consecutive_multi_wildcards?(segments) ->
-          {:error, "Path cannot contain multiple wildcards"}
-
-        invalid = Enum.find(segments, &(not valid_segment?(&1))) ->
-          invalid_segment_error(invalid)
-
-        true ->
-          :ok
-      end
-    end
-
-    @doc false
-    def validate_priority(nil, _opts), do: :ok
-
-    def validate_priority(priority, _opts) when is_integer(priority) and priority > 100,
-      do: {:error, "Priority value exceeds maximum allowed"}
-
-    def validate_priority(priority, _opts) when is_integer(priority) and priority < -100,
-      do: {:error, "Priority value below minimum allowed"}
-
-    def validate_priority(priority, _opts) when is_integer(priority), do: :ok
-    def validate_priority(_priority, _opts), do: {:error, "Priority must be an integer"}
-
-    @doc false
-    def validate_match(nil, _opts), do: :ok
-    def validate_match(match, _opts) when is_function(match, 1), do: :ok
-
-    def validate_match(_match, _opts),
-      do: {:error, "Match must be a function that takes one argument"}
-
-    defp consecutive_multi_wildcards?(segments) do
-      segments
-      |> Enum.chunk_every(2, 1, :discard)
-      |> Enum.any?(fn [left, right] -> left == "**" and right == "**" end)
-    end
-
-    defp valid_segment?("*"), do: true
-    defp valid_segment?("**"), do: true
-    defp valid_segment?(segment), do: String.match?(segment, ~r/^[a-zA-Z0-9_-]+$/)
-
-    defp invalid_segment_error(segment) do
-      cond do
-        String.contains?(segment, "**") ->
-          {:error, "Path cannot contain '**' sequence"}
-
-        String.contains?(segment, "*") ->
-          {:error, "Path cannot contain '*' within a segment"}
-
-        true ->
-          {:error, "Path contains invalid characters"}
-      end
-    end
-  end
 
   defmodule Router do
     @moduledoc false
@@ -237,25 +128,7 @@ defmodule Jido.Signal.Router do
 
   def new(routes, _opts) do
     with {:ok, routes} <- normalize(routes) do
-      {entries, next_order} = compile_entries(routes, 0)
-      empty = %Router{}
-
-      {exact_index, wildcard_index, next_node_id} =
-        index_entries(
-          entries,
-          empty.exact_index,
-          empty.wildcard_index,
-          empty.next_node_id
-        )
-
-      {:ok,
-       %Router{
-         entries: entries,
-         exact_index: exact_index,
-         wildcard_index: wildcard_index,
-         next_order: next_order,
-         next_node_id: next_node_id
-       }}
+      {:ok, Index.new(routes)}
     end
   end
 
@@ -279,46 +152,14 @@ defmodule Jido.Signal.Router do
           {:ok, t()} | {:error, term()}
   def add(%Router{} = router, routes) do
     with {:ok, routes} <- normalize(routes) do
-      {new_entries, next_order} = compile_entries(routes, router.next_order)
-      entries = router.entries ++ new_entries
-
-      {exact_index, wildcard_index, next_node_id} =
-        index_entries(
-          new_entries,
-          router.exact_index,
-          router.wildcard_index,
-          router.next_node_id
-        )
-
-      {:ok,
-       %{
-         router
-         | entries: entries,
-           exact_index: exact_index,
-           wildcard_index: wildcard_index,
-           next_order: next_order,
-           next_node_id: next_node_id
-       }}
+      {:ok, Index.add(router, routes)}
     end
   end
 
   @doc "Removes all routes that have one of the specified paths."
   @spec remove(t(), String.t() | [String.t()]) :: {:ok, t()}
   def remove(%Router{} = router, paths) when is_list(paths) do
-    paths = MapSet.new(paths)
-    entries = Enum.reject(router.entries, &MapSet.member?(paths, &1.route.path))
-
-    {exact_index, wildcard_index} =
-      Enum.reduce(paths, {router.exact_index, router.wildcard_index}, fn path,
-                                                                         {exact, wildcard} ->
-        if wildcard_path?(path) do
-          {exact, delete_trie_path(wildcard, String.split(path, "."))}
-        else
-          {Map.delete(exact, path), wildcard}
-        end
-      end)
-
-    {:ok, %{router | entries: entries, exact_index: exact_index, wildcard_index: wildcard_index}}
+    {:ok, Index.remove(router, paths)}
   end
 
   def remove(%Router{} = router, path) when is_binary(path), do: remove(router, [path])
@@ -402,15 +243,7 @@ defmodule Jido.Signal.Router do
 
   def route(%Router{} = router, %Signal{type: type} = signal) when is_binary(type) do
     start_time = System.monotonic_time(:microsecond)
-    type_segments = String.split(type, ".")
-
-    targets =
-      (Map.get(router.exact_index, type, []) ++
-         wildcard_matches(router.wildcard_index, type_segments))
-      |> Enum.filter(&predicate_matches?(&1.route.match, signal))
-      |> Enum.sort_by(&precedence_key/1, :desc)
-      |> Enum.flat_map(&targets/1)
-
+    targets = Index.lookup(router, type, signal)
     emit_route_telemetry(signal, targets, start_time)
 
     case targets do
@@ -431,7 +264,7 @@ defmodule Jido.Signal.Router do
   @spec matches?(String.t() | term(), String.t() | term()) :: boolean()
   def matches?(type, pattern) when is_binary(type) and is_binary(pattern) do
     case Route.validate_path(pattern, []) do
-      :ok -> match_segments?(String.split(type, "."), String.split(pattern, "."))
+      :ok -> Index.matches?(type, pattern)
       {:error, _reason} -> false
     end
   end
@@ -443,14 +276,9 @@ defmodule Jido.Signal.Router do
   def filter(signals, pattern) when is_list(signals) and is_binary(pattern) do
     case Route.validate_path(pattern, []) do
       :ok ->
-        pattern_segments = String.split(pattern, ".")
-
         Enum.filter(signals, fn
-          %Signal{type: type} when is_binary(type) ->
-            match_segments?(String.split(type, "."), pattern_segments)
-
-          _signal ->
-            false
+          %Signal{type: type} when is_binary(type) -> Index.matches?(type, pattern)
+          _signal -> false
         end)
 
       {:error, _reason} ->
@@ -464,15 +292,8 @@ defmodule Jido.Signal.Router do
   @spec has_route?(t(), String.t()) :: boolean()
   def has_route?(%Router{} = router, path) when is_binary(path) do
     case Route.validate_path(path, []) do
-      :ok ->
-        if wildcard_path?(path) do
-          trie_has_path?(router.wildcard_index, String.split(path, "."))
-        else
-          Map.has_key?(router.exact_index, path)
-        end
-
-      {:error, _reason} ->
-        false
+      :ok -> Index.has_route?(router, path)
+      {:error, _reason} -> false
     end
   end
 
@@ -523,293 +344,6 @@ defmodule Jido.Signal.Router do
 
   defp route_validation_error(_errors, route) do
     Error.routing_error("Invalid route", %{route: route.path})
-  end
-
-  defp compile_entries(routes, first_order) do
-    Enum.map_reduce(routes, first_order, fn route, order ->
-      segments = String.split(route.path, ".")
-
-      entry = %{
-        route: route,
-        segments: segments,
-        class: pattern_class(segments),
-        complexity: pattern_complexity(segments),
-        order: order
-      }
-
-      {entry, order + 1}
-    end)
-  end
-
-  defp index_entries(entries, exact_index, wildcard_index, next_node_id) do
-    Enum.reduce(
-      entries,
-      {exact_index, wildcard_index, next_node_id},
-      fn entry, {exact, wildcard, node_id} ->
-        if entry.class == 2 do
-          exact = Map.update(exact, entry.route.path, [entry], &[entry | &1])
-          {exact, wildcard, node_id}
-        else
-          {wildcard, node_id} = insert_trie(wildcard, entry.segments, entry, node_id)
-          {exact, wildcard, node_id}
-        end
-      end
-    )
-  end
-
-  defp insert_trie(node, [], entry, next_node_id) do
-    {%{node | terminals: [entry | node.terminals]}, next_node_id}
-  end
-
-  defp insert_trie(node, [segment | rest], entry, next_node_id) do
-    {child, next_node_id} = trie_child(node, segment, next_node_id)
-    {child, next_node_id} = insert_trie(child, rest, entry, next_node_id)
-    {put_trie_child(node, segment, child), next_node_id}
-  end
-
-  defp trie_child(node, "*", next_node_id),
-    do: existing_or_new_node(node.single, next_node_id, false)
-
-  defp trie_child(node, "**", next_node_id),
-    do: existing_or_new_node(node.multi, next_node_id, true)
-
-  defp trie_child(node, segment, next_node_id),
-    do: existing_or_new_node(Map.get(node.exact, segment), next_node_id, false)
-
-  defp existing_or_new_node(nil, next_node_id, globstar?) do
-    {new_trie_node(next_node_id, globstar?), next_node_id + 1}
-  end
-
-  defp existing_or_new_node(node, next_node_id, _globstar?), do: {node, next_node_id}
-
-  defp new_trie_node(id, globstar?) do
-    %{
-      id: id,
-      exact: %{},
-      single: nil,
-      multi: nil,
-      terminals: [],
-      globstar?: globstar?
-    }
-  end
-
-  defp put_trie_child(node, "*", child), do: %{node | single: child}
-  defp put_trie_child(node, "**", child), do: %{node | multi: child}
-
-  defp put_trie_child(node, segment, child) do
-    %{node | exact: Map.put(node.exact, segment, child)}
-  end
-
-  defp wildcard_matches(
-         %{exact: exact, single: nil, multi: nil, terminals: []},
-         _segments
-       )
-       when map_size(exact) == 0,
-       do: []
-
-  defp wildcard_matches(root, segments) do
-    segments = List.to_tuple(segments)
-    {_visited, matches} = walk_trie(root, segments, tuple_size(segments), 0, MapSet.new(), [])
-    matches
-  end
-
-  defp walk_trie(node, segments, segment_count, position, visited, matches) do
-    state = {node.id, position}
-
-    if MapSet.member?(visited, state) do
-      {visited, matches}
-    else
-      visited = MapSet.put(visited, state)
-
-      matches =
-        if position == segment_count do
-          node.terminals ++ matches
-        else
-          matches
-        end
-
-      {visited, matches} =
-        walk_segment_children(node, segments, segment_count, position, visited, matches)
-
-      {visited, matches} =
-        case node.multi do
-          nil -> {visited, matches}
-          child -> walk_trie(child, segments, segment_count, position, visited, matches)
-        end
-
-      if node.globstar? and position < segment_count do
-        walk_trie(node, segments, segment_count, position + 1, visited, matches)
-      else
-        {visited, matches}
-      end
-    end
-  end
-
-  defp walk_segment_children(node, segments, segment_count, position, visited, matches)
-       when position < segment_count do
-    segment = elem(segments, position)
-
-    {visited, matches} =
-      case Map.get(node.exact, segment) do
-        nil -> {visited, matches}
-        child -> walk_trie(child, segments, segment_count, position + 1, visited, matches)
-      end
-
-    case node.single do
-      nil -> {visited, matches}
-      child -> walk_trie(child, segments, segment_count, position + 1, visited, matches)
-    end
-  end
-
-  defp walk_segment_children(
-         _node,
-         _segments,
-         _segment_count,
-         _position,
-         visited,
-         matches
-       ),
-       do: {visited, matches}
-
-  defp delete_trie_path(node, []), do: %{node | terminals: []}
-
-  defp delete_trie_path(node, [segment | rest]) do
-    case get_trie_child(node, segment) do
-      nil ->
-        node
-
-      child ->
-        child = delete_trie_path(child, rest)
-        put_or_delete_trie_child(node, segment, child)
-    end
-  end
-
-  defp get_trie_child(node, "*"), do: node.single
-  defp get_trie_child(node, "**"), do: node.multi
-  defp get_trie_child(node, segment), do: Map.get(node.exact, segment)
-
-  defp put_or_delete_trie_child(node, segment, child) do
-    if empty_trie_node?(child) do
-      delete_trie_child(node, segment)
-    else
-      put_trie_child(node, segment, child)
-    end
-  end
-
-  defp delete_trie_child(node, "*"), do: %{node | single: nil}
-  defp delete_trie_child(node, "**"), do: %{node | multi: nil}
-  defp delete_trie_child(node, segment), do: %{node | exact: Map.delete(node.exact, segment)}
-
-  defp empty_trie_node?(node) do
-    node.terminals == [] and node.single == nil and node.multi == nil and
-      map_size(node.exact) == 0
-  end
-
-  defp trie_has_path?(node, []), do: node.terminals != []
-
-  defp trie_has_path?(node, [segment | rest]) do
-    case get_trie_child(node, segment) do
-      nil -> false
-      child -> trie_has_path?(child, rest)
-    end
-  end
-
-  defp wildcard_path?(path), do: String.contains?(path, "*")
-
-  defp pattern_class(segments) do
-    cond do
-      "**" in segments -> 0
-      "*" in segments -> 1
-      true -> 2
-    end
-  end
-
-  # Preserve the v2 complexity order inside each wildcard class.
-  defp pattern_complexity(segments) do
-    length = length(segments)
-    base_score = length * 2000
-
-    exact_score =
-      segments
-      |> Enum.with_index()
-      |> Enum.reduce(0, fn
-        {segment, _index}, score when segment in ["*", "**"] -> score
-        {_segment, index}, score -> score + 3000 * (length - index)
-      end)
-
-    wildcard_penalty =
-      segments
-      |> Enum.with_index()
-      |> Enum.reduce(0, fn
-        {"*", index}, score -> score + 1000 - index * 100
-        {"**", index}, score -> score + 2000 - index * 200
-        {_segment, _index}, score -> score
-      end)
-
-    base_score + exact_score - wildcard_penalty
-  end
-
-  defp precedence_key(entry) do
-    {entry.class, entry.complexity, entry.route.priority, -entry.order}
-  end
-
-  defp predicate_matches?(nil, _signal), do: true
-
-  defp predicate_matches?(match, signal) do
-    match.(signal) == true
-  rescue
-    _error -> false
-  catch
-    _kind, _reason -> false
-  end
-
-  defp targets(%{route: %Route{target: targets}}) when is_list(targets), do: targets
-  defp targets(%{route: %Route{target: target}}), do: [target]
-
-  defp match_segments?(type_segments, pattern_segments) do
-    type_segments = List.to_tuple(type_segments)
-    pattern_segments = List.to_tuple(pattern_segments)
-
-    do_match_segments(
-      type_segments,
-      pattern_segments,
-      tuple_size(type_segments),
-      tuple_size(pattern_segments),
-      0,
-      0,
-      nil,
-      nil
-    )
-  end
-
-  defp do_match_segments(type, pattern, type_size, pattern_size, i, j, star_i, star_j) do
-    cond do
-      i < type_size and j < pattern_size and
-          segment_matches?(elem(type, i), elem(pattern, j)) ->
-        do_match_segments(type, pattern, type_size, pattern_size, i + 1, j + 1, star_i, star_j)
-
-      j < pattern_size and elem(pattern, j) == "**" ->
-        do_match_segments(type, pattern, type_size, pattern_size, i, j + 1, i, j + 1)
-
-      i == type_size ->
-        remaining_multi_wildcards?(pattern, j, pattern_size)
-
-      not is_nil(star_j) and star_i < type_size ->
-        next_i = star_i + 1
-        do_match_segments(type, pattern, type_size, pattern_size, next_i, star_j, next_i, star_j)
-
-      true ->
-        false
-    end
-  end
-
-  defp segment_matches?(type_segment, pattern_segment),
-    do: pattern_segment == "*" or pattern_segment == type_segment
-
-  defp remaining_multi_wildcards?(_pattern, index, size) when index == size, do: true
-
-  defp remaining_multi_wildcards?(pattern, index, size) do
-    elem(pattern, index) == "**" and remaining_multi_wildcards?(pattern, index + 1, size)
   end
 
   defp emit_route_telemetry(signal, targets, start_time) do

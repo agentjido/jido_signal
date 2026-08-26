@@ -188,5 +188,21 @@ defmodule Jido.Signal.RouterDefinitionTest do
       refute Router.has_route?(router, "user.updated")
       refute Router.has_route?(router, "invalid..path")
     end
+
+    test "counts Route values through add and remove operations" do
+      router =
+        Router.new!([
+          {"user.created", :user},
+          {"system.error", [:logger, :metrics, :alert]}
+        ])
+
+      assert Router.count(router) == 2
+      assert {:ok, router} = Router.add(router, {"order.**", :order})
+      assert Router.count(router) == 3
+      assert {:ok, router} = Router.remove(router, ["user.created", "order.**"])
+      assert Router.count(router) == 1
+      assert {:ok, router} = Router.remove(router, "missing")
+      assert Router.count(router) == 1
+    end
   end
 end
