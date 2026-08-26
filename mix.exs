@@ -205,8 +205,6 @@ defmodule Jido.Signal.MixProject do
       {:fuse, "~> 2.5"},
 
       # Development & Test Dependencies
-      {:git_ops, "~> 2.9", only: :dev, runtime: false},
-      {:git_hooks, "~> 0.8", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:doctor, "~> 0.21", only: [:dev, :test], runtime: false},
@@ -214,8 +212,7 @@ defmodule Jido.Signal.MixProject do
       {:excoveralls, "~> 0.18.3", only: [:dev, :test]},
       {:castore, "~> 1.0", only: [:dev, :test]},
       {:mimic, "~> 2.0", only: :test},
-      {:stream_data, "~> 1.0", only: [:dev, :test]},
-      {:igniter, "~> 0.7", optional: true}
+      {:stream_data, "~> 1.0", only: [:dev, :test]}
     ]
   end
 

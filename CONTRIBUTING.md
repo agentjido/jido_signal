@@ -19,9 +19,6 @@ Welcome to the Jido Signal contributor's guide! We're excited that you're intere
    # Install dependencies
    mix deps.get
 
-   # Install git hooks (enforces conventional commits)
-   mix git_hooks.install
-
    # Run tests to verify your setup
    mix test
    ```
@@ -164,15 +161,9 @@ Welcome to the Jido Signal contributor's guide! We're excited that you're intere
    - Avoid silent failures
    - Document error conditions
 
-## Git Hooks and Conventional Commits
+## Conventional Commits
 
-We use [`git_hooks`](https://hex.pm/packages/git_hooks) to enforce commit message conventions:
-
-```bash
-mix git_hooks.install
-```
-
-This installs a `commit-msg` hook that validates your commit messages follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+Commit messages must follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
 
 ### Commit Message Format
 
@@ -235,7 +226,7 @@ The hook will reject non-conforming commits, ensuring a clean changelog can be g
 
 ## Release Process
 
-Releases are handled automatically by maintainers using `git_ops`. Contributors should:
+Releases are handled automatically by maintainers. Contributors should:
 
 1. **Use Conventional Commits** - Your commit messages determine changelog entries:
    - `feat:` commits create "Added" entries
