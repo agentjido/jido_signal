@@ -334,14 +334,14 @@ Track signal acknowledgments for reliable processing:
 )
 
 # Receive and acknowledge signals
-{:ok, [recorded]} = Bus.publish(:my_app_bus, [payment_signal])
+{:ok, [_recorded]} = Bus.publish(:my_app_bus, [payment_signal])
 
 receive do
   {:signal, ^payment_signal} ->
     process_payment(payment_signal)
 
-    # Acknowledge the Bus record ID.
-    Bus.ack(:my_app_bus, sub_id, recorded.id)
+    # A live consumer can acknowledge the delivered Signal ID.
+    Bus.ack(:my_app_bus, sub_id, payment_signal.id)
 end
 
 # Reconnect a replacement target. Unacknowledged retained records are sent again.

@@ -128,7 +128,12 @@ defmodule Jido.Signal.Bus do
     end
   end
 
-  @doc "Acknowledges one or more record IDs for a persistent subscription."
+  @doc """
+  Acknowledges one or more pending records for a persistent subscription.
+
+  A stored record ID is the canonical identifier. The delivered Signal ID is
+  also accepted for v2 compatibility.
+  """
   @spec ack(server(), subscription_id(), String.t() | [String.t()] | integer()) ::
           :ok | {:error, term()}
   def ack(bus, subscription_id, record_ids) do
@@ -569,7 +574,7 @@ defmodule Jido.Signal.Bus do
     subscriber = %{subscriber | last_seen_cursor: max(subscriber.last_seen_cursor, cursor)}
 
     if subscriber.persistent? && subscriber.disconnected? do
-      pending = Map.put(subscriber.pending, Map.fetch!(record, "id"), cursor)
+      pending = Map.put(subscriber.pending, Map.fetch!(record, "id"), pending_entry(record))
       {:ok, put_subscriber(state, %{subscriber | pending: pending})}
     else
       case run_dispatch(state, record_to_public!(record).signal, subscriber) do
@@ -641,7 +646,7 @@ defmodule Jido.Signal.Bus do
   defp handle_delivery_success(state, record, subscriber) do
     if subscriber.persistent? do
       pending =
-        Map.put(subscriber.pending, Map.fetch!(record, "id"), Map.fetch!(record, "cursor"))
+        Map.put(subscriber.pending, Map.fetch!(record, "id"), pending_entry(record))
 
       {:ok, put_subscriber(state, %{subscriber | pending: pending})}
     else
@@ -693,8 +698,15 @@ defmodule Jido.Signal.Bus do
   defp continuous_checkpoint(%Subscriber{pending: pending, last_seen_cursor: last_seen}) do
     case Map.values(pending) do
       [] -> last_seen
-      cursors -> max(Enum.min(cursors) - 1, 0)
+      entries -> max(entries |> Enum.map(& &1.cursor) |> Enum.min() |> Kernel.-(1), 0)
     end
+  end
+
+  defp pending_entry(record) do
+    %{
+      cursor: Map.fetch!(record, "cursor"),
+      signal_id: record |> Map.fetch!("signal") |> Map.fetch!("id")
+    }
   end
 
   defp replay_records(state, path, start_timestamp, opts)
@@ -727,11 +739,11 @@ defmodule Jido.Signal.Bus do
   defp maybe_take(records, :infinity), do: records
   defp maybe_take(records, count), do: Enum.take(records, count)
 
-  defp acknowledge(state, subscription_id, record_ids) do
+  defp acknowledge(state, subscription_id, ack_ids) do
     with {:ok, subscriber} <- fetch_persistent_subscriber(state, subscription_id),
-         {:ok, ids} <- normalize_ack_ids(record_ids),
-         :ok <- validate_pending_ids(subscriber, ids) do
-      subscriber = %{subscriber | pending: Map.drop(subscriber.pending, ids)}
+         {:ok, identifiers} <- normalize_ack_ids(ack_ids),
+         {:ok, record_ids} <- resolve_pending_record_ids(subscriber, identifiers) do
+      subscriber = %{subscriber | pending: Map.drop(subscriber.pending, record_ids)}
       persist_subscriber_checkpoint(state, subscriber)
     end
   end
@@ -746,10 +758,28 @@ defmodule Jido.Signal.Bus do
 
   defp normalize_ack_ids(_ids), do: {:error, :invalid_ack_argument}
 
-  defp validate_pending_ids(subscriber, ids) do
-    if Enum.all?(ids, &Map.has_key?(subscriber.pending, &1)),
-      do: :ok,
-      else: {:error, :unknown_signal_id}
+  defp resolve_pending_record_ids(subscriber, identifiers) do
+    Enum.reduce_while(identifiers, {:ok, []}, fn identifier, {:ok, resolved} ->
+      case resolve_pending_record_id(subscriber.pending, identifier, resolved) do
+        {:ok, record_id} -> {:cont, {:ok, [record_id | resolved]}}
+        :error -> {:halt, {:error, :unknown_signal_id}}
+      end
+    end)
+  end
+
+  defp resolve_pending_record_id(pending, identifier, resolved) do
+    if Map.has_key?(pending, identifier) do
+      {:ok, identifier}
+    else
+      pending
+      |> Enum.reject(fn {record_id, _entry} -> record_id in resolved end)
+      |> Enum.filter(fn {_record_id, entry} -> entry.signal_id == identifier end)
+      |> Enum.min_by(fn {_record_id, entry} -> entry.cursor end, fn -> nil end)
+      |> case do
+        {record_id, _entry} -> {:ok, record_id}
+        nil -> :error
+      end
+    end
   end
 
   defp reconnect_subscriber(_state, _subscription_id, client_pid) when not is_pid(client_pid),

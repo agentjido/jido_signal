@@ -121,8 +121,8 @@ Persistent subscriptions provide:
   dispatch: {:pid, target: self()}
 )
 
-{:ok, [recorded]} = Bus.publish(:my_bus, [signal])
-:ok = Bus.ack(:my_bus, sub_id, recorded.id)
+{:ok, [_recorded]} = Bus.publish(:my_bus, [signal])
+:ok = Bus.ack(:my_bus, sub_id, signal.id)
 ```
 
 See [Event Bus guide](event-bus.md) for DLQ management APIs.

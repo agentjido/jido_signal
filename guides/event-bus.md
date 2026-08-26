@@ -84,12 +84,12 @@ and unacknowledged record IDs. Use `persistent?` as the option name.
     dispatch: {:pid, target: self()}
   )
 
-{:ok, [recorded]} = Bus.publish(:my_bus, [order_signal])
+{:ok, [_recorded]} = Bus.publish(:my_bus, [order_signal])
 
 receive do
   {:signal, ^order_signal} ->
     process_order(order_signal)
-    :ok = Bus.ack(:my_bus, subscription_id, recorded.id)
+    :ok = Bus.ack(:my_bus, subscription_id, order_signal.id)
 end
 ```
 
@@ -99,9 +99,11 @@ end
 - `:current` starts after the newest retained record.
 - A non-negative integer starts after that cursor.
 
-You can acknowledge one ID or a list of IDs. The Bus advances the checkpoint
-only across a continuous set of handled records. An out-of-order acknowledgement
-does not skip an older unacknowledged record.
+You can acknowledge one ID or a list of IDs. Use a `RecordedSignal.id` when it
+is available from `publish/2` or `replay/4`. A live subscriber can use the
+delivered `Signal.id`; this keeps the v2 acknowledgement contract. The Bus
+advances the checkpoint only across a continuous set of handled records. An
+out-of-order acknowledgement does not skip an older unacknowledged record.
 
 When the target process exits, a persistent subscription stays registered. Use
 `reconnect/3` with the new process:

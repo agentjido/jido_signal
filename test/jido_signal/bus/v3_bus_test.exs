@@ -163,6 +163,21 @@ defmodule Jido.Signal.Bus.V3BusTest do
     refute_receive {:signal, _signal}, 50
   end
 
+  test "accepts a delivered Signal ID for v2 acknowledgement compatibility" do
+    bus = start_bus()
+
+    assert {:ok, subscription_id} =
+             Bus.subscribe(bus, "compatible.*", persistent?: true, start_from: :current)
+
+    event = signal("compatible.ack")
+    assert {:ok, [_record]} = Bus.publish(bus, [event])
+    assert_receive {:signal, ^event}
+
+    assert :ok = Bus.ack(bus, subscription_id, event.id)
+    assert {:ok, 1} = Bus.reconnect(bus, subscription_id, self())
+    refute_receive {:signal, ^event}, 50
+  end
+
   test "retains records while a persistent subscriber is disconnected" do
     bus = start_bus()
     parent = self()

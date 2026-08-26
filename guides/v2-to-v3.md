@@ -151,9 +151,10 @@ Persistent subscriptions stay, with a smaller contract:
 :ok = Jido.Signal.Bus.ack(:events, subscription_id, recorded.id)
 ```
 
-Acknowledge the `RecordedSignal.id`. Do not acknowledge the Signal envelope ID.
-The Bus does not advance a checkpoint past an older unacknowledged record.
-Reconnect gives at-least-once delivery, so consumers must handle duplicates.
+Acknowledge the `RecordedSignal.id` when the caller has it. A live subscriber
+can acknowledge the delivered Signal envelope ID for v2 compatibility. The Bus
+does not advance a checkpoint past an older unacknowledged record. Reconnect
+gives at-least-once delivery, so consumers must handle duplicates.
 
 The v2 options `max_in_flight`, `max_pending`, `max_attempts`, and
 `retry_interval` have no v3 effect and must be removed. The Bus has no internal
