@@ -8,7 +8,7 @@
 [![Ecosystem](https://img.shields.io/badge/ecosystem-jido.run-0ea5e9.svg)](https://jido.run/ecosystem)
 [![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://jido.run/discord)
 
-> **Agent Communication Envelope and Utilities**
+> **Agent Communication Envelope, Routing, and Delivery**
 
 _`Jido.Signal` is part of the [Jido](https://github.com/agentjido/jido) project. Learn more about Jido at [jido.run](https://jido.run)._
 
@@ -69,7 +69,7 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - Middleware pipeline for cross-cutting concerns with timeout protection
 - Bounded replay through a Bus-owned Store boundary
 - Application-owned retry, rate-limit, and workload-isolation policy
-- Instance isolation for multi-tenant deployments
+- Instance isolation for fixed application domains
 
 ### **Advanced Routing Engine**
 - Trie-based pattern matching for optimal performance
@@ -445,10 +445,10 @@ durability:
 
 ### Instance Isolation
 
-For multi-tenant applications or testing, create isolated signal infrastructure:
+For fixed application domains or tests, create isolated signal infrastructure:
 
 ```elixir
-# Start an isolated instance with its own Registry, TaskSupervisor, etc.
+# Start an isolated instance with its own Registry and middleware TaskSupervisor.
 {:ok, _} = Jido.Signal.Instance.start_link(name: MyApp.Jido)
 
 # Start buses scoped to the instance
@@ -465,6 +465,10 @@ For multi-tenant applications or testing, create isolated signal infrastructure:
 {:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantA.Jido)
 {:ok, _} = Jido.Signal.Bus.start_link(name: :events, jido: TenantB.Jido)
 ```
+
+Use only fixed module or atom names from application code. Do not create an
+instance name from a tenant ID or other runtime input. Instance scoping creates
+process-name atoms that remain in the VM atom table.
 
 ## Use Cases
 

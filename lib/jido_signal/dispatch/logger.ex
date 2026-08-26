@@ -64,7 +64,6 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
 
   alias Jido.Signal.Dispatch.Adapter
   alias Jido.Signal.Sanitizer
-  alias Jido.Signal.Util
 
   require Logger
 
@@ -106,7 +105,7 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
   """
   @spec deliver(Jido.Signal.t(), Keyword.t()) :: :ok
   def deliver(signal, opts) do
-    level = Keyword.get(opts, :log_level, Util.resolve_log_level(opts))
+    level = resolve_log_level(opts)
     structured = Keyword.get(opts, :structured, false)
     include_data = Keyword.get(opts, :include_data, true)
 
@@ -148,4 +147,18 @@ defmodule Jido.Signal.Dispatch.LoggerAdapter do
     "SIGNAL: #{signal.type} from #{signal.source} " <>
       "with data=#{Sanitizer.preview(signal.data, :telemetry)}"
   end
+
+  defp resolve_log_level(opts) do
+    default =
+      :jido_signal
+      |> Application.get_env(:default_log_level, :info)
+      |> normalize_log_level(:info)
+
+    opts
+    |> Keyword.get(:log_level, Keyword.get(opts, :level, default))
+    |> normalize_log_level(default)
+  end
+
+  defp normalize_log_level(level, _fallback) when level in @valid_levels, do: level
+  defp normalize_log_level(_level, fallback), do: fallback
 end

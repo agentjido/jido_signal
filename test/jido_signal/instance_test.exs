@@ -4,7 +4,7 @@ defmodule Jido.Signal.InstanceTest do
   alias Jido.Signal.Instance
   alias Jido.Signal.Names
 
-  describe "Names.scoped/2" do
+  describe "internal name resolution" do
     test "returns default when no jido option" do
       assert Names.registry([]) == Jido.Signal.Registry
       assert Names.task_supervisor([]) == Jido.Signal.TaskSupervisor
@@ -28,17 +28,9 @@ defmodule Jido.Signal.InstanceTest do
     end
   end
 
-  describe "Names.instance/1" do
-    test "extracts jido instance from options" do
-      assert Names.instance([]) == nil
-      assert Names.instance(jido: nil) == nil
-      assert Names.instance(jido: MyApp.Jido) == MyApp.Jido
-    end
-  end
-
   describe "Instance.start_link/1" do
     test "starts instance supervisor with all children" do
-      instance = :"TestInstance#{System.unique_integer()}"
+      instance = __MODULE__.Started
       assert {:ok, pid} = Instance.start_link(name: instance)
       assert is_pid(pid)
 
@@ -54,7 +46,7 @@ defmodule Jido.Signal.InstanceTest do
     end
 
     test "running?/1 returns true for started instance" do
-      instance = :"TestInstance#{System.unique_integer()}"
+      instance = __MODULE__.Running
       refute Instance.running?(instance)
 
       {:ok, _pid} = Instance.start_link(name: instance)
@@ -65,8 +57,8 @@ defmodule Jido.Signal.InstanceTest do
     end
 
     test "multiple instances are isolated" do
-      instance1 = :"TestInstance1_#{System.unique_integer()}"
-      instance2 = :"TestInstance2_#{System.unique_integer()}"
+      instance1 = __MODULE__.First
+      instance2 = __MODULE__.Second
 
       {:ok, pid1} = Instance.start_link(name: instance1)
       {:ok, pid2} = Instance.start_link(name: instance2)
@@ -83,11 +75,25 @@ defmodule Jido.Signal.InstanceTest do
       Instance.stop(instance1)
       Instance.stop(instance2)
     end
+
+    test "rejects invalid options" do
+      assert {:error, {:invalid_options, message}} = Instance.start_link([])
+      assert is_binary(message)
+
+      assert {:error, {:invalid_options, message}} =
+               Instance.start_link(name: nil, unknown: true)
+
+      assert is_binary(message)
+
+      assert_raise ArgumentError, fn ->
+        Instance.child_spec(name: __MODULE__.Invalid, shutdown: -1)
+      end
+    end
   end
 
   describe "Instance.stop/1" do
     test "stops instance and all children" do
-      instance = :"TestInstance#{System.unique_integer()}"
+      instance = __MODULE__.Stopped
       {:ok, _pid} = Instance.start_link(name: instance)
 
       instance_opts = [jido: instance]
@@ -101,14 +107,14 @@ defmodule Jido.Signal.InstanceTest do
     end
 
     test "stop/1 is idempotent" do
-      instance = :"TestInstance#{System.unique_integer()}"
+      instance = __MODULE__.NotStarted
       assert :ok = Instance.stop(instance)
     end
 
     test "stop/1 tolerates supervisor exiting between lookup and stop" do
       Process.flag(:trap_exit, true)
 
-      instance = :"TestInstance#{System.unique_integer()}"
+      instance = __MODULE__.Race
       {:ok, _pid} = Instance.start_link(name: instance)
 
       supervisor_pid = Process.whereis(Names.supervisor(jido: instance))

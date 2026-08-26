@@ -5,8 +5,8 @@ defmodule Jido.Signal.Application do
   @doc """
   Starts the Jido Signal application.
 
-  Initializes the supervision tree with the Registry for managing signal subscriptions
-  and a Task Supervisor for handling asynchronous operations.
+  Initializes the supervision tree with the Registry for named Buses and a Task
+  Supervisor for Bus middleware callbacks.
 
   ## Parameters
 

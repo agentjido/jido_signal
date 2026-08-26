@@ -42,17 +42,17 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   use Jido.Signal.Bus.Middleware
 
   alias Jido.Signal.Sanitizer
-  alias Jido.Signal.Util
 
   require Logger
 
   @type context :: Jido.Signal.Bus.Middleware.context()
   @type dispatch_result :: Jido.Signal.Bus.Middleware.dispatch_result()
+  @valid_levels [:debug, :info, :warning, :error]
 
   @impl true
   def init(opts) do
     config = %{
-      level: Util.resolve_log_level(opts),
+      level: resolve_log_level(opts),
       log_publish: Keyword.get(opts, :log_publish, true),
       log_dispatch: Keyword.get(opts, :log_dispatch, true),
       log_errors: Keyword.get(opts, :log_errors, true),
@@ -222,4 +222,18 @@ defmodule Jido.Signal.Bus.Middleware.Logger do
   defp format_dispatch_info(dispatch) do
     inspect(dispatch)
   end
+
+  defp resolve_log_level(opts) do
+    default =
+      :jido_signal
+      |> Application.get_env(:default_log_level, :info)
+      |> normalize_log_level(:info)
+
+    opts
+    |> Keyword.get(:log_level, Keyword.get(opts, :level, default))
+    |> normalize_log_level(default)
+  end
+
+  defp normalize_log_level(level, _fallback) when level in @valid_levels, do: level
+  defp normalize_log_level(_level, fallback), do: fallback
 end

@@ -47,6 +47,10 @@ defmodule Jido.Signal.ErrorTest do
       refute Error.retryable?(dispatch_error({:http_status, 400}))
       refute Error.retryable?(dispatch_error({:transport, :certificate_expired}))
     end
+
+    test "ignores a non-Boolean retry override" do
+      refute Error.retryable?(Error.dispatch_error("failed", %{retryable?: :yes}))
+    end
   end
 
   defp dispatch_error(reason) do

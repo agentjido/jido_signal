@@ -3,7 +3,7 @@ defmodule Jido.Signal.MixProject do
 
   @version "3.0.0"
   @source_url "https://github.com/agentjido/jido_signal"
-  @description "Agent Communication Envelope and Utilities"
+  @description "Agent Communication Envelope, Routing, and Delivery"
 
   def vsn do
     @version
@@ -94,9 +94,7 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Error,
           Jido.Signal.ID,
           Jido.Signal.Trace,
-          Jido.Signal.Sanitizer,
-          Jido.Signal.Telemetry,
-          Jido.Signal.Util
+          Jido.Signal.Telemetry
         ],
         "Signal Routing": [
           Jido.Signal.Router,
@@ -124,8 +122,7 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Serialization
         ],
         "System Infrastructure": [
-          Jido.Signal.Instance,
-          Jido.Signal.Names
+          Jido.Signal.Instance
         ],
         "Errors & Exceptions": [
           Jido.Signal.Error.DispatchError,

@@ -29,9 +29,10 @@ defmodule Jido.Signal.Bus.Middleware do
           optional(atom()) => term()
         }
   @type context :: %{
-          bus_name: atom(),
-          timestamp: DateTime.t(),
-          metadata: map()
+          required(:bus_name) => atom() | String.t(),
+          required(:timestamp) => DateTime.t(),
+          required(:metadata) => map(),
+          optional(:task_supervisor) => atom()
         }
   @type dispatch_result :: :ok | {:error, term()}
 

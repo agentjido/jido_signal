@@ -152,8 +152,8 @@ defmodule MyApp.SignalTest do
   alias Jido.Signal.Bus
 
   setup do
-    # Create unique instance per test
-    instance = :"TestInstance_#{System.unique_integer([:positive])}"
+    # This fixed module name is safe to use as an instance name.
+    instance = __MODULE__.SignalInstance
     {:ok, sup} = Instance.start_link(name: instance)
 
     on_exit(fn ->
@@ -175,6 +175,9 @@ defmodule MyApp.SignalTest do
   end
 end
 ```
+
+Do not create instance atoms at runtime. Use a fixed module or atom declared in
+application or test code. Runtime atoms remain in the VM atom table.
 
 ### Mock Adapters
 

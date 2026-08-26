@@ -112,6 +112,15 @@ defmodule Jido.Signal.Schema do
   defp static_schema_data(%Zoi.Types.Lazy{}, path),
     do: static_data_error("lazy schemas are not supported", path)
 
+  defp static_schema_data(%Zoi.Types.Meta{} = meta, path) do
+    with :ok <- static_schema_effects(meta.effects, path ++ [:effects]) do
+      meta
+      |> Map.from_struct()
+      |> Map.delete(:effects)
+      |> static_schema_data(path)
+    end
+  end
+
   defp static_schema_data(term, path) when is_function(term),
     do: static_data_error("anonymous functions are not supported", path)
 
@@ -150,6 +159,38 @@ defmodule Jido.Signal.Schema do
   end
 
   defp static_schema_data(_term, _path), do: :ok
+
+  defp static_schema_effects(effects, path) when is_list(effects) do
+    effects
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {effect, index}, :ok ->
+      case static_schema_effect(effect, path ++ [index]) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp static_schema_effects(_effects, path),
+    do: static_data_error("schema effects must be a list", path)
+
+  defp static_schema_effect({kind, {module, function, args}}, path)
+       when kind in [:refine, :transform] and is_atom(module) and is_atom(function) and
+              is_list(args) do
+    static_schema_data(args, path ++ [kind, :args])
+  end
+
+  defp static_schema_effect({kind, effect}, path)
+       when kind in [:refine, :transform] and is_function(effect) do
+    static_data_error("anonymous functions are not supported", path)
+  end
+
+  defp static_schema_effect(_effect, path) do
+    static_data_error(
+      "custom schema effects must use {Module, :function, args} MFA values",
+      path
+    )
+  end
 
   defp static_schema_list_data([], _path, _index), do: :ok
 

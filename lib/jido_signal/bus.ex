@@ -22,9 +22,9 @@ defmodule Jido.Signal.Bus do
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
   alias Jido.Signal.ID
+  alias Jido.Signal.Names
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
-  alias Jido.Signal.Util
 
   @type server ::
           pid() | atom() | binary() | {name :: atom() | binary(), registry :: module()}
@@ -79,8 +79,33 @@ defmodule Jido.Signal.Bus do
     GenServer.start_link(__MODULE__, {name, opts}, name: via_tuple(name, opts))
   end
 
-  defdelegate via_tuple(name, opts \\ []), to: Util
-  defdelegate whereis(server, opts \\ []), to: Util
+  @doc "Returns the Registry tuple for a Bus name."
+  @spec via_tuple(server(), keyword()) :: {:via, Registry, {module(), String.t()}}
+  def via_tuple(name_or_tuple, opts \\ [])
+
+  def via_tuple({name, registry}, _opts) when is_atom(registry) do
+    {:via, Registry, {registry, normalize_name(name)}}
+  end
+
+  def via_tuple(name, opts) do
+    {:via, Registry, {registry(opts), normalize_name(name)}}
+  end
+
+  @doc "Finds a Bus by PID, name, or `{name, registry}` tuple."
+  @spec whereis(server(), keyword()) :: {:ok, pid()} | {:error, :not_found}
+  def whereis(server, opts \\ [])
+
+  def whereis(pid, _opts) when is_pid(pid) do
+    if Process.alive?(pid), do: {:ok, pid}, else: {:error, :not_found}
+  end
+
+  def whereis({name, registry}, _opts) when is_atom(registry) do
+    registry_lookup(registry, normalize_name(name))
+  end
+
+  def whereis(name, opts) do
+    registry_lookup(registry(opts), normalize_name(name))
+  end
 
   @doc """
   Adds a subscription for a signal-type path.
@@ -1044,7 +1069,33 @@ defmodule Jido.Signal.Bus do
   end
 
   defp middleware_context(state) do
-    %{bus_name: state.name, timestamp: DateTime.utc_now(), metadata: %{}}
+    %{
+      bus_name: state.name,
+      timestamp: DateTime.utc_now(),
+      metadata: %{},
+      task_supervisor: Names.task_supervisor(jido: state.jido)
+    }
+  end
+
+  defp registry(opts) do
+    case Keyword.get(opts, :jido) do
+      nil -> Keyword.get(opts, :registry, Jido.Signal.Registry)
+      _instance -> Names.registry(opts)
+    end
+  end
+
+  defp normalize_name(name) when is_atom(name), do: Atom.to_string(name)
+  defp normalize_name(name) when is_binary(name), do: name
+
+  defp registry_lookup(registry, name) do
+    case Registry.lookup(registry, name) do
+      [{pid, _value} | _rest] -> {:ok, pid}
+      [] -> {:error, :not_found}
+    end
+  rescue
+    ArgumentError -> {:error, :not_found}
+  catch
+    :exit, _reason -> {:error, :not_found}
   end
 
   defp emit_dispatch(event, state, signal, subscriber, extra) do

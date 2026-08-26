@@ -140,7 +140,7 @@ config = {:pid, [target: dead_pid, delivery_mode: :async]}
 
 ## Instance Isolation
 
-For multi-tenant applications or isolated testing, start an isolated instance:
+For a fixed application domain or isolated testing, start an isolated instance:
 
 ```elixir
 # Start isolated instance
@@ -150,7 +150,10 @@ For multi-tenant applications or isolated testing, start an isolated instance:
 {:ok, _} = Jido.Signal.Bus.start_link(name: :my_bus, jido: MyApp.Jido)
 ```
 
-See [Event Bus](event-bus.md#instance-isolation) for complete multi-tenant examples.
+The instance name must be a fixed module or atom from application code. Do not
+create it from a tenant ID or other runtime input.
+
+See [Event Bus](event-bus.md#instance-isolation) for complete examples.
 
 ## Next Steps
 

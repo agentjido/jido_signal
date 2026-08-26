@@ -41,10 +41,19 @@ transform, and callback functions with named `{Module, :function, args}` MFA
 values. Lazy schemas are not supported. The compiler rejects these values when
 it expands `use Jido.Signal`.
 
+Typed Signal modules expose their definition through `metadata/0`. The old
+generated `to_json/0` function is removed because it returned definition data,
+not JSON.
+
 ## Make Envelope Semantics Explicit
 
 Jido generates a UUID7 only when it creates a new Signal ID. It accepts any
 non-empty external ID when it reads a Signal.
+
+`Jido.Signal.ID` now contains only `generate/0`, `generate!/0`,
+`extract_timestamp/1`, `compare/2`, and `valid?/1`. Remove calls to the old
+sequential, batch, sequence-number, and sortable-format helpers. UUID7 values
+created in the same millisecond have random order.
 
 The CloudEvents wire `specversion` is `"1.0"`. The old `"1.0.2"` value named a
 specification document patch. The v3 reader accepts that old value and
@@ -208,6 +217,16 @@ The common Bus boundary stays:
 
 Bus implementation state is private. Do not call `:sys.get_state/1` or depend
 on Bus state, subscriber, partition, or worker structs.
+
+`Jido.Signal.Util` is removed. Use `Jido.Signal.Bus.via_tuple/2` and
+`Jido.Signal.Bus.whereis/2` for Bus registration and lookup. The package
+name-resolution and value-sanitization helpers are internal and are not
+application APIs.
+
+`Jido.Signal.Instance` validates its options with Zoi. Use a fixed module or
+atom from application code as its name. Do not make instance atoms from tenant
+IDs or other runtime values. Instance-scoped Bus middleware runs under the
+instance Task Supervisor.
 
 ### Replay and Storage
 

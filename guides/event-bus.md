@@ -211,7 +211,12 @@ alias Jido.Signal.Instance
 ```
 
 Pass the Bus PID to publish and subscribe functions after instance-scoped
-lookup.
+lookup. Middleware callbacks for that Bus run under the instance Task
+Supervisor.
+
+Use only fixed module or atom names from application code. Do not build an
+instance name from a tenant ID or other runtime input. Scoped process names are
+atoms that remain in the VM atom table.
 
 ## Removed v2 Bus Features
 

@@ -1,10 +1,5 @@
 defmodule Jido.Signal.Sanitizer do
-  @moduledoc """
-  Shared sanitization profiles for observability and transport boundaries.
-
-  Use `:telemetry` when values are heading to logs or telemetry metadata.
-  Use `:transport` when values are crossing a public, serialized boundary.
-  """
+  @moduledoc false
 
   alias Jido.Signal
 
@@ -20,9 +15,11 @@ defmodule Jido.Signal.Sanitizer do
                     "authorization",
                     "client_secret",
                     "cookie",
+                    "credential",
                     "passphrase",
                     "password",
                     "private_key",
+                    "proxy_authorization",
                     "refresh_token",
                     "secret",
                     "signature",
@@ -48,7 +45,11 @@ defmodule Jido.Signal.Sanitizer do
   @spec preview(term(), profile(), keyword()) :: String.t()
   def preview(value, profile \\ :telemetry, opts \\ [])
       when profile in [:telemetry, :transport] do
-    max_length = Keyword.get(opts, :max_length, default_preview_length(profile))
+    max_length =
+      case Keyword.get(opts, :max_length, default_preview_length(profile)) do
+        length when is_integer(length) and length >= 0 -> length
+        _invalid -> default_preview_length(profile)
+      end
 
     value
     |> sanitize(profile)
@@ -69,7 +70,15 @@ defmodule Jido.Signal.Sanitizer do
   defp do_sanitize(value, profile, %{max_binary: max_binary}, _depth) when is_binary(value) do
     case profile do
       :telemetry ->
-        truncate_binary(value, max_binary)
+        if String.valid?(value) do
+          truncate_binary(value, max_binary)
+        else
+          %{
+            __type__: :binary,
+            bytes: byte_size(value),
+            preview: value |> Base.encode64() |> truncate_binary(max_binary)
+          }
+        end
 
       :transport ->
         if String.valid?(value) do
@@ -112,7 +121,14 @@ defmodule Jido.Signal.Sanitizer do
     do: NaiveDateTime.to_iso8601(value)
 
   defp do_sanitize(%Time{} = value, _profile, _opts, _depth), do: Time.to_iso8601(value)
-  defp do_sanitize(%URI{} = value, _profile, _opts, _depth), do: URI.to_string(value)
+
+  defp do_sanitize(%URI{} = value, _profile, _opts, _depth) do
+    value
+    |> Map.put(:userinfo, nil)
+    |> Map.put(:query, nil)
+    |> Map.put(:fragment, nil)
+    |> URI.to_string()
+  end
 
   defp do_sanitize(%Signal{} = value, profile, opts, depth),
     do: sanitize_signal(value, profile, opts, depth)
@@ -134,21 +150,19 @@ defmodule Jido.Signal.Sanitizer do
     %{"__type__" => value_type(value), "value" => inspect(value)}
   end
 
-  defp do_sanitize(value, :telemetry, _opts, _depth) when is_tuple(value) do
-    value
-    |> Tuple.to_list()
-    |> Enum.map(&sanitize(&1, :telemetry))
-    |> List.to_tuple()
-  end
+  defp do_sanitize(value, profile, opts, depth) when is_tuple(value) do
+    if depth >= opts.max_depth do
+      summarize_collection(value, profile)
+    else
+      {items, truncated?} = value |> Tuple.to_list() |> take_bounded(opts.max_items)
+      items = Enum.map(items, &do_sanitize(&1, profile, opts, depth + 1))
+      items = append_list_truncation_marker(items, truncated?, tuple_size(value), profile)
 
-  defp do_sanitize(value, :transport, opts, depth) when is_tuple(value) do
-    %{
-      "__type__" => "tuple",
-      "items" =>
-        value
-        |> Tuple.to_list()
-        |> Enum.map(&do_sanitize(&1, :transport, opts, depth + 1))
-    }
+      case profile do
+        :telemetry -> List.to_tuple(items)
+        :transport -> %{"__type__" => "tuple", "items" => items}
+      end
+    end
   end
 
   defp do_sanitize(value, profile, _opts, _depth)
@@ -189,12 +203,9 @@ defmodule Jido.Signal.Sanitizer do
     fields =
       exception
       |> Map.from_struct()
-      |> Map.drop([:__exception__, :__struct__])
+      |> Map.drop([:__exception__, :__struct__, :message])
 
-    base = %{
-      module: inspect(exception.__struct__),
-      message: Exception.message(exception)
-    }
+    base = %{module: inspect(exception.__struct__)}
 
     details =
       if map_size(fields) == 0 do
@@ -203,14 +214,18 @@ defmodule Jido.Signal.Sanitizer do
         do_sanitize(fields, profile, opts, depth + 1)
       end
 
-    case profile do
-      :telemetry ->
+    case {profile, map_size(fields)} do
+      {:telemetry, 0} ->
+        base
+
+      {:telemetry, _size} ->
         Map.put(base, :details, details)
 
-      :transport ->
-        base
-        |> Map.put(:details, details)
-        |> stringify_keys()
+      {:transport, 0} ->
+        stringify_keys(base)
+
+      {:transport, _size} ->
+        base |> Map.put(:details, details) |> stringify_keys()
     end
   end
 
@@ -313,7 +328,11 @@ defmodule Jido.Signal.Sanitizer do
   defp sanitize_key(key, :transport), do: key_sort_token(key)
 
   defp key_sort_token(key) when is_atom(key), do: Atom.to_string(key)
-  defp key_sort_token(key) when is_binary(key), do: key
+
+  defp key_sort_token(key) when is_binary(key) do
+    if String.valid?(key), do: key, else: "base64:" <> Base.encode64(key)
+  end
+
   defp key_sort_token(key), do: inspect(key)
 
   defp sensitive_key?(key) do
@@ -348,6 +367,14 @@ defmodule Jido.Signal.Sanitizer do
     %{"summary" => "list", "count" => length(collection)}
   end
 
+  defp summarize_collection(collection, :telemetry) when is_tuple(collection) do
+    %{summary: :tuple, size: tuple_size(collection)}
+  end
+
+  defp summarize_collection(collection, :transport) when is_tuple(collection) do
+    %{"summary" => "tuple", "size" => tuple_size(collection)}
+  end
+
   defp summarize_collection(value, :telemetry) do
     %{summary: value_type(value)}
   end
@@ -366,7 +393,24 @@ defmodule Jido.Signal.Sanitizer do
   defp redacted_value(:transport), do: @redacted
 
   defp truncate_binary(value, max_binary) when byte_size(value) <= max_binary, do: value
-  defp truncate_binary(value, max_binary), do: binary_part(value, 0, max_binary) <> "..."
+
+  defp truncate_binary(value, max_binary) do
+    value
+    |> valid_binary_prefix(max_binary)
+    |> Kernel.<>("...")
+  end
+
+  defp valid_binary_prefix(_value, 0), do: ""
+
+  defp valid_binary_prefix(value, size) do
+    prefix = binary_part(value, 0, size)
+
+    if String.valid?(value) and not String.valid?(prefix) do
+      valid_binary_prefix(value, size - 1)
+    else
+      prefix
+    end
+  end
 
   defp compact_map(map) do
     Enum.reject(map, fn {_key, value} -> is_nil(value) end)
@@ -389,5 +433,8 @@ defmodule Jido.Signal.Sanitizer do
   defp value_type(value) when is_function(value), do: "function"
   defp value_type(value) when is_port(value), do: "port"
   defp value_type(value) when is_bitstring(value), do: "bitstring"
-  defp value_type(value), do: value |> Kernel.inspect() |> truncate_binary(64)
+  defp value_type(value) when is_tuple(value), do: "tuple"
+  defp value_type(value) when is_map(value), do: "map"
+  defp value_type(value) when is_list(value), do: "list"
+  defp value_type(_value), do: "term"
 end

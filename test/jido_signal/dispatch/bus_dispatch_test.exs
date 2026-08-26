@@ -56,7 +56,7 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
   describe "deliver/2" do
     setup do
-      bus_name = :"test_bus_#{System.unique_integer([:positive])}"
+      bus_name = __MODULE__.DefaultBus
       start_supervised!({Bus, name: bus_name})
       {:ok, bus_name: bus_name}
     end
@@ -83,10 +83,10 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
   describe "deliver/2 with instance isolation" do
     setup do
-      instance = :"TestInstance_#{System.unique_integer([:positive])}"
+      instance = __MODULE__.Isolated
       {:ok, sup} = Instance.start_link(name: instance)
 
-      bus_name = :"isolated_bus_#{System.unique_integer([:positive])}"
+      bus_name = __MODULE__.IsolatedBus
       {:ok, _bus_pid} = Bus.start_link(name: bus_name, jido: instance)
 
       on_exit(fn ->
@@ -120,14 +120,14 @@ defmodule Jido.Signal.Dispatch.BusTest do
       assert {:error, :bus_not_found} =
                BusAdapter.deliver(signal,
                  target: :nonexistent_bus,
-                 jido: :"NoInstance_#{System.unique_integer([:positive])}"
+                 jido: __MODULE__.Missing
                )
     end
   end
 
   describe "dispatch integration" do
     setup do
-      bus_name = :"dispatch_bus_#{System.unique_integer([:positive])}"
+      bus_name = __MODULE__.DispatchBus
       start_supervised!({Bus, name: bus_name})
       {:ok, bus_name: bus_name}
     end

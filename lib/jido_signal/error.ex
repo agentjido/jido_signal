@@ -21,6 +21,7 @@ defmodule Jido.Signal.Error do
     filter_stacktraces: [Jido.Signal, "Jido.Signal."]
 
   @type detail_map :: map()
+  @type details_input :: map() | keyword()
 
   defmodule Invalid do
     @moduledoc "Splode error class for invalid inputs and validation failures."
@@ -153,7 +154,7 @@ defmodule Jido.Signal.Error do
   @doc """
   Creates a validation error for invalid input parameters.
   """
-  @spec validation_error(String.t(), keyword() | map()) :: Exception.t()
+  @spec validation_error(String.t(), details_input()) :: %InvalidInputError{}
   def validation_error(message, details \\ %{}) do
     details = normalize_details(details)
 
@@ -169,7 +170,7 @@ defmodule Jido.Signal.Error do
   @doc """
   Creates an execution error for signal processing failures.
   """
-  @spec execution_error(String.t(), keyword() | map()) :: Exception.t()
+  @spec execution_error(String.t(), details_input()) :: %ExecutionFailureError{}
   def execution_error(message, details \\ %{}) do
     ExecutionFailureError.exception(
       message: message,
@@ -181,7 +182,7 @@ defmodule Jido.Signal.Error do
   @doc """
   Creates a routing error for signal routing failures.
   """
-  @spec routing_error(String.t(), keyword() | map()) :: Exception.t()
+  @spec routing_error(String.t(), details_input()) :: %RoutingError{}
   def routing_error(message, details \\ %{}) do
     details = normalize_details(details)
 
@@ -196,7 +197,7 @@ defmodule Jido.Signal.Error do
   @doc """
   Creates a timeout error for signal processing timeouts.
   """
-  @spec timeout_error(String.t(), keyword() | map()) :: Exception.t()
+  @spec timeout_error(String.t(), details_input()) :: %TimeoutError{}
   def timeout_error(message, details \\ %{}) do
     details = normalize_details(details)
 
@@ -211,7 +212,7 @@ defmodule Jido.Signal.Error do
   @doc """
   Creates a dispatch error for signal dispatch failures.
   """
-  @spec dispatch_error(String.t(), keyword() | map()) :: Exception.t()
+  @spec dispatch_error(String.t(), details_input()) :: %DispatchError{}
   def dispatch_error(message, details \\ %{}) do
     DispatchError.exception(
       message: message,
@@ -223,7 +224,7 @@ defmodule Jido.Signal.Error do
   @doc """
   Creates an internal error.
   """
-  @spec internal_error(String.t(), keyword() | map()) :: Exception.t()
+  @spec internal_error(String.t(), details_input()) :: %InternalError{}
   def internal_error(message, details \\ %{}) do
     InternalError.exception(
       message: message,
@@ -336,44 +337,10 @@ defmodule Jido.Signal.Error do
     }
   end
 
-  @doc """
-  Formats Zoi configuration errors for compile-time module definitions.
-  """
-  @spec format_zoi_config_error(list(Zoi.Error.t()) | any(), String.t(), module()) ::
-          String.t()
-  def format_zoi_config_error(errors, module_type, module) when is_list(errors) do
-    "Invalid configuration given to use Jido.#{module_type} (#{module}): #{Zoi.prettify_errors(errors)}"
-  end
-
-  def format_zoi_config_error(error, module_type, module) when is_binary(error) do
-    "Invalid configuration given to use Jido.#{module_type} (#{module}): #{error}"
-  end
-
-  def format_zoi_config_error(error, module_type, module) do
-    "Invalid configuration given to use Jido.#{module_type} (#{module}): #{inspect(error)}"
-  end
-
-  @doc """
-  Formats a Zoi validation error for runtime parameter validation.
-  """
-  @spec format_zoi_validation_error(list(Zoi.Error.t()) | any(), String.t(), module()) ::
-          String.t()
-  def format_zoi_validation_error(errors, module_type, module) when is_list(errors) do
-    "Invalid parameters for #{module_type} (#{module}): #{Zoi.prettify_errors(errors)}"
-  end
-
-  def format_zoi_validation_error(error, module_type, module) when is_binary(error) do
-    "Invalid parameters for #{module_type} (#{module}): #{error}"
-  end
-
-  def format_zoi_validation_error(error, module_type, module) do
-    "Invalid parameters for #{module_type} (#{module}): #{inspect(error)}"
-  end
-
   defp retryable_from_details?(details) do
     details = normalize_details(details)
 
-    Map.get(details, :retryable?, false) or
+    Map.get(details, :retryable?) == true or
       retryable_reason?(Map.get(details, :reason)) or
       retryable_reason?(Map.get(details, :error))
   end
@@ -419,7 +386,10 @@ defmodule Jido.Signal.Error do
     end
   end
 
-  defp normalize_details(details) when is_list(details), do: Map.new(details)
+  defp normalize_details(details) when is_list(details) do
+    if Keyword.keyword?(details), do: Map.new(details), else: %{value: details}
+  end
+
   defp normalize_details(%{} = details), do: details
   defp normalize_details(nil), do: %{}
   defp normalize_details(details), do: %{value: details}

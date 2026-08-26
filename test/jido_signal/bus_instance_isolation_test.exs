@@ -6,10 +6,23 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
   alias Jido.Signal.Instance
   alias Jido.Signal.Names
 
+  defmodule SupervisorProbeMiddleware do
+    use Jido.Signal.Bus.Middleware
+
+    @impl true
+    def init(test_pid), do: {:ok, test_pid}
+
+    @impl true
+    def before_publish(signals, context, test_pid) do
+      supervised? = self() in Task.Supervisor.children(context.task_supervisor)
+      send(test_pid, {:middleware_supervisor, context.task_supervisor, supervised?})
+      {:cont, signals, test_pid}
+    end
+  end
+
   setup do
-    # Create unique instance names for test isolation
-    instance1 = :"TestInstance1_#{System.unique_integer([:positive])}"
-    instance2 = :"TestInstance2_#{System.unique_integer([:positive])}"
+    instance1 = __MODULE__.First
+    instance2 = __MODULE__.Second
 
     {:ok, sup1} = Instance.start_link(name: instance1)
     {:ok, sup2} = Instance.start_link(name: instance2)
@@ -34,7 +47,7 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
 
   describe "Bus with instance isolation" do
     test "bus uses instance-scoped registry when jido option provided", %{instance1: instance} do
-      bus_name = :"bus_#{System.unique_integer()}"
+      bus_name = "bus-#{System.unique_integer([:positive])}"
 
       {:ok, bus_pid} =
         Bus.start_link(
@@ -44,9 +57,7 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
 
       # Bus should be registered in the instance's registry
       instance_registry = Names.registry(jido: instance)
-      bus_name_str = Atom.to_string(bus_name)
-
-      assert [{^bus_pid, _}] = Registry.lookup(instance_registry, bus_name_str)
+      assert [{^bus_pid, _}] = Registry.lookup(instance_registry, bus_name)
     end
 
     test "buses in different instances are isolated", %{
@@ -92,13 +103,12 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
     end
 
     test "bus without jido option uses global registry" do
-      bus_name = :"global_bus_#{System.unique_integer()}"
+      bus_name = "global-bus-#{System.unique_integer([:positive])}"
 
       {:ok, bus_pid} = Bus.start_link(name: bus_name)
 
       # Should be accessible via global registry
-      bus_name_str = Atom.to_string(bus_name)
-      assert [{^bus_pid, _}] = Registry.lookup(Jido.Signal.Registry, bus_name_str)
+      assert [{^bus_pid, _}] = Registry.lookup(Jido.Signal.Registry, bus_name)
     end
 
     test "whereis resolves bus from correct instance", %{
@@ -121,7 +131,7 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
     test "instance-scoped bus dispatch works with multi-target dispatch lists", %{
       instance1: instance
     } do
-      bus_name = :"dispatch_bus_#{System.unique_integer()}"
+      bus_name = "dispatch-bus-#{System.unique_integer([:positive])}"
 
       {:ok, bus} = Bus.start_link(name: bus_name, jido: instance)
 
@@ -138,6 +148,23 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
       assert_receive {:signal, received}
       assert received.id == signal.id
       assert received.data == %{ok: true}
+    end
+
+    test "middleware callbacks use the instance Task Supervisor", %{instance1: instance} do
+      bus_name = "middleware-bus-#{System.unique_integer([:positive])}"
+
+      {:ok, bus} =
+        Bus.start_link(
+          name: bus_name,
+          jido: instance,
+          middleware: [{SupervisorProbeMiddleware, self()}]
+        )
+
+      {:ok, signal} = Signal.new("middleware.event", %{}, source: "/test")
+      assert {:ok, _records} = Bus.publish(bus, [signal])
+
+      expected_supervisor = Names.task_supervisor(jido: instance)
+      assert_receive {:middleware_supervisor, ^expected_supervisor, true}
     end
   end
 end

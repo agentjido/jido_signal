@@ -83,7 +83,7 @@ defmodule Jido.Signal.CustomTest do
       assert UserCreated.default_source() == "/accounts"
       assert %Zoi.Types.Map{} = UserCreated.schema()
 
-      assert UserCreated.to_json() == %{
+      assert UserCreated.metadata() == %{
                type: "user.created",
                default_source: "/accounts",
                datacontenttype: "application/json",
@@ -134,6 +134,56 @@ defmodule Jido.Signal.CustomTest do
           end
         )
       end
+    end
+
+    test "rejects malformed Zoi effects at compile time" do
+      module = unique_module("MalformedEffect")
+
+      assert_raise CompileError, ~r/custom schema effects must use.*MFA/, fn ->
+        create_module(
+          module,
+          quote do
+            use Jido.Signal,
+              type: "malformed.effect",
+              default_source: "/test",
+              schema:
+                Zoi.object(%{
+                  value: Zoi.string() |> Zoi.refine(:not_an_mfa)
+                })
+          end
+        )
+      end
+    end
+
+    test "validates envelope defaults at compile time" do
+      for {suffix, opts} <- [
+            {"EmptyType", [type: "", default_source: "/test"]},
+            {"InvalidSource", [type: "invalid.source", default_source: "bad source"]},
+            {"InvalidSchemaURI",
+             [
+               type: "invalid.schema.uri",
+               default_source: "/test",
+               dataschema: "/relative"
+             ]}
+          ] do
+        module = unique_module(suffix)
+
+        assert_raise CompileError, fn ->
+          create_module(
+            module,
+            quote do
+              use Jido.Signal, unquote(opts)
+            end
+          )
+        end
+      end
+    end
+
+    test "returns an error for invalid construction options" do
+      assert {:error, error} =
+               UserCreated.new(%{user_id: "123", email: "user@example.com"}, [:invalid])
+
+      assert error =~ "options"
     end
 
     test "rejects non-Zoi schemas at compile time" do

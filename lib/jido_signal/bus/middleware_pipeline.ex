@@ -251,7 +251,8 @@ defmodule Jido.Signal.Bus.MiddlewarePipeline do
 
   @spec run_with_timeout((-> term()), pos_integer(), module(), context()) :: term()
   defp run_with_timeout(fun, timeout_ms, module, context) do
-    task = Task.Supervisor.async_nolink(Jido.Signal.TaskSupervisor, fun)
+    task_supervisor = Map.get(context, :task_supervisor, Jido.Signal.TaskSupervisor)
+    task = Task.Supervisor.async_nolink(task_supervisor, fun)
 
     case Task.yield(task, timeout_ms) do
       {:ok, result} ->

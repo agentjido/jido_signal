@@ -25,15 +25,32 @@ defmodule Jido.Signal.Instance do
         jido: MyApp.Jido
       )
 
+  The instance name must be a fixed module or atom from application code. Do
+  not create instance names from tenant IDs or other runtime input. The scoped
+  process names are atoms and remain in the VM atom table.
+
   ## Child Processes
 
   Each instance starts:
   - Registry (for managing signal subscriptions)
-  - TaskSupervisor (for async operations)
+  - TaskSupervisor (for Bus middleware callbacks)
 
   """
 
   alias Jido.Signal.Names
+
+  @options_schema Zoi.keyword(
+                    [
+                      name:
+                        Zoi.atom()
+                        |> Zoi.refine({__MODULE__, :not_nil?, []})
+                        |> Zoi.required(),
+                      shutdown:
+                        Zoi.union([Zoi.integer() |> Zoi.min(0), Zoi.literal(:infinity)])
+                        |> Zoi.default(5_000)
+                    ],
+                    unrecognized_keys: :error
+                  )
 
   @type option ::
           {:name, atom()}
@@ -59,12 +76,13 @@ defmodule Jido.Signal.Instance do
   """
   @spec child_spec([option()]) :: Supervisor.child_spec()
   def child_spec(opts) do
-    name = Keyword.fetch!(opts, :name)
-    shutdown = Keyword.get(opts, :shutdown, 5000)
+    validated_opts = validate_options!(opts)
+    name = Keyword.fetch!(validated_opts, :name)
+    shutdown = Keyword.fetch!(validated_opts, :shutdown)
 
     %{
       id: {__MODULE__, name},
-      start: {__MODULE__, :start_link, [opts]},
+      start: {__MODULE__, :start_link, [validated_opts]},
       type: :supervisor,
       restart: :permanent,
       shutdown: shutdown
@@ -84,19 +102,26 @@ defmodule Jido.Signal.Instance do
     * `{:error, reason}` - Failed to start
 
   """
-  @spec start_link([option()]) :: {:ok, pid()} | {:error, term()}
+  @spec start_link([option()]) ::
+          {:ok, pid()} | {:error, term()} | {:error, {:invalid_options, String.t()}}
   def start_link(opts) do
-    name = Keyword.fetch!(opts, :name)
-    instance_opts = [jido: name]
+    with {:ok, validated_opts} <- validate_options(opts) do
+      name = Keyword.fetch!(validated_opts, :name)
+      instance_opts = [jido: name]
 
-    children = [
-      {Registry, keys: :unique, name: Names.registry(instance_opts)},
-      {Task.Supervisor, name: Names.task_supervisor(instance_opts)}
-    ]
+      children = [
+        {Registry, keys: :unique, name: Names.registry(instance_opts)},
+        {Task.Supervisor, name: Names.task_supervisor(instance_opts)}
+      ]
 
-    supervisor_name = Names.supervisor(instance_opts)
-    Supervisor.start_link(children, strategy: :one_for_one, name: supervisor_name)
+      supervisor_name = Names.supervisor(instance_opts)
+      Supervisor.start_link(children, strategy: :one_for_one, name: supervisor_name)
+    end
   end
+
+  @doc false
+  def not_nil?(nil, _context), do: {:error, "must not be nil"}
+  def not_nil?(_name, _context), do: :ok
 
   @doc """
   Checks if an instance is running.
@@ -139,8 +164,23 @@ defmodule Jido.Signal.Instance do
         try do
           Supervisor.stop(pid, :normal, timeout)
         catch
-          :exit, _reason -> :ok
+          :exit, :noproc -> :ok
+          :exit, {:noproc, _details} -> :ok
         end
+    end
+  end
+
+  defp validate_options(opts) do
+    case Zoi.parse(@options_schema, opts) do
+      {:ok, validated_opts} -> {:ok, validated_opts}
+      {:error, errors} -> {:error, {:invalid_options, Zoi.prettify_errors(errors)}}
+    end
+  end
+
+  defp validate_options!(opts) do
+    case validate_options(opts) do
+      {:ok, validated_opts} -> validated_opts
+      {:error, {:invalid_options, message}} -> raise ArgumentError, message
     end
   end
 end
