@@ -37,7 +37,7 @@ Traditional Elixir messaging (`send`, `GenServer.cast/call`) works great for sim
 
 - **Standardized Message Format**: Raw tuples and maps lack structure and metadata
 - **Event Routing**: Broadcasting to multiple interested processes based on patterns
-- **Trace Context**: Keeping correlation data across process boundaries
+- **Trace Context**: Carrying W3C traceparent and tracestate across Signal boundaries
 - **Reliable Delivery**: Ensuring critical messages aren't lost if a process crashes
 - **Cross-System Integration**: Communicating with external services via webhooks/HTTP
 

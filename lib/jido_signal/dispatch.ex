@@ -176,13 +176,16 @@ defmodule Jido.Signal.Dispatch do
   end
 
   defp dispatch_telemetry_metadata(signal, target) do
-    %{
-      adapter: target.adapter,
-      runtime_surface: :dispatch,
-      signal_type: signal_type(signal),
-      target: get_target_from_opts(target.opts),
-      target_kind: target_kind(target.opts)
-    }
+    Telemetry.add_trace(
+      %{
+        adapter: target.adapter,
+        runtime_surface: :dispatch,
+        signal_type: signal_type(signal),
+        target: get_target_from_opts(target.opts),
+        target_kind: target_kind(target.opts)
+      },
+      signal
+    )
   end
 
   defp signal_type(%{type: type}) when is_binary(type), do: type

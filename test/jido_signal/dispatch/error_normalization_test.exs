@@ -4,6 +4,7 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
   alias Jido.Signal
   alias Jido.Signal.Dispatch
   alias Jido.Signal.Error
+  alias Jido.Signal.Trace
 
   # Named function for telemetry handler to avoid performance warnings
   def handle_telemetry_event(event, measurements, metadata, _config) do
@@ -105,6 +106,8 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     )
 
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+    trace = Trace.new(trace_flags: "01")
+    {:ok, signal} = Trace.put(signal, trace)
     config = {:noop, []}
 
     # Successful dispatch
@@ -117,6 +120,9 @@ defmodule Jido.Signal.DispatchErrorNormalizationTest do
     assert metadata.target == :unknown
     assert metadata.target_kind == :unknown
     assert metadata.runtime_surface == :dispatch
+    assert metadata.jido_trace_id == trace.trace_id
+    assert metadata.jido_span_id == trace.span_id
+    assert metadata.jido_trace_flags == "01"
 
     assert_receive {:telemetry, [:jido, :dispatch, :stop], measurements, metadata}
     assert Map.has_key?(measurements, :latency_ms)

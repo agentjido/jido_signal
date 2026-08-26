@@ -1,283 +1,250 @@
 defmodule Jido.Signal.Trace do
   @moduledoc """
-  Helper functions for distributed trace management.
+  Carries W3C trace context on Signals.
 
-  Provides utilities for creating and propagating trace contexts
-  across signal boundaries. It stores W3C trace context as flat CloudEvents
-  extension context attributes.
+  A Trace contains the current trace ID, span ID, trace flags, and optional
+  `tracestate`. Signals store it in the flat `traceparent` and `tracestate`
+  CloudEvents context attributes.
 
-  ## Trace Hierarchy
-
-  - `trace_id` - Constant across entire workflow (16-byte hex)
-  - `span_id` - Unique per signal (8-byte hex)
-  - `parent_span_id` - Links child to parent signal
-  - `causation_id` - Signal ID that triggered this signal
-
-  ## W3C Trace Context Compatibility
-
-  IDs are generated in W3C-compatible format:
-  - trace_id: 32 hex chars (128-bit)
-  - span_id: 16 hex chars (64-bit)
-
-  ## Examples
-
-      # Create a new root trace
-      ctx = Jido.Signal.Trace.new_root()
-
-      # Create child context for emitted signal
-      child_ctx = Jido.Signal.Trace.child_of(parent_ctx, parent_signal.id)
-
-      # Add trace to signal
-      {:ok, traced_signal} = Jido.Signal.Trace.put(signal, ctx)
-
-      # Get trace from signal
-      ctx = Jido.Signal.Trace.get(signal)
-
-      # Ensure signal has trace (add root if missing)
-      {:ok, signal, ctx} = Jido.Signal.Trace.ensure(signal)
+  This module can create root and child trace values. A full tracing system,
+  such as OpenTelemetry, still owns span lifetime, sampling policy, export, and
+  process context.
   """
 
   alias Jido.Signal
   alias Jido.Signal.Context, as: SignalContext
-  alias Jido.Signal.Trace.Context
 
+  @trace_id_bytes 16
+  @span_id_bytes 8
   @traceparent "traceparent"
   @tracestate "tracestate"
-  @parent_span_id "parentspanid"
-  @causation_id "causationid"
+  @traceparent_pattern ~r/\A00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})\z/
 
-  @typedoc """
-  Trace context struct containing W3C-compatible trace information.
-  """
-  @type trace_context :: Context.t()
+  @schema Zoi.struct(
+            __MODULE__,
+            %{
+              trace_id:
+                Zoi.string()
+                |> Zoi.refine({__MODULE__, :validate_trace_id, []}),
+              span_id:
+                Zoi.string()
+                |> Zoi.refine({__MODULE__, :validate_span_id, []}),
+              trace_flags:
+                Zoi.string()
+                |> Zoi.refine({__MODULE__, :validate_trace_flags, []}),
+              tracestate:
+                Zoi.string()
+                |> Zoi.refine({__MODULE__, :validate_tracestate, []})
+                |> Zoi.nullable()
+                |> Zoi.optional()
+            }
+          )
 
-  @doc """
-  Creates a new root trace context.
+  @type t :: unquote(Zoi.type_spec(@schema))
+  @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  defstruct Zoi.Struct.struct_fields(@schema)
 
-  Generates new W3C-compatible trace_id (32 hex chars) and span_id (16 hex chars).
+  @doc "Returns the Zoi schema for a Trace value."
+  @spec schema() :: Zoi.schema()
+  def schema, do: @schema
 
-  ## Options
+  @doc "Creates a new root Trace."
+  @spec new(keyword()) :: t()
+  def new(opts \\ []) do
+    validate_options!(opts)
 
-  - `:causation_id` - Optional causation reference (e.g., external request ID)
-  - `:tracestate` - Optional W3C tracestate string for vendor-specific data
-
-  ## Examples
-
-      ctx = Trace.new_root()
-      ctx = Trace.new_root(causation_id: "external-123")
-      ctx = Trace.new_root(tracestate: "vendor1=value1")
-  """
-  @spec new_root(keyword()) :: Context.t()
-  def new_root(opts \\ []) do
-    Context.new!(opts)
+    build!(%__MODULE__{
+      trace_id: generate_id(@trace_id_bytes),
+      span_id: generate_id(@span_id_bytes),
+      trace_flags: Keyword.get(opts, :trace_flags, "00"),
+      tracestate: Keyword.get(opts, :tracestate)
+    })
   end
 
-  @doc """
-  Creates a child trace context that continues the parent's trace.
-
-  The child:
-  - Shares the parent's `trace_id`
-  - Gets a new unique `span_id`
-  - Sets `parent_span_id` to the parent's `span_id`
-  - Sets `causation_id` to the causing signal's ID
-  - Inherits `tracestate`
-
-  ## Examples
-
-      parent_ctx = Trace.get(parent_signal)
-      child_ctx = Trace.child_of(parent_ctx, parent_signal.id)
-  """
-  @spec child_of(Context.t() | nil, String.t() | nil) :: Context.t()
-  def child_of(parent, causation_id) do
-    Context.child_of!(parent, causation_id)
-  end
-
-  @doc """
-  Extracts trace context from a signal.
-
-  Returns `nil` if the signal has no `traceparent` context attribute.
-
-  ## Examples
-
-      ctx = Trace.get(signal)
-      case Trace.get(signal) do
-        nil -> "no trace"
-        %Context{trace_id: tid} -> "traced: \#{tid}"
-      end
-  """
-  @spec get(Signal.t()) :: Context.t() | nil
-  def get(%Signal{} = signal) do
-    with traceparent when is_binary(traceparent) <- Signal.get_context(signal, @traceparent),
-         {:ok, context} <- Context.from_traceparent(traceparent) do
-      %{
-        context
-        | tracestate: Signal.get_context(signal, @tracestate),
-          parent_span_id: Signal.get_context(signal, @parent_span_id),
-          causation_id: Signal.get_context(signal, @causation_id)
+  @doc "Creates a child Trace with a new span ID."
+  @spec child(t()) :: t()
+  def child(%__MODULE__{} = parent) do
+    if valid?(parent) do
+      %__MODULE__{
+        trace_id: parent.trace_id,
+        span_id: generate_id(@span_id_bytes),
+        trace_flags: parent.trace_flags,
+        tracestate: parent.tracestate
       }
     else
-      _missing_or_invalid -> nil
+      raise ArgumentError, "invalid parent Trace"
     end
   end
 
-  def get(_), do: nil
+  @doc "Parses a W3C version 00 traceparent value."
+  @spec from_traceparent(String.t(), String.t() | nil) ::
+          {:ok, t()} | {:error, :invalid_traceparent}
+  def from_traceparent(traceparent, tracestate \\ nil)
 
-  @doc """
-  Adds trace context to a signal.
-
-  Stores `traceparent`, optional `tracestate`, and Jido correlation attributes.
-
-  ## Examples
-
-      ctx = Trace.new_root()
-      {:ok, traced} = Trace.put(signal, ctx)
-  """
-  @spec put(Signal.t(), Context.t()) :: {:ok, Signal.t()} | {:error, term()}
-  def put(%Signal{} = signal, %Context{} = ctx) do
-    attributes =
-      %{
-        @traceparent => Context.to_traceparent(ctx),
-        @tracestate => ctx.tracestate,
-        @parent_span_id => ctx.parent_span_id,
-        @causation_id => ctx.causation_id
-      }
-      |> Enum.reject(fn {_name, value} -> is_nil(value) end)
-      |> Map.new()
-
-    with {:ok, attributes} <- SignalContext.normalize(attributes) do
-      {:ok, %{signal | extensions: Map.merge(signal.extensions, attributes)}}
+  def from_traceparent(traceparent, tracestate) when is_binary(traceparent) do
+    with [_, trace_id, span_id, trace_flags] <- Regex.run(@traceparent_pattern, traceparent),
+         {:ok, trace} <-
+           parse(%__MODULE__{
+             trace_id: trace_id,
+             span_id: span_id,
+             trace_flags: trace_flags,
+             tracestate: normalize_tracestate(tracestate)
+           }) do
+      {:ok, trace}
+    else
+      _invalid -> {:error, :invalid_traceparent}
     end
   end
 
-  @doc """
-  Adds trace context to a signal, raising on error.
+  def from_traceparent(_traceparent, _tracestate), do: {:error, :invalid_traceparent}
 
-  ## Examples
-
-      traced = Trace.put!(signal, ctx)
-  """
-  @spec put!(Signal.t(), Context.t()) :: Signal.t()
-  def put!(%Signal{} = signal, %Context{} = ctx) do
-    case put(signal, ctx) do
-      {:ok, s} -> s
-      {:error, reason} -> raise "Failed to add trace: #{inspect(reason)}"
+  @doc "Formats a Trace as a W3C version 00 traceparent value."
+  @spec to_traceparent(t()) :: String.t()
+  def to_traceparent(%__MODULE__{} = trace) do
+    if valid?(trace) do
+      "00-#{trace.trace_id}-#{trace.span_id}-#{trace.trace_flags}"
+    else
+      raise ArgumentError, "invalid Trace"
     end
   end
 
-  @doc """
-  Ensures a signal has trace context.
+  @doc "Gets the valid Trace carried by a Signal."
+  @spec get(Signal.t()) :: t() | nil
+  def get(%Signal{} = signal) do
+    case Signal.get_context(signal, @traceparent) do
+      traceparent when is_binary(traceparent) ->
+        case from_traceparent(traceparent, Signal.get_context(signal, @tracestate)) do
+          {:ok, trace} -> trace
+          {:error, :invalid_traceparent} -> nil
+        end
 
-  If the signal already has a trace, returns it unchanged.
-  If not, creates a new root trace and adds it.
+      _missing ->
+        nil
+    end
+  end
 
-  Returns `{:ok, signal, trace_context}`.
+  def get(_signal), do: nil
 
-  ## Options
+  @doc "Puts a valid Trace on a Signal."
+  @spec put(Signal.t(), t()) :: {:ok, Signal.t()} | {:error, String.t()}
+  def put(%Signal{} = signal, %__MODULE__{} = trace) do
+    case parse(trace) do
+      {:ok, trace} ->
+        attributes =
+          %{
+            @traceparent => to_traceparent(trace),
+            @tracestate => trace.tracestate
+          }
+          |> Map.reject(fn {_name, value} -> is_nil(value) end)
 
-  - `:causation_id` - Optional causation reference for new root traces
-  - `:tracestate` - Optional W3C tracestate for new root traces
+        with {:ok, attributes} <- SignalContext.normalize(attributes) do
+          signal = delete(signal)
+          {:ok, %{signal | extensions: Map.merge(signal.extensions, attributes)}}
+        end
 
-  ## Examples
+      {:error, errors} ->
+        {:error, "invalid Trace: #{Zoi.prettify_errors(errors)}"}
+    end
+  end
 
-      {:ok, signal, ctx} = Trace.ensure(signal)
-      {:ok, signal, ctx} = Trace.ensure(signal, causation_id: "req-123")
-  """
-  @spec ensure(Signal.t(), keyword()) :: {:ok, Signal.t(), Context.t()}
+  def put(_signal, _trace), do: {:error, "expected a Signal and Trace"}
+
+  @doc "Deletes traceparent and tracestate from a Signal."
+  @spec delete(Signal.t()) :: Signal.t()
+  def delete(%Signal{} = signal) do
+    signal
+    |> Signal.delete_context(@traceparent)
+    |> Signal.delete_context(@tracestate)
+  end
+
+  @doc "Returns the Signal trace, or creates and stores a new root Trace."
+  @spec ensure(Signal.t(), keyword()) :: {:ok, Signal.t(), t()} | {:error, String.t()}
   def ensure(%Signal{} = signal, opts \\ []) do
     case get(signal) do
-      nil ->
-        ctx = new_root(opts)
-        {:ok, traced} = put(signal, ctx)
-        {:ok, traced, ctx}
-
-      ctx ->
-        {:ok, signal, ctx}
+      %__MODULE__{} = trace -> {:ok, signal, trace}
+      nil -> put_new_trace(signal, new(opts))
     end
   end
 
-  @doc """
-  Formats trace context as W3C `traceparent` header value.
+  @doc "Checks a Trace struct or traceparent string."
+  @spec valid?(t() | String.t() | term()) :: boolean()
+  def valid?(%__MODULE__{} = trace), do: match?({:ok, _trace}, parse(trace))
 
-  Format: `{version}-{trace-id}-{span-id}-{flags}`
+  def valid?(traceparent) when is_binary(traceparent),
+    do: match?({:ok, _}, from_traceparent(traceparent))
 
-  Version is always "00" (current W3C spec).
-  Flags is "01" (sampled).
+  def valid?(_value), do: false
 
-  ## Examples
+  @doc false
+  def validate_trace_id(value, _opts), do: validate_id(value, 32, "trace ID")
 
-      Trace.to_traceparent(ctx)
-      #=> "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-  """
-  @spec to_traceparent(Context.t()) :: String.t()
-  def to_traceparent(%Context{} = ctx) do
-    Context.to_traceparent(ctx)
-  end
+  @doc false
+  def validate_span_id(value, _opts), do: validate_id(value, 16, "span ID")
 
-  @doc """
-  Parses a W3C `traceparent` header into trace context.
-
-  Returns `nil` if parsing fails (invalid format, wrong lengths).
-
-  ## Examples
-
-      Trace.from_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-      #=> %Context{trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", ...}
-
-      Trace.from_traceparent("invalid")
-      #=> nil
-  """
-  @spec from_traceparent(String.t()) :: Context.t() | nil
-  def from_traceparent(traceparent) when is_binary(traceparent) do
-    case Context.from_traceparent(traceparent) do
-      {:ok, ctx} -> ctx
-      {:error, _} -> nil
+  @doc false
+  def validate_trace_flags(value, _opts) do
+    if value in ["00", "01"] do
+      :ok
+    else
+      {:error, "version 00 trace flags must be 00 or 01"}
     end
   end
 
-  def from_traceparent(_), do: nil
-
-  @doc """
-  Parses a W3C `traceparent` header and creates a child context.
-
-  This is useful when receiving an external request with trace headers
-  and you want to create a new span as a child of that trace.
-
-  Returns `nil` if parsing fails.
-
-  ## Options
-
-  - `:causation_id` - Optional causation ID for the child span
-  - `:tracestate` - Optional tracestate to associate with the child
-
-  ## Examples
-
-      child = Trace.child_from_traceparent(
-        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        causation_id: "http-request-123"
-      )
-  """
-  @spec child_from_traceparent(String.t(), keyword()) :: Context.t() | nil
-  def child_from_traceparent(traceparent, opts \\ []) do
-    case Context.child_from_traceparent(traceparent, opts) do
-      {:ok, ctx} -> ctx
-      {:error, _} -> nil
+  @doc false
+  def validate_tracestate(value, _opts) do
+    if is_binary(value) and String.valid?(value) and byte_size(value) <= 512 do
+      :ok
+    else
+      {:error, "tracestate must be a valid UTF-8 string with at most 512 bytes"}
     end
   end
 
-  @doc """
-  Checks if a trace context is valid.
+  defp put_new_trace(signal, trace) do
+    case put(signal, trace) do
+      {:ok, traced} -> {:ok, traced, trace}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-  A valid trace context has:
-  - `trace_id` that is 32 lowercase hex characters
-  - `span_id` that is 16 lowercase hex characters
+  defp parse(trace), do: Zoi.parse(@schema, trace)
 
-  ## Examples
+  defp build!(trace) do
+    case parse(trace) do
+      {:ok, trace} -> trace
+      {:error, errors} -> raise ArgumentError, Zoi.prettify_errors(errors)
+    end
+  end
 
-      Trace.valid?(ctx) #=> true
-      Trace.valid?(nil) #=> false
-  """
-  @spec valid?(Context.t() | nil) :: boolean()
-  def valid?(ctx) do
-    Context.valid?(ctx)
+  defp validate_options!(opts) do
+    if Keyword.keyword?(opts) and Keyword.keys(opts) -- [:trace_flags, :tracestate] == [] do
+      :ok
+    else
+      raise ArgumentError, "expected trace_flags and tracestate options"
+    end
+  end
+
+  defp normalize_tracestate(nil), do: nil
+
+  defp normalize_tracestate(tracestate) do
+    case validate_tracestate(tracestate, []) do
+      :ok -> tracestate
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp validate_id(value, size, name) do
+    zero = String.duplicate("0", size)
+    pattern = ~r/\A[0-9a-f]{#{size}}\z/
+
+    if is_binary(value) and value != zero and Regex.match?(pattern, value) do
+      :ok
+    else
+      {:error, "#{name} must be #{size} lower-case hexadecimal characters and not all zero"}
+    end
+  end
+
+  defp generate_id(bytes) do
+    id = bytes |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
+    if String.trim(id, "0") == "", do: generate_id(bytes), else: id
   end
 end

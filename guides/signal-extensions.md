@@ -80,16 +80,28 @@ attributes.
 
 ## Trace Context
 
-`Jido.Signal.Trace` stores W3C trace data in flat attributes. It uses
-`traceparent`, optional `tracestate`, and small Jido correlation attributes.
+`Jido.Signal.Trace` stores W3C trace data in the flat `traceparent` and optional
+`tracestate` attributes.
 
 ```elixir
-context = Jido.Signal.Trace.new_root()
-{:ok, traced_signal} = Jido.Signal.Trace.put(signal, context)
+trace = Jido.Signal.Trace.new(trace_flags: "01")
+{:ok, traced_signal} = Jido.Signal.Trace.put(signal, trace)
 
 Jido.Signal.to_map(traced_signal)["traceparent"]
 #=> "00-...-...-01"
 ```
+
+Create a child value when an outgoing Signal must continue the same trace:
+
+```elixir
+child = Jido.Signal.Trace.child(trace)
+{:ok, outgoing_signal} = Jido.Signal.Trace.put(outgoing_signal, child)
+```
+
+Jido Signal does not keep trace context in the process dictionary. The caller
+or tracing system owns span lifetime, sampling policy, export, and process
+context. `causationid` can be an application-owned context attribute, but it is
+not part of W3C Trace Context.
 
 ## Dispatch Is Not Signal Metadata
 

@@ -91,6 +91,28 @@ JSON-safe Signal data uses `data`. Binary data and other Erlang-only terms use
 `data_base64`. Jido creates that value with `:erlang.term_to_binary/1` and
 `Base.encode64/1`. The reader uses the safe Erlang term option.
 
+## Tighten Trace Context
+
+`Jido.Signal.Trace` is now the trace value and Signal carrier API. The nested
+`Jido.Signal.Trace.Context` struct and the process-dictionary-based
+`Jido.Signal.TraceContext` module are removed.
+
+```elixir
+trace = Jido.Signal.Trace.new(trace_flags: "01")
+{:ok, signal} = Jido.Signal.Trace.put(signal, trace)
+
+child = Jido.Signal.Trace.child(trace)
+{:ok, outgoing_signal} = Jido.Signal.Trace.put(outgoing_signal, child)
+```
+
+The Trace value keeps `trace_id`, `span_id`, `trace_flags`, and optional
+`tracestate`. It does not keep `parent_span_id` or `causation_id`. Use an
+application-owned Signal context attribute when you need causal correlation.
+
+Jido Signal does not select sampling policy. New Trace values use `"00"` flags
+unless the caller supplies another valid value. Incoming flags are preserved.
+The application or tracing system owns process context and span lifetime.
+
 ## Replace Schema-backed Signal Extensions
 
 The `Jido.Signal.Ext` behavior and extension registry are removed. Use a custom

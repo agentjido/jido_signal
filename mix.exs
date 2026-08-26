@@ -93,6 +93,7 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal,
           Jido.Signal.Error,
           Jido.Signal.ID,
+          Jido.Signal.Trace,
           Jido.Signal.Sanitizer,
           Jido.Signal.Telemetry,
           Jido.Signal.Util

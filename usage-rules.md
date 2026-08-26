@@ -12,6 +12,7 @@ Model domain events as validated signals and route them predictably through disp
 - Use flat CloudEvents context attributes only for routing or processing metadata.
 - Use JSON serialization by default. Use `format: :erlang_term` only between trusted Erlang systems.
 - Use `Signal.to_map/1` and `Signal.from_map/1` as the only map conversion boundary.
+- Carry W3C tracing with `Jido.Signal.Trace`; keep sampling and process context explicit.
 - Publish as a list (`Bus.publish(bus, [signal])`) and keep routing explicit.
 - Keep transport logic in dispatch adapters, not in signal payload modules.
 
@@ -35,6 +36,7 @@ Model domain events as validated signals and route them predictably through disp
 - Journal, partition, and snapshot options removed in v3.
 - Schema-backed Signal extension modules and Signal-owned dispatch metadata.
 - General term serializers, dynamic type providers, and MessagePack.
+- Process-dictionary trace state and Signal-owned sampling policy.
 
 ## References
 - `README.md`
