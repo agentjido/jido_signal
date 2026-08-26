@@ -1,17 +1,5 @@
 defmodule Jido.Signal.Bus.MiddlewarePipeline do
-  @moduledoc """
-  Handles execution of middleware chains for signal bus operations.
-
-  This module provides functions to execute middleware callbacks in sequence,
-  allowing each middleware to transform signals or control the flow of execution.
-  Middleware state changes are propagated back to the caller for persistence.
-
-  ## Timeout Protection
-
-  All middleware callbacks are executed with a configurable timeout (default: 100ms)
-  to prevent slow middleware from blocking the Bus GenServer indefinitely. If a
-  middleware callback exceeds the timeout, the operation fails with `:middleware_timeout`.
-  """
+  @moduledoc false
 
   alias Jido.Signal
   alias Jido.Signal.Bus.Middleware

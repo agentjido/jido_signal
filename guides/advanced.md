@@ -106,38 +106,29 @@ case Task.yield(task, 5000) do
 end
 ```
 
-### Persistent Subscriptions, Retries, and DLQ
+### Persistent Subscriptions and DLQ
 
-For reliable message delivery, persistent subscriptions provide:
+Persistent subscriptions provide:
 
-- **Bounded queues**: `max_in_flight` and `max_pending` prevent unbounded memory growth
-- **Automatic retries**: Failed dispatches retry up to `max_attempts` times with `retry_interval` delay
-- **Dead Letter Queue**: Exhausted messages are preserved for inspection and reprocessing
+- **Continuous checkpoints**: An out-of-order acknowledgement cannot skip an older record.
+- **Retained reconnect**: The Bus sends unacknowledged retained records again.
+- **Dead Letter Queue**: A failed delivery is kept for inspection and manual redrive.
 
 ```elixir
-# Configure for aggressive retry
 {:ok, sub_id} = Bus.subscribe(:my_bus, "critical.*",
   persistent?: true,
-  dispatch: {:pid, target: self()},
-  max_in_flight: 50,
-  max_attempts: 10,
-  retry_interval: 1000
+  start_from: :current,
+  dispatch: {:pid, target: self()}
 )
 
-# Configure for fail-fast with DLQ review
-{:ok, sub_id} = Bus.subscribe(:my_bus, "batch.*",
-  persistent?: true,
-  dispatch: {:pid, target: self()},
-  max_in_flight: 1000,
-  max_attempts: 2,
-  retry_interval: 100
-)
+{:ok, [recorded]} = Bus.publish(:my_bus, [signal])
+:ok = Bus.ack(:my_bus, sub_id, recorded.id)
 ```
 
 See [Event Bus guide](event-bus.md) for DLQ management APIs.
 
 Direct Dispatch does not own circuit breakers. Apply this policy in the calling
-application or use a Bus-owned delivery policy.
+application. The Bus also does not run retries or circuit breakers.
 
 ## Testing Approaches
 
@@ -318,22 +309,11 @@ subscriptions = Enum.map(patterns, fn pattern ->
 end)
 ```
 
-### Horizontal Scaling with Partitions
+### Workload Isolation
 
-For high-throughput scenarios, enable partitioned dispatch:
-
-```elixir
-{:ok, _pid} = Bus.start_link(
-  name: :high_volume_bus,
-  partition_count: System.schedulers_online(),
-  partition_rate_limit_per_sec: 50_000,
-  partition_burst_size: 5_000
-)
-```
-
-Partitions distribute non-persistent subscriptions across workers, each with independent rate limiting. Monitor partition health via telemetry:
-
-- `[:jido, :signal, :bus, :rate_limited]` - Partition dropping signals due to rate limit
+Start separate Bus processes for workloads that must not block each other. The
+calling application owns concurrency and rate-limit policy. v3 does not start
+partition workers inside one Bus.
 
 ## Next Steps
 

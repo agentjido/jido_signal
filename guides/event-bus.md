@@ -1,311 +1,229 @@
 # Event Bus
 <!-- covers: jido_signal.guides.event_bus -->
 
-The Event Bus provides publish/subscribe messaging with middleware hooks, persistent subscriptions, and snapshot functionality.
+The Event Bus provides ordered, local publish and subscribe delivery. It also
+provides middleware hooks, bounded replay, persistent subscriptions, and a
+dead-letter queue (DLQ).
 
-## Basic Publish/Subscribe
+## Basic Publish and Subscribe
 
-Start a bus and publish signals:
+Start the Bus under your application supervisor:
 
 ```elixir
-# Start the bus
-{:ok, _pid} = Jido.Signal.Bus.start_link(name: :my_bus)
+children = [
+  {Jido.Signal.Bus, name: :my_bus}
+]
+```
 
-# Create and publish signals
-signal = Jido.Signal.new!("user.created", %{user_id: 123})
-{:ok, _recorded} = Jido.Signal.Bus.publish(:my_bus, [signal])
+Subscribe and publish:
 
-# Subscribe to signal patterns
-{:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "user.*")
+```elixir
+alias Jido.Signal
+alias Jido.Signal.Bus
 
-# Subscribe with specific dispatch
-{:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "user.*", 
-  dispatch: {:pid, target: self(), delivery_mode: :async}
+{:ok, subscription_id} = Bus.subscribe(:my_bus, "user.*")
+
+signal = Signal.new!("user.created", %{user_id: 123}, source: "/users")
+{:ok, [recorded]} = Bus.publish(:my_bus, [signal])
+
+receive do
+  {:signal, ^signal} -> :ok
+end
+
+:ok = Bus.unsubscribe(:my_bus, subscription_id)
+```
+
+The default dispatch target is the process that calls `subscribe/3`. You can
+set a different target:
+
+```elixir
+Bus.subscribe(:my_bus, "user.*",
+  dispatch: {:pid, target: subscriber_pid, delivery_mode: :async}
 )
 ```
 
-Unsubscribe:
+The Bus checks subscription paths with the Router. It sends matching signals in
+subscription registration order. Dispatch is synchronous from the Bus process.
+Use multiple Bus processes when independent workloads must not block each other.
+
+## Bounded Replay
+
+The default memory store keeps the newest 100,000 records. Set a different
+bound with `:max_log_size`:
 
 ```elixir
-:ok = Jido.Signal.Bus.unsubscribe(:my_bus, sub_id)
+{:ok, _pid} = Bus.start_link(name: :my_bus, max_log_size: 20_000)
 ```
 
-## Error Handling
-
-All Bus functions return `{:ok, result}` on success or `{:error, term()}` on failure:
+Replay records by type and Unix timestamp in milliseconds:
 
 ```elixir
-case Jido.Signal.Bus.publish(:my_bus, [signal]) do
-  {:ok, recorded_signals} -> 
-    Logger.info("Published #{length(recorded_signals)} signals")
-  {:error, reason} -> 
-    Logger.error("Publish failed: #{inspect(reason)}")
-end
+{:ok, all_records} = Bus.replay(:my_bus, "**")
 
-case Jido.Signal.Bus.subscribe(:my_bus, "user.*") do
-  {:ok, sub_id} -> sub_id
-  {:error, :bus_not_found} -> raise "Bus not running"
-  {:error, reason} -> raise "Subscribe failed: #{inspect(reason)}"
+one_hour_ago = System.system_time(:millisecond) - 3_600_000
+
+{:ok, recent_user_records} =
+  Bus.replay(:my_bus, "user.**", one_hour_ago, batch_size: 100)
+```
+
+Each `Jido.Signal.Bus.RecordedSignal` has an ID, a numeric cursor, a creation
+time, and the Signal.
+
+## Persistent Subscriptions
+
+A persistent subscription uses at-least-once delivery. It keeps a checkpoint
+and unacknowledged record IDs. Use `persistent?` as the option name.
+`persistent: true` remains a v2 compatibility alias.
+
+```elixir
+{:ok, subscription_id} =
+  Bus.subscribe(:my_bus, "order.*",
+    persistent?: true,
+    start_from: :current,
+    dispatch: {:pid, target: self()}
+  )
+
+{:ok, [recorded]} = Bus.publish(:my_bus, [order_signal])
+
+receive do
+  {:signal, ^order_signal} ->
+    process_order(order_signal)
+    :ok = Bus.ack(:my_bus, subscription_id, recorded.id)
 end
 ```
 
-## Middleware Hooks
+`start_from` accepts these values:
 
-Implement custom middleware to intercept signals:
+- `:origin` starts at cursor 0. This is the default.
+- `:current` starts after the newest retained record.
+- A non-negative integer starts after that cursor.
+
+You can acknowledge one ID or a list of IDs. The Bus advances the checkpoint
+only across a continuous set of handled records. An out-of-order acknowledgement
+does not skip an older unacknowledged record.
+
+When the target process exits, a persistent subscription stays registered. Use
+`reconnect/3` with the new process:
 
 ```elixir
-defmodule MyMiddleware do
+{:ok, checkpoint} = Bus.reconnect(:my_bus, subscription_id, new_target_pid)
+```
+
+The Bus sends retained records after the checkpoint again. A consumer must be
+able to handle duplicate delivery.
+
+## Dead-Letter Queue
+
+The Bus does not run an internal retry loop. If dispatch for a persistent
+subscription fails, the Bus puts the record in its DLQ and advances the
+continuous checkpoint.
+
+```elixir
+{:ok, entries} = Bus.dlq_entries(:my_bus, subscription_id)
+
+{:ok, %{succeeded: succeeded, failed: failed}} =
+  Bus.redrive_dlq(:my_bus, subscription_id, limit: 100)
+
+:ok = Bus.clear_dlq(:my_bus, subscription_id)
+```
+
+Successful redrive removes an entry by default. Set `clear_on_success: false`
+to keep it.
+
+## Retained Data Store
+
+The default memory Store state belongs to the Bus process.
+Its replay log, checkpoints, and DLQ entries do not survive a Bus restart.
+
+For restart durability, set `:store` to a module that implements
+`Jido.Signal.Bus.Store`:
+
+```elixir
+{:ok, _pid} =
+  Bus.start_link(
+    name: :my_bus,
+    store: MyApp.SignalStore,
+    store_opts: [repo: MyApp.Repo]
+  )
+```
+
+Store records have `"format_version" => 1`. Custom stores must keep the record
+maps unchanged. If store initialization fails, Bus startup fails with
+`{:store_init_failed, reason}`. The Bus does not change to memory storage.
+
+The v2 `journal_adapter`, `journal_adapter_opts`, and `journal_pid` options are
+removed. They return an `{:unsupported_option, option}` startup error.
+
+## Middleware
+
+Use Bus middleware for small cross-cutting operations:
+
+```elixir
+defmodule MyApp.SignalMiddleware do
   use Jido.Signal.Bus.Middleware
 
   @impl true
-  def init(opts), do: {:ok, %{}}
-
-  @impl true
-  def before_publish(signals, context, state) do
-    # Transform or validate signals before publishing
+  def before_publish(signals, _context, state) do
     {:cont, signals, state}
   end
 
   @impl true
-  def before_dispatch(signal, subscriber, context, state) do
-    # Filter or modify signal before dispatch to subscriber
-    if authorized?(signal, subscriber) do
+  def before_dispatch(signal, subscriber, _context, state) do
+    if allowed?(signal, subscriber) do
       {:cont, signal, state}
     else
-      {:skip, state}  # Skip this subscriber
+      {:skip, state}
     end
   end
 
-  @impl true
-  def after_dispatch(signal, subscriber, result, context, state) do
-    # Log or handle dispatch results
-    {:cont, state}
-  end
-
-  defp authorized?(signal, subscriber), do: true
+  defp allowed?(_signal, _subscriber), do: true
 end
+
+{:ok, _pid} =
+  Bus.start_link(
+    name: :my_bus,
+    middleware: [
+      {Jido.Signal.Bus.Middleware.Logger, [level: :info]},
+      {MyApp.SignalMiddleware, []}
+    ],
+    middleware_timeout_ms: 100
+  )
 ```
 
-Start bus with middleware:
-
-```elixir
-{:ok, _pid} = Jido.Signal.Bus.start_link(
-  name: :my_bus,
-  middleware: [{MyMiddleware, []}]
-)
-```
-
-Middleware callbacks are executed by `Jido.Signal.Bus.MiddlewarePipeline` with per-callback timeouts (`middleware_timeout_ms`, default 100ms). Each callback can:
-- `{:cont, ...}` - Continue processing
-- `{:skip, state}` - Skip this subscriber (for `before_dispatch` only)
-- `{:halt, reason, state}` - Stop processing and fail the operation
-
-## Persistent Subscriptions
-
-Persistent subscriptions provide reliable message delivery with acknowledgments, checkpointing, and automatic retry with Dead Letter Queue (DLQ) support.
-Use `persistent?` as the canonical option key. `persistent` remains supported as a backward-compatible alias.
-
-```elixir
-# Create persistent subscription with reliability options
-{:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "order.*",
-  persistent?: true,
-  dispatch: {:pid, target: self(), delivery_mode: :async},
-  max_in_flight: 500,      # Max unacknowledged signals (default: 1000)
-  max_pending: 5_000,      # Max queued signals before backpressure (default: 10_000)
-  max_attempts: 5,         # Retry attempts before moving to DLQ (default: 5)
-  retry_interval: 500      # Milliseconds between retry waves (default: 100)
-)
-
-# Acknowledge processed signals
-:ok = Jido.Signal.Bus.ack(:my_bus, sub_id, signal_id)
-
-# Batch acknowledgment
-:ok = Jido.Signal.Bus.ack(:my_bus, sub_id, [signal_id_1, signal_id_2, signal_id_3])
-
-# Reconnect after client disconnect (subscription survives)
-{:ok, last_checkpoint} = Jido.Signal.Bus.reconnect(:my_bus, sub_id, self())
-```
-
-Persistent subscriptions require a journal adapter to persist checkpoints across restarts:
-
-```elixir
-{:ok, _pid} = Jido.Signal.Bus.start_link(
-  name: :my_bus,
-  journal_adapter: Jido.Signal.Journal.Adapters.ETS
-)
-```
-
-When configured, checkpoints are automatically persisted and restored on reconnection.
-
-## Dead Letter Queue (DLQ)
-
-When a persistent subscription exhausts all retry attempts (`max_attempts`), failed signals are moved to the Dead Letter Queue for later inspection and reprocessing.
-
-```elixir
-# List DLQ entries for a subscription
-{:ok, entries} = Jido.Signal.Bus.get_dlq_entries(:my_bus, sub_id)
-# Each entry: %{id, subscription_id, signal, reason, metadata, inserted_at}
-
-# Redrive (re-dispatch) DLQ messages
-{:ok, %{succeeded: count, failed: failures}} = 
-  Jido.Signal.Bus.redrive_dlq(:my_bus, sub_id, limit: 100)
-
-# Clear all DLQ entries for a subscription
-:ok = Jido.Signal.Bus.clear_dlq(:my_bus, sub_id)
-```
-
-DLQ requires a journal adapter that implements the DLQ callbacks. Both ETS and Mnesia adapters support DLQ out of the box.
-
-## Horizontal Scaling with Partitions
-
-For high-throughput scenarios, the bus can distribute dispatch across multiple partition workers:
-
-```elixir
-{:ok, _pid} = Jido.Signal.Bus.start_link(
-  name: :my_bus,
-  partition_count: 4,                    # Number of partition workers
-  partition_rate_limit_per_sec: 10_000,  # Rate limit per partition
-  partition_burst_size: 1_000,           # Token bucket burst size
-  middleware: [
-    {Jido.Signal.Bus.Middleware.Logger, [level: :info]}
-  ],
-  journal_adapter: Jido.Signal.Journal.Adapters.ETS
-)
-```
-
-With partitions enabled:
-- Non-persistent subscriptions are sharded across partitions based on subscription ID
-- Each partition has independent rate limiting using a token bucket algorithm
-- Persistent subscriptions are handled by the main bus process to honor backpressure
-- Rate-limited signals emit telemetry: `[:jido, :signal, :bus, :rate_limited]`
-
-## Snapshots and Replay
-
-Create snapshots of signal history:
-
-```elixir
-# Create snapshot of all user events
-{:ok, snapshot_ref} = Jido.Signal.Bus.snapshot_create(:my_bus, "user.*")
-
-# Read snapshot data
-{:ok, snapshot_data} = Jido.Signal.Bus.snapshot_read(:my_bus, snapshot_ref.id)
-
-# List all snapshots
-snapshots = Jido.Signal.Bus.snapshot_list(:my_bus)
-
-# Delete snapshot
-:ok = Jido.Signal.Bus.snapshot_delete(:my_bus, snapshot_ref.id)
-```
-
-Replay signals from specific timestamp:
-
-```elixir
-# Replay all signals from timestamp
-{:ok, signals} = Jido.Signal.Bus.replay(:my_bus, "*", timestamp)
-
-# Replay specific signal types
-{:ok, user_signals} = Jido.Signal.Bus.replay(:my_bus, "user.*", timestamp)
-```
+The callbacks are `before_publish/3`, `after_publish/3`,
+`before_dispatch/4`, and `after_dispatch/5`. Each callback has a timeout.
 
 ## Instance Isolation
 
-For multi-tenant applications or isolated testing, create instance-scoped signal infrastructure:
+Use `Jido.Signal.Instance` when separate registries are required:
 
 ```elixir
-alias Jido.Signal.Instance
 alias Jido.Signal.Bus
+alias Jido.Signal.Instance
 
-# Start an isolated instance (starts its own Registry, TaskSupervisor, Ext.Registry)
-{:ok, _} = Instance.start_link(name: MyApp.Jido)
+{:ok, _supervisor} = Instance.start_link(name: TenantA.Jido)
+{:ok, bus} = Bus.start_link(name: :events, jido: TenantA.Jido)
 
-# Start bus scoped to the instance
-{:ok, _} = Bus.start_link(name: :tenant_bus, jido: MyApp.Jido)
-
-# Lookup uses the instance's registry
-{:ok, bus_pid} = Bus.whereis(:tenant_bus, jido: MyApp.Jido)
-
-# Check if instance is running
-Instance.running?(MyApp.Jido)  # => true
-
-# Stop instance and all its children
-Instance.stop(MyApp.Jido)
+{:ok, ^bus} = Bus.whereis(:events, jido: TenantA.Jido)
 ```
 
-### Multi-Tenant Isolation
+Pass the Bus PID to publish and subscribe functions after instance-scoped
+lookup.
 
-Multiple instances are completely isolated from each other:
+## Removed v2 Bus Features
 
-```elixir
-# Start separate instances for each tenant
-{:ok, _} = Instance.start_link(name: TenantA.Jido)
-{:ok, _} = Instance.start_link(name: TenantB.Jido)
+v3 removes these Bus features:
 
-# Same bus name, different instances = different processes
-{:ok, bus_a} = Bus.start_link(name: :events, jido: TenantA.Jido)
-{:ok, bus_b} = Bus.start_link(name: :events, jido: TenantB.Jido)
+- partition workers and partition rate limits;
+- snapshots;
+- retry waves, backpressure queues, and persistent worker processes;
+- Journal adapters and Journal-owned checkpoints.
 
-# Completely isolated - signals don't cross instances
-Bus.subscribe(bus_a, "order.*", dispatch: {:pid, target: tenant_a_handler})
-Bus.subscribe(bus_b, "order.*", dispatch: {:pid, target: tenant_b_handler})
-
-# Publish to tenant A only
-Bus.publish(bus_a, [order_signal])  # Only tenant_a_handler receives
-```
-
-### Process Name Resolution
-
-The `jido:` option controls which registry is used for process lookup:
-
-```elixir
-# Global (default) - uses Jido.Signal.Registry
-Bus.start_link(name: :my_bus)
-
-# Instance-scoped - uses MyApp.Jido.Signal.Registry
-Bus.start_link(name: :my_bus, jido: MyApp.Jido)
-```
-
-Use `Jido.Signal.Names` to resolve process names programmatically:
-
-```elixir
-alias Jido.Signal.Names
-
-Names.registry([])                    # => Jido.Signal.Registry
-Names.registry(jido: MyApp.Jido)      # => MyApp.Jido.Signal.Registry
-Names.task_supervisor(jido: MyApp.Jido)  # => MyApp.Jido.Signal.TaskSupervisor
-```
-
-## Advanced Configuration
-
-Configure bus with custom router and options:
-
-```elixir
-custom_router = Jido.Signal.Router.new!()
-
-{:ok, _pid} = Jido.Signal.Bus.start_link(
-  name: :my_bus,
-  router: custom_router,
-  middleware: [
-    {Jido.Signal.Bus.Middleware.Logger, []},
-    {MyCustomMiddleware, [option: :value]}
-  ]
-)
-```
-
-Persistent subscription options:
-
-```elixir
-{:ok, sub_id} = Jido.Signal.Bus.subscribe(:my_bus, "events.*",
-  persistent?: true,
-  dispatch: {:pid, target: self(), delivery_mode: :async},
-  max_in_flight: 100,    # Max unacknowledged signals
-  max_pending: 5_000,    # Max pending before backpressure
-  max_attempts: 5,       # Attempts before DLQ
-  retry_interval: 500,   # Retry interval in ms
-  start_from: :origin    # :origin, :current, or timestamp
-)
-```
+Use more Bus processes for workload isolation. Keep retry and rate-limit policy
+in the calling application. Use `replay/4` for retained reads.
 
 ## Next Steps
 
-- [Signal Router](signal-router.md) - Trie-based routing with pattern matching and priority execution
-- [Signal Extensions](signal-extensions.md) - Add domain-specific metadata while maintaining CloudEvents compliance
+- [Signal Router](signal-router.md) explains path matching and precedence.
+- [Signals and Dispatch](signals-and-dispatch.md) explains delivery targets.
+- [Serialization](serialization.md) explains the canonical wire map.

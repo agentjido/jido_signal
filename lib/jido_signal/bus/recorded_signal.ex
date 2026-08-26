@@ -10,6 +10,7 @@ defmodule Jido.Signal.Bus.RecordedSignal do
             __MODULE__,
             %{
               id: Zoi.string(),
+              cursor: Zoi.integer() |> Zoi.optional(),
               type: Zoi.string(),
               created_at: Zoi.any(),
               signal: Zoi.any()
@@ -71,6 +72,7 @@ defmodule Jido.Signal.Bus.RecordedSignal do
   defp to_map(%__MODULE__{} = recorded_signal) do
     %{
       "id" => recorded_signal.id,
+      "cursor" => recorded_signal.cursor,
       "type" => recorded_signal.type,
       "created_at" => DateTime.to_iso8601(recorded_signal.created_at),
       "signal" => Jido.Signal.to_map(recorded_signal.signal)
@@ -150,6 +152,7 @@ defmodule Jido.Signal.Bus.RecordedSignal do
     # Construct the RecordedSignal
     %__MODULE__{
       id: atomized_map[:id],
+      cursor: atomized_map[:cursor],
       type: atomized_map[:type],
       created_at: created_at,
       signal: signal

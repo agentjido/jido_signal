@@ -21,9 +21,13 @@ defmodule Jido.Signal.Bus.Middleware do
   """
 
   alias Jido.Signal
-  alias Jido.Signal.Bus.Subscriber
-
   @type middleware_state :: term()
+  @type subscriber :: %{
+          required(:id) => String.t(),
+          required(:path) => String.t(),
+          required(:dispatch) => term(),
+          optional(atom()) => term()
+        }
   @type context :: %{
           bus_name: atom(),
           timestamp: DateTime.t(),
@@ -99,7 +103,7 @@ defmodule Jido.Signal.Bus.Middleware do
   """
   @callback before_dispatch(
               signal :: Signal.t(),
-              subscriber :: Subscriber.t(),
+              subscriber :: subscriber(),
               context :: context(),
               state :: middleware_state()
             ) ::
@@ -124,7 +128,7 @@ defmodule Jido.Signal.Bus.Middleware do
   """
   @callback after_dispatch(
               signal :: Signal.t(),
-              subscriber :: Subscriber.t(),
+              subscriber :: subscriber(),
               result :: dispatch_result(),
               context :: context(),
               state :: middleware_state()
@@ -162,7 +166,7 @@ defmodule Jido.Signal.Bus.Middleware do
       @impl true
       @spec before_dispatch(
               Signal.t(),
-              Subscriber.t(),
+              Jido.Signal.Bus.Middleware.subscriber(),
               Jido.Signal.Bus.Middleware.context(),
               map()
             ) ::
@@ -172,7 +176,7 @@ defmodule Jido.Signal.Bus.Middleware do
       @impl true
       @spec after_dispatch(
               Signal.t(),
-              Subscriber.t(),
+              Jido.Signal.Bus.Middleware.subscriber(),
               Jido.Signal.Bus.Middleware.dispatch_result(),
               Jido.Signal.Bus.Middleware.context(),
               map()

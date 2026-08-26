@@ -113,15 +113,8 @@ defmodule Jido.Signal.MixProject do
         "Event Bus": [
           Jido.Signal.Bus,
           Jido.Signal.Bus.Middleware,
-          Jido.Signal.Bus.MiddlewarePipeline,
-          Jido.Signal.Bus.PersistentSubscription,
           Jido.Signal.Bus.RecordedSignal,
-          Jido.Signal.Bus.Snapshot,
-          Jido.Signal.Bus.Snapshot.SnapshotData,
-          Jido.Signal.Bus.Snapshot.SnapshotRef,
-          Jido.Signal.Bus.State,
-          Jido.Signal.Bus.Stream,
-          Jido.Signal.Bus.Subscriber,
+          Jido.Signal.Bus.Store,
           Jido.Signal.Bus.Middleware.Logger
         ],
         "Signal Dispatch": [

@@ -59,10 +59,10 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 
 ### **High-Performance Signal Bus**
 - In-memory GenServer-based pub/sub system
-- Persistent subscriptions with checkpointing, retry, and Dead Letter Queue (DLQ)
+- Persistent subscriptions with continuous checkpoints and a Dead Letter Queue (DLQ)
 - Middleware pipeline for cross-cutting concerns with timeout protection
-- Complete signal history with replay capabilities
-- Partitioned dispatch with rate limiting for horizontal scaling
+- Bounded replay through a Bus-owned Store boundary
+- Application-owned retry, rate-limit, and workload-isolation policy
 - Instance isolation for multi-tenant deployments
 
 ### **Advanced Routing Engine**
@@ -328,29 +328,30 @@ to the calling application or the Bus.
 Track signal acknowledgments for reliable processing:
 
 ```elixir
-# Create persistent subscription with full options
+# Create a persistent subscription
 {:ok, sub_id} = Bus.subscribe(:my_app_bus, "payment.*",
-  persistent?: true, # `persistent: true` is also supported (backward compatible)
+  persistent?: true,
+  start_from: :current,
   dispatch: {:pid, target: self()},
-  max_in_flight: 100,      # Max unacknowledged signals
-  max_pending: 5_000,      # Max queued signals before backpressure
-  max_attempts: 5,         # Retry attempts before DLQ
-  retry_interval: 500      # Milliseconds between retries
 )
 
 # Receive and acknowledge signals
-receive do
-  {:signal, signal} ->
-    # Process the signal
-    process_payment(signal)
+{:ok, [recorded]} = Bus.publish(:my_app_bus, [payment_signal])
 
-    # Acknowledge successful processing
-    Bus.ack(:my_app_bus, sub_id, signal.id)
+receive do
+  {:signal, ^payment_signal} ->
+    process_payment(payment_signal)
+
+    # Acknowledge the Bus record ID.
+    Bus.ack(:my_app_bus, sub_id, recorded.id)
 end
 
-# After max_attempts failures, signals move to Dead Letter Queue
-# See Event Bus guide for DLQ management
+# Reconnect a replacement target. Unacknowledged retained records are sent again.
+{:ok, checkpoint} = Bus.reconnect(:my_app_bus, sub_id, replacement_pid)
 ```
+
+The Bus does not retry delivery. A failed persistent delivery moves directly to
+the DLQ. The consumer must be able to process duplicate delivery.
 
 ### Middleware Pipeline
 
@@ -375,7 +376,7 @@ middleware = [
 )
 ```
 
-Middleware callbacks (`before_publish`, `after_publish`, `before_dispatch`, `after_dispatch`) are executed with timeout protection (default 100ms, configurable via `middleware_timeout_ms`). Slow middleware is terminated and the operation continues. See `Jido.Signal.Bus.Middleware.Logger` for a complete implementation example.
+Middleware callbacks (`before_publish`, `after_publish`, `before_dispatch`, `after_dispatch`) use timeout protection (default 100ms, configurable with `middleware_timeout_ms`). A `before_publish` timeout fails publication. A later callback timeout does not undo an already stored Signal. See `Jido.Signal.Bus.Middleware.Logger` for an example.
 
 ### Observability
 
@@ -425,41 +426,27 @@ cause = Journal.get_cause(journal, response_signal.id)
 # => initial_signal
 ```
 
-### Signal History & Replay
+### Retained Replay
 
-Access complete signal history:
+Read the bounded Bus log:
 
 ```elixir
-# Get recent signals matching pattern
-{:ok, signals} = Bus.replay(:my_app_bus, "user.*", 
-  since: DateTime.utc_now() |> DateTime.add(-3600, :second),
-  limit: 100
-)
+one_hour_ago = System.system_time(:millisecond) - 3_600_000
 
-# Replay to new subscriber
-{:ok, new_sub} = Bus.subscribe(:my_app_bus, "user.*", 
-  dispatch: {:pid, target: new_process_pid},
-  replay_since: DateTime.utc_now() |> DateTime.add(-1800, :second)
-)
+{:ok, records} =
+  Bus.replay(:my_app_bus, "user.*", one_hour_ago, batch_size: 100)
 ```
 
-### Snapshots
-
-Create point-in-time views of your signal log:
+The default memory Store keeps the newest 100,000 records and does not survive a
+Bus restart. Set a custom `Jido.Signal.Bus.Store` implementation for restart
+durability:
 
 ```elixir
-# Create filtered snapshot
-{:ok, snapshot_id} = Bus.snapshot_create(:my_app_bus, %{
-  path_pattern: "order.**",
-  since: ~U[2024-01-01 00:00:00Z],
-  until: ~U[2024-01-31 23:59:59Z]
-})
-
-# Read snapshot data
-{:ok, signals} = Bus.snapshot_read(:my_app_bus, snapshot_id)
-
-# Export or analyze the signals
-Enum.each(signals, &analyze_order_signal/1)
+{:ok, _bus} = Bus.start_link(
+  name: :my_app_bus,
+  store: MyApp.SignalStore,
+  store_opts: [repo: MyApp.Repo]
+)
 ```
 
 ### Instance Isolation
