@@ -1,132 +1,172 @@
 # Signal Router
 <!-- covers: jido_signal.guides.signal_router -->
 
-High-performance trie-based signal routing with pattern matching and priority execution.
+`Jido.Signal.Router` maps Signal type patterns to ordered targets. It performs
+lookup only. It does not execute targets or validate Dispatch configuration.
 
-## Route Patterns
+## Create a Router
 
-### Exact Matches
+The short tuple forms are the easiest way to define routes:
+
+```elixir
+alias Jido.Signal.Router
+
+router =
+  Router.new!([
+    {"user.created", HandleUserCreated},
+    {"user.*", HandleUserEvent},
+    {"audit.**", AuditEvent, -50}
+  ])
+```
+
+Use `new/2` when configuration errors must be returned:
+
+```elixir
+{:ok, router} = Router.new([{"user.created", HandleUserCreated}])
+```
+
+## Path Patterns
+
+An exact path matches one Signal type:
+
 ```elixir
 {"user.created", HandleUserCreated}
-{"payment.processed", ProcessPayment}
 ```
 
-### Single Wildcards (`*`)
-Matches exactly one segment:
-```elixir
-{"user.*.updated", HandleUpdate}  # matches "user.profile.updated", not "user.profile.settings.updated"
-{"*.error", HandleError}          # matches "auth.error", "db.error"
-```
-
-### Multi-level Wildcards (`**`)
-Matches zero or more segments:
-```elixir
-{"audit.**", AuditLogger}         # matches "audit", "audit.user", "audit.user.login"
-{"metrics.**", MetricsCollector}  # matches all metrics signals
-```
-
-### Pattern Rules
-- Segments: `[a-zA-Z0-9._*-]+`
-- No consecutive dots (`..`)
-- No consecutive multi-wildcards (`**...**`)
-
-## Trie-Based Matching
-
-The router organizes handlers in a prefix tree for O(log n) lookup performance:
+`*` matches exactly one segment:
 
 ```elixir
-# Routes stored as trie nodes
-user
-├── created (handler: HandleUserCreated)
-├── * (handler: HandleUserWildcard)
-└── profile
-    └── updated (handler: HandleProfileUpdate)
+{"user.*.updated", HandleUpdate}
 ```
 
-Matching algorithm:
-1. Exact segment match
-2. Single wildcard (`*`) match  
-3. Multi-level wildcard (`**`) match
+This matches `user.profile.updated`. It does not match
+`user.profile.settings.updated`.
 
-## Route Priorities
-
-Handlers execute by priority order (-100 to 100):
+`**` matches zero or more segments:
 
 ```elixir
-# High priority audit logging
-{"audit.**", AuditLogger, 100}
-
-# Default priority business logic  
-{"user.created", HandleUserCreated, 0}
-
-# Low priority metrics
-{"**", MetricsCollector, -75}
+{"audit.**", AuditEvent}
+{"user.**.created", HandleCreated}
 ```
 
-### Complexity Scoring
+The second route matches both `user.created` and
+`user.profile.address.created`.
 
-Priority calculation:
-1. Base score: `segment_count * 2000`
-2. Exact match bonus: `3000 * (segment_count - position)`
-3. Wildcard penalties:
-   - Single (`*`): `1000 - position * 100`
-   - Multi (`**`): `2000 - position * 200`
+Paths use dot-separated alphanumeric, underscore, or hyphen segments.
+Consecutive dots and consecutive `**` segments are invalid.
 
-More specific paths execute before wildcards.
+## Route a Signal
 
-## Dynamic Routing
-
-### Adding Routes
 ```elixir
-{:ok, router} = Router.add(router, [
-  {"metrics.**.latency", LatencyTracker, 50},
-  {"system.error", ErrorHandler}
-])
+signal = Jido.Signal.new!(type: "user.created", source: "/example")
+
+{:ok, targets} = Router.route(router, signal)
+#=> {:ok, [HandleUserCreated, HandleUserEvent]}
 ```
 
-### Removing Routes
+No match returns a structured `Jido.Signal.Error.RoutingError`. The Router does
+not return `{:ok, []}`.
+
+## Precedence
+
+The result order is deterministic:
+
+1. Exact paths
+2. Paths with `*`
+3. Paths with `**`
+4. More complex patterns
+5. Higher priority
+6. Earlier registration
+
+Priority is an integer from `-100` through `100`. It changes order only when
+the path class and complexity are equal.
+
+```elixir
+router =
+  Router.new!([
+    {"user.created", :normal, 0},
+    {"user.created", :urgent, 100}
+  ])
+
+{:ok, [:urgent, :normal]} = Router.route(router, signal)
+```
+
+## Conditional Routes
+
+`Route.match` is an optional runtime predicate. It runs after the path matches.
+It must accept one Signal and return `true` for a match.
+
+```elixir
+large_payment? = fn signal -> signal.data.amount > 1_000 end
+
+{:ok, router} =
+  Router.add(
+    router,
+    {"payment.processed", large_payment?, HandleLargePayment, 50}
+  )
+```
+
+Router creation checks the predicate arity but does not execute it. A predicate
+that raises or returns a value other than `true` does not match.
+
+## Manage Routes
+
+Add one route or a list of routes:
+
+```elixir
+{:ok, router} =
+  Router.add(router, [
+    {"metrics.**", MetricsHandler},
+    {"system.error", ErrorHandler}
+  ])
+```
+
+Remove all routes at one or more paths:
+
 ```elixir
 {:ok, router} = Router.remove(router, ["metrics.**", "old.route"])
 ```
 
-### Pattern Matching Functions
-```elixir
-large_payment_filter = fn signal -> 
-  signal.data.amount > 1000 
-end
-
-{:ok, router} = Router.add(router, [
-  {"payment.processed", large_payment_filter, AlertLargePayment, 75}
-])
-```
-
-### Multiple Dispatch
-```elixir
-{"system.error", [
-  {MetricsAdapter, [type: :error]},
-  {AlertAdapter, [priority: :high]},
-  {LogAdapter, [level: :error]}
-]}
-```
-
-## Signal Routing
+Inspect the public state without reading Router fields:
 
 ```elixir
-{:ok, targets} = Router.route(router, %Signal{
-  type: "user.profile.updated",
-  data: %{user_id: "123"}
-})
-# Returns: [HandleUserWildcard, HandleProfileUpdate] (priority order)
+2 = Router.count(router)
+false = Router.empty?(router)
+true = Router.has_route?(router, "system.error")
+{:ok, routes} = Router.list(router)
 ```
 
-Pattern matching validation:
+`list/1` returns `%Jido.Signal.Router.Route{}` values in registration order.
+`merge/2` appends the routes from another Router or a list of Route values.
+`count/1` counts Route values. A Route with a list of targets counts as one.
+
+## Pattern Helpers
+
+Use the same matcher without creating a Router:
+
 ```elixir
-Router.matches?("user.created", "user.*")     # true
-Router.matches?("audit.user.login", "audit.**")  # true  
-Router.matches?("user.profile.updated", "user.*")  # false
+true = Router.matches?("user.created", "user.*")
+true = Router.matches?("audit.user.login", "audit.**")
+false = Router.matches?("user.profile.updated", "user.*")
+
+matching_signals = Router.filter(signals, "user.**")
 ```
 
-## Next Steps
+`route/2`, `matches?/2`, and `filter/2` use the same pattern implementation.
 
-- [Signal Extensions](signal-extensions.md) - Add custom metadata to signals with CloudEvents compliance
-- [Event Bus](event-bus.md) - Subscribe with the same path patterns and replay retained records
+## Route Values
+
+Use `%Jido.Signal.Router.Route{}` when code needs an explicit value:
+
+```elixir
+route = %Jido.Signal.Router.Route{
+  path: "user.created",
+  target: HandleUserCreated,
+  priority: 25
+}
+
+{:ok, route} = Jido.Signal.Router.validate(route)
+```
+
+The Route schema uses Zoi. Router targets remain generic terms. Dispatch
+validates a target when delivery starts.

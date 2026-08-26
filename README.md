@@ -243,7 +243,7 @@ types. Put domain data and dispatch policy outside this metadata map.
 
 ### The Router
 
-Powerful pattern matching for signal routing:
+Deterministic Signal type lookup with exact, `*`, and `**` patterns:
 
 ```elixir
 alias Jido.Signal.Router
@@ -267,6 +267,11 @@ routes = [
 # Route signals to handlers
 {:ok, targets} = Router.route(router, Jido.Signal.new!("user.profile.updated", %{}))
 # => {:ok, [:handle_user_updates]}
+
+# Manage the immutable Router through public helpers
+route_count = Router.count(router)
+false = Router.empty?(router)
+{:ok, registered_routes} = Router.list(router)
 ```
 
 ### Dispatch System

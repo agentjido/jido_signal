@@ -2,690 +2,170 @@ defmodule Jido.Signal.RouterDefinitionTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal.Router
-  alias Jido.Signal.Router.{Route, Validator}
-
-  @moduletag :capture_log
+  alias Jido.Signal.Router.Route
 
   describe "normalize/1" do
-    test "normalizes single Route struct" do
-      route = %Route{
-        path: "test.path",
-        target: :test_action
-      }
+    test "accepts Route values and all tuple forms" do
+      match = fn _signal -> true end
+      route = %Route{path: "route.value", target: :route}
 
-      assert {:ok, [^route]} = Validator.normalize(route)
-    end
+      assert {:ok, [^route]} = Router.normalize(route)
 
-    test "normalizes list of Route structs" do
-      routes = [
-        %Route{
-          path: "test.1",
-          target: :test_action1
-        },
-        %Route{
-          path: "test.2",
-          target: :test_action2
-        }
-      ]
+      assert {:ok, [%Route{path: "simple", target: :simple}]} =
+               Router.normalize({"simple", :simple})
 
-      assert {:ok, ^routes} = Validator.normalize(routes)
-    end
+      assert {:ok, [%Route{path: "priority", target: :priority, priority: 10}]} =
+               Router.normalize({"priority", :priority, 10})
 
-    test "normalizes {path, target} tuple" do
-      path = "test.path"
-      target = :test_action
-
-      assert {:ok, [%Route{path: ^path, target: ^target}]} = Validator.normalize({path, target})
-    end
-
-    test "normalizes {path, target, priority} tuple" do
-      path = "test.path"
-      target = :test_action
-      priority = 10
+      assert {:ok, [%Route{path: "matched", match: ^match, target: :matched}]} =
+               Router.normalize({"matched", match, :matched})
 
       assert {:ok,
-              [
-                %Route{
-                  path: ^path,
-                  target: ^target,
-                  priority: ^priority
-                }
-              ]} = Validator.normalize({path, target, priority})
+              [%Route{path: "matched.priority", match: ^match, target: :matched, priority: 20}]} =
+               Router.normalize({"matched.priority", match, :matched, 20})
     end
 
-    test "normalizes {path, match_fn, target} tuple" do
-      path = "test.path"
-      target = :test_action
+    test "accepts any target term" do
+      targets = [noop: [key: "value"], pid: [target: self()]]
 
-      match_fn = fn signal ->
-        signal.path == path
-      end
+      assert {:ok, [%Route{target: ^targets}]} =
+               Router.normalize({"target.list", targets})
 
-      assert {:ok,
-              [
-                %Route{
-                  path: ^path,
-                  target: ^target,
-                  match: ^match_fn
-                }
-              ]} = Validator.normalize({path, match_fn, target})
+      assert {:ok, [%Route{target: {:custom, %{value: 1}}}]} =
+               Router.normalize({"target.custom", {:custom, %{value: 1}}})
     end
 
-    test "normalizes {path, match_fn, target, priority} tuple" do
-      path = "test.path"
-      target = :test_action
-      priority = 10
-
-      match_fn = fn signal ->
-        signal.path == path
-      end
-
-      assert {:ok,
-              [
-                %Route{
-                  path: ^path,
-                  target: ^target,
-                  match: ^match_fn,
-                  priority: ^priority
-                }
-              ]} = Validator.normalize({path, match_fn, target, priority})
+    test "validates paths while it normalizes" do
+      assert {:error, error} = Router.normalize({"invalid..path", :target})
+      assert error.message == "Path cannot contain consecutive dots"
     end
 
-    test "normalizes {path, {adapter, opts}} tuple" do
-      path = "test.path"
-      adapter = :noop
-      opts = [key: "value"]
-
-      assert {:ok,
-              [
-                %Route{
-                  path: ^path,
-                  target: {^adapter, ^opts}
-                }
-              ]} = Validator.normalize({path, {adapter, opts}})
-    end
-
-    test "normalizes {path, [{adapter, opts}, ...]} tuple with multiple dispatch configs" do
-      path = "test.path"
-      test_pid = self()
-
-      configs = [
-        {:noop, [key: "value1"]},
-        {:pid, [target: test_pid]}
-      ]
-
-      {:ok, [route]} = Validator.normalize({path, configs})
-      assert route.path == path
-      assert length(route.target) == 2
-
-      noop_config = Enum.find(route.target, fn {adapter, _opts} -> adapter == :noop end)
-      pid_config = Enum.find(route.target, fn {adapter, _opts} -> adapter == :pid end)
-
-      assert noop_config == {:noop, [key: "value1"]}
-      assert elem(pid_config, 0) == :pid
-      assert Keyword.get(elem(pid_config, 1), :target) == test_pid
-    end
-
-    test "normalizes {path, [{adapter, opts}, ...]} tuple with keyword list format" do
-      path = "test.path"
-      test_pid = self()
-
-      configs = [
-        noop: [key: "value1"],
-        pid: [target: test_pid]
-      ]
-
-      {:ok, [route]} = Validator.normalize({path, configs})
-      assert route.path == path
-      assert length(route.target) == 2
-
-      noop_config = Enum.find(route.target, fn {adapter, _opts} -> adapter == :noop end)
-      pid_config = Enum.find(route.target, fn {adapter, _opts} -> adapter == :pid end)
-
-      assert noop_config == {:noop, [key: "value1"]}
-      assert elem(pid_config, 0) == :pid
-      assert Keyword.get(elem(pid_config, 1), :target) == test_pid
-    end
-
-    test "accepts any dispatch config list as term" do
-      path = "test.path"
-      # Any term is accepted as a target
-      config_list = [
-        {:noop, [key: "value1"]},
-        {:invalid_adapter, [key: "value2"]}
-      ]
-
-      assert {:ok, [route]} = Validator.normalize({path, config_list})
-      assert route.target == config_list
-    end
-
-    test "returns error for invalid route specification" do
-      assert {:error, error} = Validator.normalize({:invalid, "format"})
-      # error type assertion removed since new error structure doesn't have class field
+    test "returns a structured error for an invalid specification" do
+      assert {:error, error} = Router.normalize({:invalid, "format"})
       assert error.message == "Invalid route specification format"
     end
   end
 
   describe "validate/1" do
-    test "validates valid Route struct" do
-      route = %Router.Route{
-        path: "test.path",
-        target: :test_action,
-        priority: 0
-      }
+    test "uses the Route Zoi schema" do
+      route = %Route{path: "test.path", target: :target, priority: 10}
 
+      assert {:ok, ^route} = Zoi.parse(Route.schema(), route)
       assert {:ok, ^route} = Router.validate(route)
+      assert {:ok, [^route]} = Router.validate([route])
     end
 
-    test "validates list of valid Route structs" do
-      routes = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path2",
-          target: :test_action,
-          priority: 10
-        }
-      ]
-
-      assert {:ok, validated} = Router.validate(routes)
-      assert length(validated) == 2
-      assert Enum.all?(validated, &match?(%Router.Route{}, &1))
-    end
-
-    test "validates route with single dispatch config" do
-      route = %Router.Route{
-        path: "test.path",
-        target: {:noop, [key: "value"]}
-      }
-
-      assert {:ok, ^route} = Router.validate(route)
-    end
-
-    test "validates route with multiple dispatch configs" do
+    test "does not execute Route.match during validation" do
       test_pid = self()
 
-      configs = [
-        {:noop, [key: "value1"]},
-        {:pid, [target: test_pid]}
-      ]
+      match = fn _signal ->
+        send(test_pid, :match_called)
+        true
+      end
 
-      route = %Router.Route{
-        path: "test.path",
-        target: configs
-      }
+      route = %Route{path: "test.path", target: :target, match: match}
 
-      {:ok, validated_route} = Router.validate(route)
-      assert validated_route.path == route.path
-      assert length(validated_route.target) == 2
-
-      noop_config = Enum.find(validated_route.target, fn {adapter, _opts} -> adapter == :noop end)
-      pid_config = Enum.find(validated_route.target, fn {adapter, _opts} -> adapter == :pid end)
-
-      assert noop_config == {:noop, [key: "value1"]}
-      assert elem(pid_config, 0) == :pid
-      assert Keyword.get(elem(pid_config, 1), :target) == test_pid
+      assert {:ok, ^route} = Router.validate(route)
+      refute_receive :match_called
     end
 
-    test "returns error for invalid path format" do
-      route = %Router.Route{
-        path: "invalid..path",
-        target: :test_action
-      }
+    test "returns the path validation messages" do
+      assert {:error, error} =
+               Router.validate(%Route{path: "invalid..path", target: :target})
 
-      assert {:error, error} = Router.validate(route)
-      # error type assertion removed since new error structure doesn't have class field
       assert error.message == "Path cannot contain consecutive dots"
 
-      # Test invalid path with '**' sequence
-      route_with_double_star = %Router.Route{
-        path: "invalid**path",
-        target: :test_action
-      }
+      assert {:error, error} =
+               Router.validate(%Route{path: "invalid**path", target: :target})
 
-      assert {:error, error} = Router.validate(route_with_double_star)
-      # error type assertion removed since new error structure doesn't have class field
       assert error.message == "Path cannot contain '**' sequence"
 
-      # Test invalid characters
-      route_with_invalid_chars = %Router.Route{
-        path: "invalid@#path",
-        target: :test_action
-      }
+      assert {:error, error} =
+               Router.validate(%Route{path: "invalid@path", target: :target})
 
-      assert {:error, error} = Router.validate(route_with_invalid_chars)
-      # error type assertion removed since new error structure doesn't have class field
       assert error.message == "Path contains invalid characters"
     end
 
-    test "accepts any target term" do
-      route = %Router.Route{
-        path: "test.path",
-        target: :invalid
-      }
+    test "returns priority and match validation messages" do
+      assert {:error, error} =
+               Router.validate(%Route{path: "test", target: :target, priority: 101})
 
-      assert {:ok, validated_route} = Router.validate(route)
-      assert validated_route.target == :invalid
-    end
-
-    test "accepts any dispatch config term" do
-      route = %Router.Route{
-        path: "test.path",
-        target: {"not_an_atom", []}
-      }
-
-      assert {:ok, validated_route} = Router.validate(route)
-      assert validated_route.target == {"not_an_atom", []}
-    end
-
-    test "returns error for invalid priority" do
-      route = %Router.Route{
-        path: "test.path",
-        target: :test_action,
-        # Above max allowed
-        priority: 101
-      }
-
-      assert {:error, error} = Router.validate(route)
-      # error type assertion removed since new error structure doesn't have class field
       assert error.message == "Priority value exceeds maximum allowed"
-    end
 
-    test "returns error for invalid match function" do
-      route = %Router.Route{
-        path: "test.path",
-        target: :test_action,
-        match: "not_a_function"
-      }
+      assert {:error, error} =
+               Router.validate(%Route{path: "test", target: :target, match: "invalid"})
 
-      assert {:error, error} = Router.validate(route)
-      # error type assertion removed since new error structure doesn't have class field
       assert error.message == "Match must be a function that takes one argument"
     end
 
-    test "returns error for invalid input type" do
+    test "returns a structured error for invalid input" do
       assert {:error, error} = Router.validate(:invalid)
-      # error type assertion removed since new error structure doesn't have class field
       assert error.message == "Expected Route struct or list of Route structs"
     end
   end
 
-  describe "new/1" do
-    test "creates router with single route" do
-      route = %Router.Route{
-        path: "test.path",
-        target: :test_action
-      }
+  describe "Router management" do
+    test "creates an empty Router" do
+      router = Router.new!()
 
-      assert {:ok, router} = Router.new(route)
-      assert router.route_count == 1
-      assert %Router.TrieNode{} = router.trie
-
-      # Check the trie structure matches what we expect
-      assert %Router.TrieNode{
-               segments: %{
-                 "test" => %Router.TrieNode{
-                   segments: %{
-                     "path" => %Router.TrieNode{
-                       handlers: %Router.NodeHandlers{
-                         handlers: [
-                           %Router.HandlerInfo{
-                             target: :test_action,
-                             priority: 0
-                           }
-                         ]
-                       }
-                     }
-                   }
-                 }
-               }
-             } = router.trie
-    end
-
-    test "creates router with multiple routes" do
-      routes = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path2",
-          target: :test_action
-        }
-      ]
-
-      assert {:ok, router} = Router.new(routes)
-      assert router.route_count == 2
-      assert %Router.TrieNode{} = router.trie
-
-      # Check the trie structure matches what we expect
-      assert %Router.TrieNode{
-               segments: %{
-                 "test" => %Router.TrieNode{
-                   segments: %{
-                     "path1" => %Router.TrieNode{
-                       handlers: %Router.NodeHandlers{
-                         handlers: [
-                           %Router.HandlerInfo{
-                             target: :test_action,
-                             priority: 0
-                           }
-                         ]
-                       }
-                     },
-                     "path2" => %Router.TrieNode{
-                       handlers: %Router.NodeHandlers{
-                         handlers: [
-                           %Router.HandlerInfo{
-                             target: :test_action,
-                             priority: 0
-                           }
-                         ]
-                       }
-                     }
-                   }
-                 }
-               }
-             } = router.trie
-    end
-
-    test "creates empty router with nil input" do
-      assert {:ok, router} = Router.new(nil)
-      assert router.route_count == 0
-      assert %Router.TrieNode{} = router.trie
-      assert router.trie.segments == %{}
-    end
-  end
-
-  describe "add/2" do
-    test "adds a single route" do
-      {:ok, router} = Router.new(nil)
-
-      route = %Router.Route{
-        path: "test.path",
-        target: :test_action
-      }
-
-      assert {:ok, updated} = Router.add(router, route)
-      assert updated.route_count == 1
-
-      assert %Router.TrieNode{
-               segments: %{
-                 "test" => %Router.TrieNode{
-                   segments: %{
-                     "path" => %Router.TrieNode{
-                       handlers: %Router.NodeHandlers{
-                         handlers: [
-                           %Router.HandlerInfo{
-                             target: :test_action,
-                             priority: 0
-                           }
-                         ]
-                       }
-                     }
-                   }
-                 }
-               }
-             } = updated.trie
-    end
-
-    test "adds multiple routes" do
-      {:ok, router} = Router.new(nil)
-
-      routes = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path2",
-          target: :test_action
-        }
-      ]
-
-      assert {:ok, updated} = Router.add(router, routes)
-      assert updated.route_count == 2
-    end
-  end
-
-  describe "remove/2" do
-    test "removes a single route" do
-      routes = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path2",
-          target: :test_action
-        }
-      ]
-
-      {:ok, router} = Router.new(routes)
-
-      assert {:ok, updated} = Router.remove(router, "test.path1")
-      assert updated.route_count == 1
-
-      assert %Router.TrieNode{
-               segments: %{
-                 "test" => %Router.TrieNode{
-                   segments: %{
-                     "path2" => %Router.TrieNode{
-                       handlers: %Router.NodeHandlers{
-                         handlers: [
-                           %Router.HandlerInfo{
-                             target: :test_action,
-                             priority: 0
-                           }
-                         ]
-                       }
-                     }
-                   }
-                 }
-               }
-             } = updated.trie
-    end
-
-    test "removes multiple routes" do
-      routes = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path2",
-          target: :test_action
-        }
-      ]
-
-      {:ok, router} = Router.new(routes)
-
-      assert {:ok, updated} = Router.remove(router, ["test.path1", "test.path2"])
-      assert updated.route_count == 0
-      assert updated.trie.segments == %{}
-    end
-  end
-
-  describe "list_routes/1" do
-    test "lists all routes" do
-      routes = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path2",
-          target: :test_action
-        }
-      ]
-
-      {:ok, router} = Router.new(routes)
-
-      assert {:ok, listed_routes} = Router.list(router)
-      assert length(listed_routes) == 2
-
-      assert Enum.all?(listed_routes, fn route ->
-               match?(
-                 %Router.Route{
-                   target: :test_action,
-                   priority: 0
-                 },
-                 route
-               )
-             end)
-
-      assert Enum.map(listed_routes, & &1.path) |> Enum.sort() == ["test.path1", "test.path2"]
-    end
-
-    test "lists empty routes" do
-      {:ok, router} = Router.new(nil)
+      assert %Router.Router{} = router
+      assert Router.empty?(router)
+      assert Router.count(router) == 0
       assert {:ok, []} = Router.list(router)
     end
-  end
 
-  describe "merge/2" do
-    test "merges two routers" do
-      routes1 = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path2",
-          target: :test_action
-        }
-      ]
-
-      routes2 = [
-        %Router.Route{
-          path: "test.path3",
-          target: :test_action
-        },
-        %Router.Route{
-          path: "test.path4",
-          target: :test_action
-        }
-      ]
-
-      {:ok, router1} = Router.new(routes1)
-      {:ok, router2} = Router.new(routes2)
-
-      assert {:ok, merged} = Router.merge(router1, router2)
-      assert merged.route_count == 4
-
-      assert {:ok, merged_routes} = Router.list(merged)
-      assert length(merged_routes) == 4
-
-      paths = merged_routes |> Enum.map(& &1.path) |> Enum.sort()
-      assert paths == ["test.path1", "test.path2", "test.path3", "test.path4"]
-    end
-
-    test "merges empty routers" do
-      {:ok, router1} = Router.new(nil)
-      {:ok, router2} = Router.new(nil)
-
-      assert {:ok, merged} = Router.merge(router1, router2)
-      assert merged.route_count == 0
-      assert {:ok, []} = Router.list(merged)
-    end
-
-    test "merges router with empty router" do
-      routes = [
-        %Router.Route{
-          path: "test.path1",
-          target: :test_action
-        }
-      ]
-
-      {:ok, router1} = Router.new(routes)
-      {:ok, router2} = Router.new(nil)
-
-      assert {:ok, merged} = Router.merge(router1, router2)
-      assert merged.route_count == 1
-
-      assert {:ok, [route]} = Router.list(merged)
-      assert route.path == "test.path1"
-    end
-
-    test "merges routers with duplicate routes" do
-      routes1 = [
-        %Router.Route{
-          path: "test.path",
-          target: :test_action1
-        }
-      ]
-
-      routes2 = [
-        %Router.Route{
-          path: "test.path",
-          target: :test_action2
-        }
-      ]
-
-      {:ok, router1} = Router.new(routes1)
-      {:ok, router2} = Router.new(routes2)
-
-      assert {:ok, merged} = Router.merge(router1, router2)
-      assert merged.route_count == 2
-
-      assert {:ok, routes} = Router.list(merged)
-      assert length(routes) == 2
-
-      [route1, route2] = routes
-      assert route1.path == "test.path"
-      assert route2.path == "test.path"
-      assert route1.target == :test_action1
-      assert route2.target == :test_action2
-    end
-  end
-
-  describe "has_route?/2 optimization" do
-    test "returns true for exact paths that exist" do
-      {:ok, router} =
-        Router.new([
-          {"user.created", :handler1},
-          {"order.placed", :handler2}
+    test "creates and lists Routes in registration order" do
+      router =
+        Router.new!([
+          {"first", :first},
+          {"second", :second}
         ])
 
+      assert Router.count(router) == 2
+      refute Router.empty?(router)
+      assert {:ok, [%Route{path: "first"}, %Route{path: "second"}]} = Router.list(router)
+    end
+
+    test "adds Routes in registration order" do
+      router = Router.new!({"first", :first})
+      assert {:ok, router} = Router.add(router, [{"second", :second}, {"third", :third}])
+
+      assert {:ok, routes} = Router.list(router)
+      assert Enum.map(routes, & &1.path) == ["first", "second", "third"]
+    end
+
+    test "removes all Routes at the selected paths" do
+      router =
+        Router.new!([
+          {"same", :first},
+          {"same", :second},
+          {"keep", :keep}
+        ])
+
+      assert {:ok, router} = Router.remove(router, "same")
+      assert Router.count(router) == 1
+      assert {:ok, [%Route{path: "keep"}]} = Router.list(router)
+
+      assert {:ok, unchanged} = Router.remove(router, "missing")
+      assert Router.count(unchanged) == 1
+    end
+
+    test "merges Routers by appending their Routes" do
+      first = Router.new!([{"one", :one}, {"two", :two}])
+      second = Router.new!([{"three", :three}, {"four", :four}])
+
+      assert {:ok, merged} = Router.merge(first, second)
+      assert {:ok, routes} = Router.list(merged)
+      assert Enum.map(routes, & &1.path) == ["one", "two", "three", "four"]
+    end
+
+    test "checks registered route paths exactly" do
+      router = Router.new!([{"user.created", :exact}, {"user.*", :wildcard}])
+
       assert Router.has_route?(router, "user.created")
-      assert Router.has_route?(router, "order.placed")
-    end
-
-    test "returns false for paths that don't exist" do
-      {:ok, router} = Router.new({"user.created", :handler1})
-
-      refute Router.has_route?(router, "user.updated")
-      refute Router.has_route?(router, "nonexistent")
-    end
-
-    test "returns false for partial paths" do
-      {:ok, router} = Router.new({"user.created.verified", :handler1})
-
-      # Partial paths don't match
-      refute Router.has_route?(router, "user")
-      refute Router.has_route?(router, "user.created")
-
-      # Only exact match
-      assert Router.has_route?(router, "user.created.verified")
-    end
-
-    test "returns false for invalid paths" do
-      {:ok, router} = Router.new({"user.created", :handler1})
-
-      refute Router.has_route?(router, "invalid..path")
-      refute Router.has_route?(router, "")
-    end
-
-    test "works with wildcard patterns stored in router" do
-      {:ok, router} = Router.new({"user.*", :handler1})
-
-      # Exact path match (literal "user.*")
       assert Router.has_route?(router, "user.*")
-
-      # Not a pattern matcher - doesn't match expanded paths
-      refute Router.has_route?(router, "user.123")
+      refute Router.has_route?(router, "user.updated")
+      refute Router.has_route?(router, "invalid..path")
     end
   end
 end

@@ -12,7 +12,7 @@ defimpl Inspect, for: Jido.Signal.Router.Router do
     {:ok, routes} = Jido.Signal.Router.list(router)
     formatted_routes = Enum.map(routes, &format_route/1)
     routes_str = Enum.join(formatted_routes, "\n")
-    "#Router<routes: #{router.route_count}>\n#{routes_str}"
+    "#Router<routes: #{Jido.Signal.Router.count(router)}>\n#{routes_str}"
   end
 
   # Formats a single route

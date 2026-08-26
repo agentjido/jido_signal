@@ -224,29 +224,28 @@ defmodule Jido.Signal.RouterTest do
     end
 
     test "handles pattern matching edge cases" do
-      # Test pattern function that raises
-      {:error, _error} =
+      # Runtime predicate failures are treated as no match.
+      {:ok, router} =
         Router.new({
           "test",
           fn _signal -> raise "boom" end,
           :test_action
         })
 
-      # error type assertion removed since new error structure doesn't have class field
+      signal = %Signal{type: "test", source: "/test", id: ID.generate!()}
+      assert {:error, _error} = Router.route(router, signal)
 
-      # Test pattern function returning non-boolean
       pattern_fn = fn _signal -> "not a boolean" end
 
-      {:error, _error} =
+      {:ok, router} =
         Router.new({
           "test",
           pattern_fn,
           :test_action
         })
 
-      # error type assertion removed since new error structure doesn't have class field
+      assert {:error, _error} = Router.route(router, signal)
 
-      # Test pattern function with nil signal data
       {:ok, router} =
         Router.new({
           "test",
@@ -255,8 +254,7 @@ defmodule Jido.Signal.RouterTest do
         })
 
       signal = %Signal{type: "test", source: "/test", id: ID.generate!(), data: nil}
-      {:error, _error} = Router.route(router, signal)
-      # error type assertion removed since new error structure doesn't have class field
+      assert {:error, _error} = Router.route(router, signal)
     end
 
     test "handles route management edge cases" do
@@ -311,12 +309,12 @@ defmodule Jido.Signal.RouterTest do
       # Test overlapping wildcards
       signal = %Signal{type: "user.123.created", source: "/test", id: ID.generate!()}
       {:ok, actions} = Router.route(router, signal)
-      # Should match all patterns in correct priority order
-      assert [:action4, :action3, :action2, :action1, :catch_all] = actions
+      # Exact paths run before * paths, then ** paths.
+      assert [:action4, :action3, :action1, :action2, :catch_all] = actions
     end
 
-    test "handles trie node edge cases" do
-      # Test very deep nesting - over 10 and the tests are really slow
+    test "handles large route collections" do
+      # Test a deep path.
       deep_path = String.duplicate("nested.", 10) <> "end"
 
       {:ok, router} =
@@ -329,7 +327,7 @@ defmodule Jido.Signal.RouterTest do
       {:ok, [action]} = Router.route(router, signal)
       assert action == :test_action
 
-      # Test wide trie (many siblings)
+      # Test many routes.
       wide_routes =
         for n <- 1..1000 do
           {"parent.#{n}", :test_action}

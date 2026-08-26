@@ -47,10 +47,11 @@ defmodule Jido.Signal.Router.PrecedenceContractTest do
     router =
       Router.new!([
         {"user.created", :first},
-        {"user.created", :second}
+        {"user.created", :second},
+        {"user.created", :third}
       ])
 
-    assert {:ok, [:first, :second]} = Router.route(router, signal("user.created"))
+    assert {:ok, [:first, :second, :third]} = Router.route(router, signal("user.created"))
   end
 
   test "Route.match filters a path match" do
@@ -66,5 +67,33 @@ defmodule Jido.Signal.Router.PrecedenceContractTest do
 
     assert {:error, %Error.RoutingError{}} =
              Router.route(router, signal("payment.processed", %{amount: 100}))
+  end
+
+  test "Route.match uses the same path complexity and priority order" do
+    match = fn signal -> signal.data[:important] == true end
+
+    router =
+      Router.new!([
+        {"job.completed", :plain, -100},
+        {"job.completed", match, :important, 100}
+      ])
+
+    assert {:ok, [:important, :plain]} =
+             Router.route(router, signal("job.completed", %{important: true}))
+  end
+
+  test "route/2 and matches?/2 use the same zero-segment multi-wildcard rule" do
+    router = Router.new!({"user.**.created", :handler})
+
+    assert Router.matches?("user.created", "user.**.created")
+    assert {:ok, [:handler]} = Router.route(router, signal("user.created"))
+  end
+
+  test "list/1 keeps plain and conditional Routes at the same path" do
+    match = fn _signal -> true end
+    router = Router.new!([{"event", :plain}, {"event", match, :conditional}])
+
+    assert {:ok, routes} = Router.list(router)
+    assert Enum.map(routes, & &1.target) == [:plain, :conditional]
   end
 end

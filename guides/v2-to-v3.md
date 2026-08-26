@@ -149,8 +149,14 @@ Router precedence is unchanged:
 4. Higher priority runs before lower priority for equal specificity.
 5. Registration order breaks the final tie.
 
-Router trie, matcher, container, and validator modules are internal. Use
-`Jido.Signal.Router` and `Jido.Signal.Router.Route` only.
+Router state and matcher implementation are internal. Use
+`Jido.Signal.Router` and `Jido.Signal.Router.Route` only. Use `count/1`,
+`empty?/1`, `list/1`, and `has_route?/2` instead of reading Router fields.
+`count/1` counts Route values, not the number of targets inside each Route.
+
+`Route.match` remains supported. Router creation checks its arity but does not
+execute it. A match function that raises or does not return `true` is treated
+as no match during routing.
 
 ## Move Dispatch Runtime Policy to the Caller
 

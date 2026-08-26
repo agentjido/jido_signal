@@ -19,6 +19,7 @@ Model domain events as validated signals and route them predictably through disp
 ## Library Author Patterns
 - Define typed signal modules for important domain boundaries (billing, auth, workflow).
 - Use router patterns intentionally: exact > `*` > `**`, with explicit priority when needed.
+- Use Router management functions. Do not inspect Router implementation fields.
 - For fanout workflows, route through `Jido.Signal.Bus`; for single targets, use direct dispatch.
 - For durable consumers, select a durable Bus Store and use explicit acknowledgements.
 - Acknowledge `RecordedSignal.id`, not the Signal envelope ID.
