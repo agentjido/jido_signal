@@ -64,6 +64,7 @@ defmodule Jido.Signal.Ext do
 
   alias Jido.Signal.Error
   alias Jido.Signal.Sanitizer
+  alias Jido.Signal.Schema
 
   require Logger
 
@@ -183,7 +184,7 @@ defmodule Jido.Signal.Ext do
           line: __ENV__.line
       end
 
-      if Jido.Signal.Schema.schema_type(@ext_schema) != :zoi do
+      if unquote(Schema).schema_type(@ext_schema) != :zoi do
         raise CompileError,
           description: "Invalid extension schema: must be a Zoi schema",
           file: __ENV__.file,

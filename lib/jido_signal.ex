@@ -624,9 +624,8 @@ defmodule Jido.Signal do
     map = stringify_keys(map)
 
     with :ok <- validate_wire_version(map),
-         {:ok, extensions, attrs} <- decode_extensions(map),
-         {:ok, signal} <- build_and_validate_signal(attrs, extensions) do
-      {:ok, signal}
+         {:ok, extensions, attrs} <- decode_extensions(map) do
+      build_and_validate_signal(attrs, extensions)
     end
   end
 
@@ -671,17 +670,7 @@ defmodule Jido.Signal do
     Enum.reduce(extensions, %{}, fn {namespace, data}, acc ->
       namespace = to_string(namespace)
 
-      attrs =
-        case Jido.Signal.Ext.Registry.get(namespace) do
-          {:ok, extension_module} ->
-            case Ext.safe_to_attrs(extension_module, data) do
-              {:ok, attrs} when is_map(attrs) -> stringify_keys(attrs)
-              _ -> %{}
-            end
-
-          {:error, :not_found} ->
-            %{namespace => data}
-        end
+      attrs = encode_extension(namespace, data)
 
       attrs
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
@@ -691,6 +680,20 @@ defmodule Jido.Signal do
   end
 
   defp encode_extensions(_extensions), do: %{}
+
+  defp encode_extension(namespace, data) do
+    case Jido.Signal.Ext.Registry.get(namespace) do
+      {:ok, extension_module} -> encode_registered_extension(extension_module, data)
+      {:error, :not_found} -> %{namespace => data}
+    end
+  end
+
+  defp encode_registered_extension(extension_module, data) do
+    case Ext.safe_to_attrs(extension_module, data) do
+      {:ok, attrs} when is_map(attrs) -> stringify_keys(attrs)
+      _error -> %{}
+    end
+  end
 
   defp validate_wire_version(%{@wire_version_key => version})
        when version in @readable_wire_versions,
