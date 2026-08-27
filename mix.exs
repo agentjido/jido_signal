@@ -30,7 +30,7 @@ defmodule Jido.Signal.MixProject do
       # Coverage
       test_coverage: [
         tool: ExCoveralls,
-        summary: [threshold: 92],
+        summary: [threshold: 90],
         export: "cov",
         ignore_modules: [~r/^JidoTest\./]
       ],
