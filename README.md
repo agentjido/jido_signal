@@ -25,9 +25,12 @@ migration guide.
 
 ## Overview
 
-`Jido.Signal` is a toolkit for event-driven and agent-based systems in Elixir. It provides a small CloudEvents 1.0 envelope, typed domain Signals, routing, dispatch, serialization, and a Signal Bus.
+`Jido.Signal` is a toolkit for event-driven and agent-based systems in Elixir.
+It provides a small CloudEvents 1.0 envelope, typed domain Signals, routing,
+dispatch, serialization, and a Signal Bus.
 
-Whether you're building microservices that need reliable event communication, implementing complex agent-based systems, or creating observable distributed applications, Jido.Signal provides the foundation for robust, traceable, and scalable event-driven architecture.
+Use it when processes or services need a validated message envelope, explicit
+routing, trace context, or retained local delivery.
 
 ## Why Do I Need Signals?
 
@@ -264,13 +267,13 @@ alias Jido.Signal.Router
 routes = [
   # Exact matches have highest priority
   {"user.created", :handle_user_creation},
-  
+
   # Single-level wildcards
   {"user.*.updated", :handle_user_updates},
-  
+
   # Multi-level wildcards
   {"audit.**", :audit_logger, 100},  # High priority
-  
+
   # Pattern matching functions
   {"**", fn signal -> String.contains?(signal.type, "error") end, :error_handler}
 ]
@@ -543,7 +546,7 @@ you convert stored Signals or Bus subscriptions.
 - **[Migrate from v2 to v3](guides/v2-to-v3.md)** - Follow the compatibility and replacement path
 
 For module and function details, use the
-[API reference](https://hexdocs.pm/jido_signal).
+[API reference](https://hexdocs.pm/jido_signal/3.0.0-beta.1/).
 
 ## Development
 
@@ -564,13 +567,20 @@ mix deps.get
 
 ```bash
 mix test
+MIX_ENV=test mix test --cover --warnings-as-errors
+mix test --include flaky --warnings-as-errors
 ```
 
 ### Quality Checks
 
 ```bash
-mix quality  # Runs formatter, dialyzer, and credo
+mix quality
+mix deps.unlock --check-unused
+mix hex.audit
 ```
+
+`mix quality` runs formatting, compilation with warnings as errors, Doctor,
+ExDoc, Credo, and Dialyzer. The coverage floor is 90 percent.
 
 ### Generate Documentation
 
@@ -594,18 +604,14 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## Related Projects
 
 - **[Jido](https://github.com/agentjido/jido)** - The main Jido agent framework
-- **[Jido Workbench](https://github.com/agentjido/jido_workbench)** - Development tools and utilities
 
 ## Links
 
-- [Hex Package](https://hex.pm/packages/jido_signal)
-- [Documentation](https://hexdocs.pm/jido_signal)
+- [Hex Package](https://hex.pm/packages/jido_signal/3.0.0-beta.1)
+- [Documentation](https://hexdocs.pm/jido_signal/3.0.0-beta.1/)
 - [GitHub Repository](https://github.com/agentjido/jido_signal)
+- [Security Advisories](https://github.com/agentjido/jido_signal/security/advisories/new)
 - [Jido Website](https://jido.run)
 - [Jido Ecosystem](https://jido.run/ecosystem)
 - [Discord](https://jido.run/discord)
 - [CloudEvents Specification](https://cloudevents.io/)
-
----
-
-**Built with ❤️ by the Jido team**

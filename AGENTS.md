@@ -1,50 +1,113 @@
-# AGENTS.md - Jido.Signal Guide
+# Jido Signal Repository Guide
 
-## Intent
-Model domain events as validated signals and route them predictably through bus/dispatch layers.
+## Scope
 
-## Work Management
-- Work from a topic branch or worktree based on `main`.
-- Keep changes focused on a single pull request.
+These instructions apply to the `jido_signal` package. The `release/v3` branch
+contains the Jido Signal v3 beta. Treat Signal validation, routing, delivery,
+serialization, and persistence boundaries as stable public contracts.
+
+Keep unrelated user changes in the worktree. Do not restore v2 behavior or add
+a compatibility layer unless the task requires it.
+
+## Public package boundary
+
+The package has five main public parts:
+
+- `Jido.Signal` defines the CloudEvents-compatible Signal envelope.
+- `Jido.Signal.Serialization` defines canonical map, JSON, and Erlang term
+  formats.
+- `Jido.Signal.Router` defines exact and wildcard Signal type routing.
+- `Jido.Signal.Dispatch` defines ordered delivery through adapters.
+- `Jido.Signal.Bus` defines local publication, replay, and durable
+  subscriptions.
+
+The application owns retry, rate limiting, dead-letter handling, workload
+isolation, and durable storage implementations.
+
+## Source map
+
+- `lib/jido_signal.ex` contains Signal construction and validation.
+- `lib/jido_signal/context.ex` and `lib/jido_signal/trace.ex` contain transport
+  context values.
+- `lib/jido_signal/serialization.ex` and `lib/jido_signal/codec.ex` contain the
+  wire boundary.
+- `lib/jido_signal/router.ex` and `lib/jido_signal/router/` contain routing.
+- `lib/jido_signal/dispatch.ex` and `lib/jido_signal/dispatch/` contain delivery.
+- `lib/jido_signal/bus.ex` and `lib/jido_signal/bus/` contain Bus behavior and
+  storage boundaries.
+- `test/support/` contains shared fixtures.
+
+Internal modules support the public API. Do not expose an internal module only
+to make a test easy.
+
+## Required workflow
+
+For a behavior change:
+
+1. Run the nearest existing tests.
+2. Add a focused regression test.
+3. Make the smallest complete change.
+4. Run the focused test again.
+5. Run the full suite and applicable quality checks.
+
+Use these commands from the package root:
+
+```text
+mix test path/to/test_file.exs
+mix test
+mix test --include flaky --warnings-as-errors
+mix format --check-formatted
+mix compile --warnings-as-errors
+mix doctor --summary
+mix docs --warnings-as-errors
+mix credo --min-priority high
+mix dialyzer
+MIX_ENV=test mix test --cover --warnings-as-errors
+mix deps.unlock --check-unused
+mix hex.audit
+```
+
+`mix quality` runs formatting, compilation, Doctor, ExDoc, Credo, and Dialyzer.
+The total coverage floor is 90 percent. Generated Dialyzer PLTs belong under
+the ignored `priv/plts/` directory and must not be committed.
+
+## Contract rules
+
+- Validate package-owned boundaries with Zoi.
+- Keep Signal type paths dot-delimited and deterministic.
+- Preserve Router order: exact paths, `*`, `**`, specificity, priority, and
+  registration order.
+- Keep Dispatch ordered and synchronous.
+- Keep Bus durable delivery stored-before-send and at least once.
+- Preserve useful failure data in documented structured errors.
+- Do not create atoms from runtime Signal data.
+- Keep transport context flat and separate from domain data.
+
+## Test rules
+
+- Test public behavior and the local rule that implements it.
+- Use explicit messages, monitors, and barriers for process synchronization.
+- Do not use `Process.sleep/1` as test synchronization.
+- Use unique process names and telemetry handler IDs.
+- Clean up processes, monitors, handlers, and global state.
+- Use `async: true` only for isolated tests.
+- Give skipped or flaky tests a reason.
+
+## Documentation and package metadata
+
+- Keep `README.md`, `CONTRIBUTING.md`, guides, and `mix.exs` metadata aligned.
+- Document public modules, functions, types, options, results, and errors.
+- Mark internal modules and functions as internal.
+- Keep the Hex package file list explicit.
+- Do not add repository automation, generated files, benchmarks, or local
+  caches to the Hex package.
+- Do not modify `CHANGELOG.md`; release notes are generated from Git history.
+
+## Git and release rules
+
+- Create normal topic branches from `main`.
+- Use `release/v3` for approved v3 release maintenance.
 - Use Conventional Commits.
-- Update docs and tests when behavior changes.
-
-## Runtime Baseline
-- Elixir `~> 1.18`
-- OTP `27+` (release QA baseline)
-
-## Commands
-- `mix test` (default alias excludes `:flaky`)
-- `mix test --include flaky` (full suite)
-- `mix q` or `mix quality` (`format --check-formatted`, `compile --warnings-as-errors`, `credo`, `dialyzer`)
-- `mix coveralls.html` (coverage report)
-- `mix docs` (local docs)
-
-## Architecture Snapshot
-- `Jido.Signal`: CloudEvents-style signal envelope + constructor/validation API
-- `Jido.Signal.Bus`: pub/sub bus with routing, middleware, and persistence hooks
-- `Jido.Signal.Router`: indexed matcher (exact, `*`, `**`) with priority ordering
-- `Jido.Signal.Dispatch`: adapter layer (`:pid`, `:pubsub`, `:http`, `:bus`, `:logger`, etc.)
-- Bus `jido:` option: isolated Registry-key namespace without extra processes
-
-## Standards
-- Use clear dot-delimited signal types and validate boundaries aggressively
-- Use **Zoi-first** schema contracts for new signal definitions
-- Keep transport concerns in adapters/bus, not in signal model structs
-- Keep error returns structured (`{:error, Jido.Signal.Error.t()}` or documented atoms)
-- Prefer explicit routing and persistence behavior over implicit defaults
-
-## Testing and QA
-- Cover route matching precedence (exact vs wildcard) and priority ordering
-- Cover subscriber lifecycle and persistence/checkpoint behavior explicitly
-- Treat skipped tests as temporary: include reason + follow-up issue in test metadata/comments
-
-## Release Hygiene
-- Keep semver ranges stable (`~> 2.0` for Jido ecosystem peers)
-- Use Conventional Commits
-- Do not modify `CHANGELOG.md`; release notes are generated from Git history during release, so keep changes focused on proper Conventional Commits.
-
-## References
-- `README.md`
-- `guides/`
-- https://hexdocs.pm/jido_signal
+- Do not move or reuse a release tag.
+- Releases use signed, annotated `v` tags and the manual GitHub `Release`
+  workflow.

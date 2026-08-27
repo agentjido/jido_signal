@@ -125,7 +125,7 @@ body:
       options:
         - label: I have searched for existing feature requests for this functionality
           required: true
-        - label: I have checked the roadmap and documentation for planned features
+        - label: I have checked the documentation for existing support
           required: true
         - label: This feature aligns with the goals of jido_signal
           required: true

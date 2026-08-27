@@ -1,11 +1,14 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📖 Documentation
-    url: https://hexdocs.pm/jido_signal
+    url: https://hexdocs.pm/jido_signal/3.0.0-beta.1/
     about: Check the documentation for usage examples and API reference
   - name: 💬 GitHub Discussions
     url: https://github.com/agentjido/jido_signal/discussions
     about: Ask questions, share ideas, and discuss with the community
-  - name: 🌐 Agent Jido Website
-    url: https://agentjido.xyz
+  - name: 🔒 Security Reports
+    url: https://github.com/agentjido/jido_signal/security/advisories/new
+    about: Report security vulnerabilities privately
+  - name: 🌐 Jido Website
+    url: https://jido.run
     about: Learn more about the Jido ecosystem and related projects

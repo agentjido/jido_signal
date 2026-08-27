@@ -1,256 +1,142 @@
 # Contributing to Jido Signal
 
-Welcome to the Jido Signal contributor's guide! We're excited that you're interested in contributing to Jido Signal, the event signaling and pub/sub library for the Jido ecosystem.
+Thank you for contributing to Jido Signal. This guide describes the supported
+development and review process.
 
-## Getting Started
+## Supported environment
 
-### Development Environment
+- Elixir `~> 1.18`
+- Erlang/OTP 27 or later
 
-1. **Elixir Version Requirements**
-   - Jido Signal requires Elixir ~> 1.18
-   - We recommend using asdf or similar version manager
+The CI matrix also tests newer supported Elixir and OTP versions.
 
-2. **Initial Setup**
-   ```bash
-   # Clone the repository
-   git clone https://github.com/agentjido/jido_signal.git
-   cd jido_signal
+## Set up the project
 
-   # Install dependencies
-   mix deps.get
+1. Fork and clone the repository.
+2. Install dependencies.
+3. Run the default test suite.
 
-   # Run tests to verify your setup
-   mix test
-   ```
-
-3. **Quality Checks**
-   ```bash
-   # Run the full quality check suite
-   mix quality
-
-   # Or individual checks
-   mix format                    # Format code
-   mix compile --warnings-as-errors  # Check compilation
-   mix dialyzer                  # Type checking
-   mix credo --strict            # Static analysis
-   ```
-
-4. **Recommended Workflow**
-   ```bash
-   # Create a topic branch from main
-   git checkout -b my-change
-
-   # Run the test suite while you work
-   mix test
-
-   # Run the full quality checks before opening a PR
-   mix quality
-   ```
-
-   Contributors should:
-   - Keep changes focused on one topic per pull request
-   - Add or update tests when behavior changes
-   - Update documentation when APIs, behavior, or usage guidance changes
-
-## Code Organization
-
-### Project Structure
-```
-.
-├── lib/
-│   ├── jido_signal/
-│   │   ├── bus/           # Event bus implementations
-│   │   ├── dispatch/      # Signal dispatching logic
-│   │   ├── router/        # Signal routing
-│   │   ├── journal/       # Signal journal + persistence adapters
-│   │   ├── serialization/ # Signal serializers and schema helpers
-│   │   └── ext/           # Signal extension helpers
-│   └── jido_signal.ex     # Main entry point
-├── test/
-│   ├── jido_signal/
-│   │   └── ...           # Tests mirroring lib structure
-│   ├── support/          # Test helpers and shared fixtures
-│   └── test_helper.exs
-└── mix.exs
+```sh
+git clone https://github.com/YOUR-NAME/jido_signal.git
+cd jido_signal
+mix deps.get
+mix test
 ```
 
-### Core Components
-- **Bus**: Event bus for publish/subscribe patterns
-- **Dispatch**: Signal dispatching and delivery
-- **Router**: Signal routing based on topics and patterns
-- **Dispatch Adapters**: Delivery targets like PID, PubSub, HTTP, and webhooks
+Create normal contribution branches from `main`. Use `release/v3` only when a
+maintainer asks you to make a v3 release change.
 
-## Development Guidelines
+## Source map
 
-### Code Style
+- `lib/jido_signal.ex` contains the Signal value and constructor API.
+- `lib/jido_signal/context.ex` and `lib/jido_signal/trace.ex` contain transport
+  context helpers.
+- `lib/jido_signal/serialization.ex` contains the public serialization API.
+- `lib/jido_signal/router.ex` contains the public routing API.
+- `lib/jido_signal/dispatch.ex` contains the public delivery API.
+- `lib/jido_signal/bus.ex` contains the public Bus API.
+- `lib/jido_signal/bus/store.ex` defines the persistence boundary.
+- `test/` follows the source layout and contains shared support in
+  `test/support/`.
 
-1. **Formatting**
-   - Run `mix format` before committing
-   - Follow standard Elixir style guide
-   - Use `snake_case` for functions and variables
-   - Use `PascalCase` for module names
+Internal modules support these public boundaries. Do not make an internal
+module public only to simplify a test.
 
-2. **Documentation**
-   - Add `@moduledoc` to every module
-   - Document all public functions with `@doc`
-   - Include examples when helpful
-   - Use doctests for simple examples
+## Make a change
 
-3. **Type Specifications**
-   ```elixir
-   @type signal :: %JidoSignal{}
+1. Keep the change focused on one subject.
+2. Add or update tests for behavior changes.
+3. Update public documentation for API, option, result, or error changes.
+4. Run the nearest tests while you work.
+5. Run the full checks before you open a pull request.
 
-   @spec dispatch(signal()) :: {:ok, term()} | {:error, term()}
-   def dispatch(signal) do
-     # Implementation
-   end
-   ```
+Use Zoi schemas for package-owned validation boundaries. Keep routing and
+delivery deterministic. Return documented tagged tuples or structured Jido
+Signal errors. Application policy such as retry, rate limiting, dead-letter
+handling, and workload isolation does not belong in the Signal value.
 
-### Testing
+## Required checks
 
-1. **Test Organization**
-   ```elixir
-   defmodule JidoSignal.BusTest do
-     use ExUnit.Case, async: true
+Run the full quality suite:
 
-     describe "publish/2" do
-       test "publishes signal to subscribers" do
-         # Test implementation
-       end
-
-       test "handles missing topic" do
-         # Error case testing
-       end
-     end
-   end
-   ```
-
-2. **Coverage Requirements**
-   - Maintain high test coverage
-   - Test both success and error paths
-   - Include property-based tests for complex logic
-   - Test async behavior where applicable
-
-3. **Running Tests**
-   ```bash
-   # Run full test suite
-   mix test
-
-   # Run with coverage
-   mix test --cover
-
-   # Run specific test file
-   mix test test/jido_signal/signal/bus_test.exs
-   ```
-
-### Error Handling
-
-1. **Use With Patterns**
-   ```elixir
-   def subscribe(topic, opts) do
-     with {:ok, validated} <- validate_topic(topic),
-          {:ok, subscription} <- create_subscription(validated, opts) do
-       {:ok, subscription}
-     end
-   end
-   ```
-
-2. **Return Values**
-   - Use tagged tuples: `{:ok, result}` or `{:error, reason}`
-   - Create specific error types for different failures
-   - Avoid silent failures
-   - Document error conditions
-
-## Conventional Commits
-
-Commit messages must follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
-
-### Commit Message Format
-
-```
-<type>[optional scope]: <description>
-
-[optional body]
-
-[optional footer(s)]
+```sh
+mix quality
 ```
 
-### Types
+It runs formatting, compilation with warnings as errors, Doctor, ExDoc, Credo,
+and Dialyzer.
 
-| Type | Description |
-|------|-------------|
-| `feat` | A new feature |
-| `fix` | A bug fix |
-| `docs` | Documentation only changes |
-| `style` | Changes that don't affect code meaning |
-| `refactor` | Code change that neither fixes a bug nor adds a feature |
-| `perf` | Performance improvement |
-| `test` | Adding or correcting tests |
-| `chore` | Changes to build process or auxiliary tools |
-| `ci` | CI configuration changes |
+Run tests and repository checks:
 
-### Examples
-
-```bash
-# Feature
-git commit -m "feat(bus): add topic pattern matching"
-
-# Bug fix
-git commit -m "fix(dispatch): resolve message ordering issue"
-
-# Breaking change
-git commit -m "feat(api)!: change subscription return type"
+```sh
+MIX_ENV=test mix test --cover --warnings-as-errors
+mix test --include flaky --warnings-as-errors
+mix deps.unlock --check-unused
+mix hex.audit
 ```
 
-The hook will reject non-conforming commits, ensuring a clean changelog can be generated automatically.
+The default `mix test` command excludes `:flaky` and `:skip` tests. The coverage
+gate requires at least 90 percent total coverage.
 
-## Pull Request Process
+## Test rules
 
-1. **Before Submitting**
-   - Run the full quality check suite: `mix quality`
-   - Ensure all tests pass
-   - Update documentation if needed
-   - Add tests for new functionality
+- Test success and error paths through the public API.
+- Use `async: true` only when the test and its fixtures are isolated.
+- Use monitors and explicit messages for process synchronization.
+- Do not use short sleeps as a substitute for a synchronization point.
+- Give each temporary skipped or flaky test a reason.
+- Clean up processes, telemetry handlers, and global state after each test.
 
-2. **PR Guidelines**
-   - Create a feature branch from `main`
-   - Use descriptive commit messages following conventional commits
-   - Reference any related issues
-   - Keep changes focused and atomic
+## Documentation rules
 
-3. **Review Process**
-   - PRs require at least one review
-   - Address all review comments
-   - Maintain a clean commit history
-   - Update your branch if needed
+- Add `@moduledoc` to public modules.
+- Add `@doc` and `@spec` to public functions.
+- Add `@typedoc` to public custom types.
+- Use `@moduledoc false` or `@doc false` for internal surfaces.
+- Add examples when they help a reader complete a task.
 
-## Release Process
+Check documentation directly with:
 
-Releases are handled automatically by maintainers. Contributors should:
+```sh
+mix doctor --summary
+mix docs --warnings-as-errors
+```
 
-1. **Use Conventional Commits** - Your commit messages determine changelog entries:
-   - `feat:` commits create "Added" entries
-   - `fix:` commits create "Fixed" entries
-   - `docs:`, `chore:`, `ci:` commits are excluded
+## Commit and pull request rules
 
-2. **Do NOT edit `CHANGELOG.md`** - It is auto-generated during releases
+Use Conventional Commits:
 
-3. **Documentation**
-   - Update guides if needed
-   - Check all docstrings
-   - Verify README is current
+```text
+<type>[optional scope][optional !]: <description>
+```
 
-## Additional Resources
+Common types are `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `chore`,
+`ci`, `build`, and `deps`.
 
-- [Hex Documentation](https://hexdocs.pm/jido_signal)
-- [GitHub Issues](https://github.com/agentjido/jido_signal/issues)
-- [GitHub Discussions](https://github.com/agentjido/jido_signal/discussions)
+Examples:
 
-## Questions or Problems?
+```text
+feat(router): add route inspection
+fix(bus): release a durable subscriber monitor
+docs: clarify Signal context values
+feat(api)!: remove a deprecated constructor
+```
 
-If you have questions about contributing:
-- Open a GitHub Discussion
-- Check existing issues
-- Review the guides directory
+Pull requests must explain the change, include applicable tests and docs, and
+pass CI. Do not edit `CHANGELOG.md`; release notes are generated from Git
+history.
 
-Thank you for contributing to Jido Signal!
+## Security reports
+
+Do not open a public issue for a vulnerability. Use the repository's
+[private security advisory form](https://github.com/agentjido/jido_signal/security/advisories/new).
+
+## Releases
+
+Maintainers publish releases through the manual GitHub `Release` workflow. A
+release uses an existing signed, annotated version tag. Contributors do not
+need to edit release files or publish packages.
+
+For questions, open a
+[GitHub Discussion](https://github.com/agentjido/jido_signal/discussions) or a
+focused issue.

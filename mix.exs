@@ -38,8 +38,7 @@ defmodule Jido.Signal.MixProject do
       # Dialyzer
       dialyzer: [
         plt_local_path: "priv/plts/project.plt",
-        plt_core_path: "priv/plts/core.plt",
-        ignore_warnings: "dialyzer.ignore-warnings"
+        plt_core_path: "priv/plts/core.plt"
       ]
     ]
   end
@@ -77,19 +76,26 @@ defmodule Jido.Signal.MixProject do
       source_url: @source_url,
       authors: ["Mike Hostetler <mike.hostetler@gmail.com>"],
       extras: [
-        "README.md",
-        "guides/getting-started.md",
-        "guides/signals-and-dispatch.md",
-        "guides/signal-extensions.md",
-        "guides/serialization.md",
-        "guides/signal-router.md",
-        "guides/event-bus.md",
-        "guides/advanced.md",
-        "guides/v2-to-v3.md",
-        "CONTRIBUTING.md",
-        "LICENSE"
+        {"README.md", title: "Home"},
+        {"CONTRIBUTING.md", title: "Contributing"},
+        {"CHANGELOG.md", title: "Changelog"},
+        {"LICENSE", title: "Apache 2.0 License"},
+        {"guides/getting-started.md", title: "Getting Started"},
+        {"guides/signals-and-dispatch.md", title: "Signals and Dispatch"},
+        {"guides/signal-extensions.md", title: "CloudEvents Context Attributes"},
+        {"guides/serialization.md", title: "Serialization"},
+        {"guides/signal-router.md", title: "Signal Router"},
+        {"guides/event-bus.md", title: "Event Bus"},
+        {"guides/advanced.md", title: "Advanced Usage"},
+        {"guides/v2-to-v3.md", title: "Migrate from v2 to v3"}
       ],
       groups_for_extras: [
+        Project: [
+          "README.md",
+          "CONTRIBUTING.md",
+          "CHANGELOG.md",
+          "LICENSE"
+        ],
         "Start Here": [
           "guides/getting-started.md",
           "guides/signals-and-dispatch.md"
@@ -102,9 +108,12 @@ defmodule Jido.Signal.MixProject do
           "guides/signal-router.md",
           "guides/event-bus.md"
         ],
-        "Advanced Use": "guides/advanced.md",
-        Upgrade: "guides/v2-to-v3.md"
+        "Advanced Use": ["guides/advanced.md"],
+        Upgrade: ["guides/v2-to-v3.md"]
       ],
+      extra_section: "Guides",
+      formatters: ["html"],
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md", "LICENSE"],
       groups_for_modules: [
         "Core Signal": [
           Jido.Signal,
