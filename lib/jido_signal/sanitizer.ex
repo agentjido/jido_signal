@@ -267,8 +267,6 @@ defmodule Jido.Signal.Sanitizer do
       MapSet.member?(@sensitive_keys, String.trim_leading(key, "x_"))
   end
 
-  defp key_value_list?([]), do: false
-
   defp key_value_list?(list) do
     Enum.all?(list, fn
       {key, _value} when is_atom(key) or is_binary(key) -> true

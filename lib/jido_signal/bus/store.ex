@@ -15,19 +15,19 @@ defmodule Jido.Signal.Bus.Store do
   """
 
   @type state :: term()
-  @type record :: %{required(String.t()) => term()}
+  @type stored_record :: %{required(String.t()) => term()}
   @type subscription :: %{required(String.t()) => term()}
   @type subscription_id :: String.t()
 
   @callback init(keyword()) :: {:ok, state()} | {:error, term()}
-  @callback append([record()], state()) :: {:ok, state()} | {:error, term()}
+  @callback append([stored_record()], state()) :: {:ok, state()} | {:error, term()}
   @doc """
   Reads records after an exclusive `:after_cursor`.
 
   The optional `:path` filters Signal types. The optional `:limit` is a positive
   integer or `:infinity`.
   """
-  @callback read(keyword(), state()) :: {:ok, [record()]} | {:error, term()}
+  @callback read(keyword(), state()) :: {:ok, [stored_record()]} | {:error, term()}
   @callback latest_cursor(state()) :: {:ok, non_neg_integer()} | {:error, term()}
   @callback list_subscriptions(state()) :: {:ok, [subscription()]} | {:error, term()}
   @callback put_subscription(subscription(), state()) :: {:ok, state()} | {:error, term()}

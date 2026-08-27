@@ -3,6 +3,7 @@ defmodule Jido.Signal.Router.Index do
 
   alias Jido.Signal.Router.{Route, Router}
 
+  @doc false
   @spec new([Route.t()]) :: Router.t()
   def new(routes) do
     {entries, next_order} = compile_entries(routes, 0)
@@ -20,6 +21,7 @@ defmodule Jido.Signal.Router.Index do
     }
   end
 
+  @doc false
   @spec add(Router.t(), [Route.t()]) :: Router.t()
   def add(%Router{} = router, routes) do
     {new_entries, next_order} = compile_entries(routes, router.next_order)
@@ -42,6 +44,7 @@ defmodule Jido.Signal.Router.Index do
     }
   end
 
+  @doc false
   @spec remove(Router.t(), [String.t()]) :: Router.t()
   def remove(%Router{} = router, paths) do
     paths = MapSet.new(paths)
@@ -60,6 +63,7 @@ defmodule Jido.Signal.Router.Index do
     %{router | entries: entries, exact_index: exact_index, wildcard_index: wildcard_index}
   end
 
+  @doc false
   @spec lookup(Router.t(), String.t(), Jido.Signal.t()) :: [term()]
   def lookup(%Router{} = router, type, signal) do
     type_segments = String.split(type, ".")
@@ -71,11 +75,13 @@ defmodule Jido.Signal.Router.Index do
     |> Enum.flat_map(&targets/1)
   end
 
+  @doc false
   @spec matches?(String.t(), String.t()) :: boolean()
   def matches?(type, pattern) do
     match_segments?(String.split(type, "."), String.split(pattern, "."))
   end
 
+  @doc false
   @spec has_route?(Router.t(), String.t()) :: boolean()
   def has_route?(%Router{} = router, path) do
     if wildcard_path?(path) do
@@ -168,17 +174,17 @@ defmodule Jido.Signal.Router.Index do
 
   defp wildcard_matches(root, segments) do
     segments = List.to_tuple(segments)
-    {_visited, matches} = walk_trie(root, segments, tuple_size(segments), 0, MapSet.new(), [])
+    {_visited, matches} = walk_trie(root, segments, tuple_size(segments), 0, %{}, [])
     matches
   end
 
   defp walk_trie(node, segments, segment_count, position, visited, matches) do
     state = {node.id, position}
 
-    if MapSet.member?(visited, state) do
+    if Map.has_key?(visited, state) do
       {visited, matches}
     else
-      visited = MapSet.put(visited, state)
+      visited = Map.put(visited, state, true)
       matches = if position == segment_count, do: node.terminals ++ matches, else: matches
 
       {visited, matches} =

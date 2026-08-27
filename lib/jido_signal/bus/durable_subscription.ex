@@ -7,6 +7,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
+  @doc false
   @spec attach(map(), String.t(), Router.path(), pid(), keyword()) ::
           {:ok, String.t(), map()} | {:error, term(), map()}
   def attach(state, id, path, target, opts) do
@@ -16,6 +17,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     end
   end
 
+  @doc false
   @spec detach(map(), Subscriber.t()) :: {:ok, map()}
   def detach(state, subscriber) do
     state = demonitor_target(state, subscriber)
@@ -25,6 +27,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     {:ok, state}
   end
 
+  @doc false
   @spec delete(map(), Subscriber.t()) :: {:ok, map()} | {:error, term()}
   def delete(state, subscriber) do
     with {:ok, state} <- Store.write(state, :delete_subscription, [subscriber.id]) do
@@ -32,6 +35,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     end
   end
 
+  @doc false
   @spec acknowledge(map(), String.t(), term(), pid()) ::
           {:ok, map()} | {:error, term(), map()}
   def acknowledge(state, durable_id, cursor, caller)
@@ -60,6 +64,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   def acknowledge(state, _durable_id, _cursor, _caller),
     do: {:error, :invalid_cursor, state}
 
+  @doc false
   @spec target_down(map(), Subscriber.t()) :: map()
   def target_down(state, subscriber) do
     subscriber = %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}
@@ -68,6 +73,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     state
   end
 
+  @doc false
   @spec deliver(map(), Subscriber.t(), Jido.Signal.t()) :: map()
   def deliver(state, subscriber, signal) do
     case deliver_next(state, subscriber) do
@@ -76,6 +82,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     end
   end
 
+  @doc false
   @spec load(term()) :: {:ok, map(), [String.t()], Router.t()} | {:error, term()}
   def load(definitions) when is_list(definitions) do
     definitions
@@ -95,6 +102,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
 
   def load(_definitions), do: {:error, :invalid_store_subscriptions}
 
+  @doc false
   @spec validate_loaded_cursors(map(), non_neg_integer()) :: :ok | {:error, atom()}
   def validate_loaded_cursors(subscriptions, latest_cursor) do
     if Enum.all?(subscriptions, fn {_id, subscriber} -> subscriber.cursor <= latest_cursor end),

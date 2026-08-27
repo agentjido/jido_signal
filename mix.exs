@@ -1,7 +1,7 @@
 defmodule Jido.Signal.MixProject do
   use Mix.Project
 
-  @version "3.0.0"
+  @version "3.0.0-beta.1"
   @source_url "https://github.com/agentjido/jido_signal"
   @description "Agent Communication Envelope, Routing, and Delivery"
 
@@ -30,7 +30,7 @@ defmodule Jido.Signal.MixProject do
       # Coverage
       test_coverage: [
         tool: ExCoveralls,
-        summary: [threshold: 90],
+        summary: [threshold: 92],
         export: "cov",
         ignore_modules: [~r/^JidoTest\./]
       ],
@@ -72,6 +72,10 @@ defmodule Jido.Signal.MixProject do
   def docs do
     [
       main: "readme",
+      api_reference: true,
+      source_ref: "v#{@version}",
+      source_url: @source_url,
+      authors: ["Mike Hostetler <mike.hostetler@gmail.com>"],
       extras: [
         "README.md",
         "guides/getting-started.md",
@@ -150,7 +154,16 @@ defmodule Jido.Signal.MixProject do
 
   def package do
     [
-      files: ["lib", "mix.exs", "README*", "LICENSE*", "CHANGELOG*", "usage-rules.md"],
+      files: [
+        "lib",
+        "guides",
+        "mix.exs",
+        "README.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "CHANGELOG.md",
+        "usage-rules.md"
+      ],
       maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
       links: %{
@@ -158,7 +171,7 @@ defmodule Jido.Signal.MixProject do
         "GitHub" => @source_url,
         "Website" => "https://jido.run",
         "Discord" => "https://jido.run/discord",
-        "Changelog" => "https://github.com/agentjido/jido_signal/blob/main/CHANGELOG.md"
+        "Changelog" => "https://github.com/agentjido/jido_signal/blob/v#{@version}/CHANGELOG.md"
       }
     ]
   end
@@ -176,7 +189,7 @@ defmodule Jido.Signal.MixProject do
       # Development & Test Dependencies
       {:credo, "~> 1.7", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:doctor, "~> 0.21", only: [:dev, :test], runtime: false},
+      {:doctor, "~> 0.23", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18.3", only: [:dev, :test]},
       {:castore, "~> 1.0", only: [:dev, :test]},
@@ -191,15 +204,14 @@ defmodule Jido.Signal.MixProject do
       # test: "test --trace --exclude flaky",
       test: "test --exclude flaky",
 
-      # Helper to run docs
-      docs: "docs -f html --open",
-
       # Run to check the quality of your code
       q: ["quality"],
       quality: [
         "format --check-formatted",
         "compile --warnings-as-errors",
-        "credo --min-priority higher",
+        "doctor --summary",
+        "docs --warnings-as-errors",
+        "credo --min-priority high",
         "dialyzer"
       ]
     ]

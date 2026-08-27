@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+      - release/v3
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,8 +19,9 @@ permissions:
 jobs:
   ci:
     name: CI
-    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@b42cb73e5dda2d3f54d5ac0f8e1d7d3641728dea
     secrets: inherit
     with:
-      docs_command: mix docs -f html
-      test_command: mix test
+      credo_command: mix credo --min-priority high
+      docs_command: mix docs --warnings-as-errors
+      test_command: mix test --cover --warnings-as-errors

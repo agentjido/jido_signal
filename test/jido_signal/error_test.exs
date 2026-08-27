@@ -19,7 +19,7 @@ defmodule Jido.Signal.ErrorTest do
       ]
 
       for {error, type} <- cases do
-        assert Exception.exception?(error)
+        assert is_exception(error)
         assert Error.type(error) == type
       end
 

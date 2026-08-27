@@ -36,6 +36,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
 
   @subscription_options [:target, :subscription_id, :durable, :start_from]
 
+  @doc false
   @spec subscribe(map(), Router.path(), keyword()) ::
           {:ok, String.t(), map()} | {:error, term(), map()}
   def subscribe(state, path, opts) do
@@ -52,6 +53,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
     end
   end
 
+  @doc false
   @spec unsubscribe(map(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def unsubscribe(state, subscription_id, []) do
     case Map.get(state.subscriptions, subscription_id) do
@@ -63,6 +65,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
 
   def unsubscribe(_state, _subscription_id, _opts), do: {:error, :invalid_options}
 
+  @doc false
   @spec delete(map(), String.t()) :: {:ok, map()} | {:error, term()}
   def delete(state, subscription_id) do
     case Map.get(state.subscriptions, subscription_id) do
@@ -72,12 +75,14 @@ defmodule Jido.Signal.Bus.Subscriptions do
     end
   end
 
+  @doc false
   @spec acknowledge(map(), String.t(), term(), pid()) ::
           {:ok, map()} | {:error, term(), map()}
   def acknowledge(state, durable_id, cursor, caller) do
     DurableSubscription.acknowledge(state, durable_id, cursor, caller)
   end
 
+  @doc false
   @spec target_down(map(), reference()) :: map()
   def target_down(state, monitor_ref) do
     case Map.pop(state.monitors, monitor_ref) do
@@ -100,6 +105,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
     end
   end
 
+  @doc false
   @spec deliver_published(map(), Jido.Signal.t()) :: map()
   def deliver_published(state, signal) do
     case Router.route(state.router, signal) do
@@ -111,9 +117,11 @@ defmodule Jido.Signal.Bus.Subscriptions do
     end
   end
 
+  @doc false
   @spec load(term()) :: {:ok, map(), [String.t()], Router.t()} | {:error, term()}
   defdelegate load(definitions), to: DurableSubscription
 
+  @doc false
   @spec validate_loaded_cursors(map(), non_neg_integer()) :: :ok | {:error, atom()}
   defdelegate validate_loaded_cursors(subscriptions, latest_cursor), to: DurableSubscription
 

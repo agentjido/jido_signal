@@ -1,7 +1,7 @@
 # Jido.Signal
 
-[![Hex.pm](https://img.shields.io/hexpm/v/jido_signal.svg)](https://hex.pm/packages/jido_signal)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_signal/)
+[![Hex.pm](https://img.shields.io/badge/hex-3.0.0--beta.1-714a96.svg)](https://hex.pm/packages/jido_signal)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_signal/3.0.0-beta.1/)
 [![CI](https://github.com/agentjido/jido_signal/actions/workflows/ci.yml/badge.svg)](https://github.com/agentjido/jido_signal/actions/workflows/ci.yml)
 [![License](https://img.shields.io/hexpm/l/jido_signal.svg)](https://github.com/agentjido/jido_signal/blob/main/LICENSE)
 [![Website](https://img.shields.io/badge/website-jido.run-0f172a.svg)](https://jido.run)
@@ -15,6 +15,10 @@ _`Jido.Signal` is part of the [Jido](https://github.com/agentjido/jido) project.
 The v3 public API has five primary areas: `Jido.Signal`,
 `Jido.Signal.Serialization`, `Jido.Signal.Router`, `Jido.Signal.Dispatch`, and
 `Jido.Signal.Bus`.
+
+Version 3.0.0-beta.1 is a public beta. The v3 API can change before the stable
+release. Use it for evaluation and controlled trials before you use it for
+critical production work.
 
 If you use v2, see [From v2 to v3](#from-v2-to-v3) for the progression and
 migration guide.
@@ -93,7 +97,7 @@ Add `jido_signal` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:jido_signal, "~> 3.0"}
+    {:jido_signal, "~> 3.0.0-beta.1"}
   ]
 end
 ```
@@ -103,7 +107,7 @@ If you use `:pubsub` dispatch, also add Phoenix.PubSub to your application:
 ```elixir
 def deps do
   [
-    {:jido_signal, "~> 3.0"},
+    {:jido_signal, "~> 3.0.0-beta.1"},
     {:phoenix_pubsub, "~> 2.1"}
   ]
 end

@@ -11,6 +11,7 @@ defmodule Jido.Signal.Codec do
   @legacy_wire_version_key "jido_schema_version"
   @legacy_wire_versions [1, 2]
 
+  @doc false
   @spec from_map(map()) :: {:ok, Signal.t()} | {:error, String.t()}
   def from_map(map) when is_map(map) do
     attrs = stringify_keys(map)
@@ -24,6 +25,7 @@ defmodule Jido.Signal.Codec do
 
   def from_map(_map), do: {:error, "parse error: expected a map"}
 
+  @doc false
   @spec to_map(Signal.t()) :: map()
   def to_map(%Signal{} = signal) do
     extensions =

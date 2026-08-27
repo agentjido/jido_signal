@@ -28,11 +28,13 @@ defmodule Jido.Signal.Dispatch do
     @enforce_keys Zoi.Struct.enforce_keys(@schema)
     defstruct Zoi.Struct.struct_fields(@schema)
 
+    @doc false
     @spec new(atom(), module() | nil, keyword()) :: {:ok, t()} | {:error, term()}
     def new(adapter, module, opts) do
       Zoi.parse(@schema, %__MODULE__{adapter: adapter, module: module, opts: opts})
     end
 
+    @doc false
     @spec to_tuple(t()) :: {atom(), keyword()}
     def to_tuple(%__MODULE__{adapter: adapter, opts: opts}), do: {adapter, opts}
   end
@@ -287,8 +289,6 @@ defmodule Jido.Signal.Dispatch do
       true -> :unknown
     end
   end
-
-  defp resolve_adapter(nil), do: {:ok, nil}
 
   defp resolve_adapter(adapter) when is_atom(adapter) do
     case Map.fetch(@builtin_adapters, adapter) do
