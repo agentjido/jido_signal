@@ -153,6 +153,25 @@ defmodule Jido.Signal.BusTest do
     assert_received {:signal, ^event}
   end
 
+  test "rejects malformed Signal structs before Store access" do
+    bus = start_bus(store: ObservingStore, store_opts: [observer: self()])
+
+    malformed = %Signal{
+      id: "invalid",
+      source: "/test",
+      type: "stored.invalid",
+      extensions: :invalid
+    }
+
+    assert {:error, %Jido.Signal.Error.InvalidInputError{} = error} =
+             Bus.publish(bus, [malformed])
+
+    assert error.details.index == 0
+    refute_received {:stored_records, _records}
+    assert Process.alive?(bus)
+    assert {:ok, []} = Bus.replay(bus, "**")
+  end
+
   test "removes a normal subscription after its target exits" do
     bus = start_bus()
     client = spawn(fn -> receive do: (:stop -> :ok) end)
@@ -164,6 +183,29 @@ defmodule Jido.Signal.BusTest do
 
     assert {:ok, "short-lived"} =
              Bus.subscribe(bus, "short.*", subscription_id: "short-lived")
+  end
+
+  test "rejects self-subscription and ignores unrelated messages" do
+    bus = start_bus()
+
+    assert {:error, :target_is_bus} = Bus.subscribe(bus, "self.*", target: bus)
+    send(bus, {:signal, signal("self.sent")})
+    send(bus, :unrelated)
+
+    assert %{subscriptions: subscriptions} = :sys.get_state(bus)
+    assert subscriptions == %{}
+    assert Process.alive?(bus)
+  end
+
+  test "redacts retained data from OTP status" do
+    bus = start_bus()
+    secret = "status-secret-#{System.unique_integer([:positive])}"
+    assert {:ok, [_record]} = Bus.publish(bus, [signal("status.secret", %{token: secret})])
+
+    status = :sys.get_status(bus)
+
+    refute inspect(status, limit: :infinity, printable_limit: :infinity) =~ secret
+    assert inspect(status) =~ "subscription_count"
   end
 
   test "fails startup when the selected Store cannot start" do

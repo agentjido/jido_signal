@@ -54,20 +54,40 @@ defmodule Jido.Signal.SerializationTest do
     end
   end
 
-  describe "Erlang-only Signal data" do
-    test "uses an Erlang term binary in data_base64" do
-      data = %{status: :ready, value: {1, 2}, bytes: <<0, 255>>}
+  describe "binary and Erlang-only Signal data" do
+    test "uses raw bytes in data_base64" do
+      data = <<0, 255>>
       signal = Signal.new!("test.binary", data, source: "/test")
 
       wire = Signal.to_map(signal)
       refute Map.has_key?(wire, "data")
-      assert is_binary(wire["data_base64"])
-
-      assert wire["data_base64"]
-             |> Base.decode64!()
-             |> :erlang.binary_to_term([:safe]) == data
+      assert Base.decode64!(wire["data_base64"]) == data
 
       assert {:ok, decoded} = Signal.from_map(wire)
+      assert decoded.data == data
+    end
+
+    test "accepts the CloudEvents raw binary vector" do
+      wire = %{
+        "specversion" => "1.0",
+        "id" => "binary-vector",
+        "source" => "/test",
+        "type" => "test.binary",
+        "data_base64" => "AQID"
+      }
+
+      assert {:ok, signal} = Signal.from_map(wire)
+      assert signal.data == <<1, 2, 3>>
+      assert Signal.to_map(signal) == wire
+    end
+
+    test "keeps Erlang-only values in the trusted term format only" do
+      data = %{status: :ready, value: {1, 2}, bytes: <<0, 255>>}
+      signal = Signal.new!("test.term", data, source: "/test")
+
+      assert {:error, {:json_encode_failed, _message}} = Signal.serialize(signal)
+      assert {:ok, encoded} = Signal.serialize(signal, format: :erlang_term)
+      assert {:ok, decoded} = Signal.deserialize(encoded, format: :erlang_term)
       assert decoded.data == data
     end
 
@@ -77,6 +97,14 @@ defmodule Jido.Signal.SerializationTest do
 
       assert Signal.to_map(signal)["data"] == data
       refute Map.has_key?(Signal.to_map(signal), "data_base64")
+    end
+
+    test "keeps explicit null data in JSON" do
+      signal = Signal.new!("test.null", nil, source: "/test")
+
+      assert {:ok, json} = Signal.serialize(signal)
+      assert Map.fetch(Jason.decode!(json), "data") == {:ok, nil}
+      assert {:ok, ^signal} = Signal.deserialize(json)
     end
 
     test "rejects invalid or ambiguous data_base64" do
@@ -90,12 +118,28 @@ defmodule Jido.Signal.SerializationTest do
       assert {:error, error} = Signal.from_map(Map.put(wire, "data_base64", "not-base64"))
       assert error =~ "valid Base64"
 
-      encoded = :ok |> :erlang.term_to_binary() |> Base.encode64()
+      encoded = Base.encode64("value")
 
       assert {:error, error} =
                Signal.from_map(Map.merge(wire, %{"data" => "value", "data_base64" => encoded}))
 
       assert error =~ "mutually exclusive"
+    end
+
+    test "does not interpret data_base64 as an Erlang term" do
+      encoded_function = :erlang.term_to_binary(&System.cmd/3)
+
+      wire = %{
+        "specversion" => "1.0",
+        "id" => "function-bytes",
+        "source" => "/test",
+        "type" => "test.binary",
+        "data_base64" => Base.encode64(encoded_function)
+      }
+
+      assert {:ok, signal} = Signal.from_map(wire)
+      assert signal.data == encoded_function
+      refute is_function(signal.data)
     end
   end
 
@@ -129,6 +173,12 @@ defmodule Jido.Signal.SerializationTest do
                Serialization.deserialize("[1]")
 
       assert message =~ "expected a map"
+
+      assert {:error, {:invalid_options, "expected a keyword list"}} =
+               Serialization.serialize(signal, [:invalid])
+
+      assert {:error, {:invalid_options, "expected a keyword list"}} =
+               Serialization.deserialize("{}", [:invalid])
     end
 
     test "rejects an invalid payload limit" do
@@ -186,6 +236,33 @@ defmodule Jido.Signal.SerializationTest do
     test "serialize!/2 returns a binary" do
       signal = Signal.new!(type: "test.created", source: "/test")
       assert is_binary(Signal.serialize!(signal))
+    end
+
+    test "rejects compressed Erlang terms before expansion" do
+      wire = %{
+        "specversion" => "1.0",
+        "id" => "compressed",
+        "source" => "/test",
+        "type" => "test.compressed",
+        "data" => String.duplicate("x", 1_000_000)
+      }
+
+      compressed = :erlang.term_to_binary(wire, compressed: 9)
+
+      assert {:error, {:erlang_term_decode_failed, message}} =
+               Signal.deserialize(compressed, format: :erlang_term)
+
+      assert message =~ "compressed"
+    end
+
+    test "rejects maps with atom keys at the JSON boundary" do
+      signal = Signal.new!("test.atom-keys", %{value: 1}, source: "/test")
+
+      assert {:error, {:json_encode_failed, message}} = Signal.serialize(signal)
+      assert message =~ "JSON values"
+
+      tuple_signal = Signal.new!("test.tuple", {:one, :two}, source: "/test")
+      assert {:error, {:json_encode_failed, _message}} = Signal.serialize(tuple_signal)
     end
   end
 

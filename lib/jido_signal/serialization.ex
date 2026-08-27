@@ -22,6 +22,17 @@ defmodule Jido.Signal.Serialization do
   def serialize(signal_or_signals, opts \\ [])
 
   def serialize(signal_or_signals, opts) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      do_serialize(signal_or_signals, opts)
+    else
+      {:error, {:invalid_options, "expected a keyword list"}}
+    end
+  end
+
+  def serialize(_signal_or_signals, _opts),
+    do: {:error, {:invalid_options, "expected a keyword list"}}
+
+  defp do_serialize(signal_or_signals, opts) do
     with {:ok, format} <- format(opts),
          {:ok, wire_data} <- to_wire_data(signal_or_signals),
          {:ok, binary} <- encode(wire_data, format),
@@ -32,19 +43,21 @@ defmodule Jido.Signal.Serialization do
     exception -> {:error, {:serialization_failed, Exception.message(exception)}}
   end
 
-  def serialize(_signal_or_signals, _opts),
-    do: {:error, {:invalid_options, "expected a keyword list"}}
-
   @doc "Decodes one Signal or a list of Signals."
   @spec deserialize(binary(), keyword()) ::
           {:ok, Signal.t() | [Signal.t()]} | {:error, term()}
   def deserialize(binary, opts \\ [])
 
   def deserialize(binary, opts) when is_binary(binary) and is_list(opts) do
-    with {:ok, format} <- format(opts),
-         :ok <- check_payload_size(binary, opts),
-         {:ok, wire_data} <- decode(binary, format) do
-      from_wire_data(wire_data)
+    if Keyword.keyword?(opts) do
+      with {:ok, format} <- format(opts),
+           :ok <- check_payload_size(binary, opts),
+           {:ok, wire_data} <- decode(binary, format),
+           :ok <- check_decoded_size(wire_data, format, opts) do
+        from_wire_data(wire_data)
+      end
+    else
+      {:error, {:invalid_options, "expected a keyword list"}}
     end
   rescue
     exception -> {:error, {:deserialization_failed, Exception.message(exception)}}
@@ -105,9 +118,13 @@ defmodule Jido.Signal.Serialization do
   end
 
   defp encode(data, :json) do
-    case Jason.encode(data) do
-      {:ok, binary} -> {:ok, binary}
-      {:error, error} -> {:error, {:json_encode_failed, Exception.message(error)}}
+    if json_value?(data) do
+      case Jason.encode(data) do
+        {:ok, binary} -> {:ok, binary}
+        {:error, error} -> {:error, {:json_encode_failed, Exception.message(error)}}
+      end
+    else
+      {:error, {:json_encode_failed, "Signal data must contain JSON values or binary data"}}
     end
   end
 
@@ -121,7 +138,13 @@ defmodule Jido.Signal.Serialization do
   end
 
   defp decode(binary, :erlang_term) do
-    {:ok, :erlang.binary_to_term(binary, [:safe])}
+    case binary do
+      <<131, 80, _rest::binary>> ->
+        {:error, {:erlang_term_decode_failed, "compressed Erlang terms are not accepted"}}
+
+      _uncompressed ->
+        {:ok, :erlang.binary_to_term(binary, [:safe])}
+    end
   rescue
     error in ArgumentError -> {:error, {:erlang_term_decode_failed, Exception.message(error)}}
   end
@@ -142,4 +165,26 @@ defmodule Jido.Signal.Serialization do
       {:error, {:invalid_max_payload_bytes, max}}
     end
   end
+
+  defp check_decoded_size(_wire_data, :json, _opts), do: :ok
+
+  defp check_decoded_size(wire_data, :erlang_term, opts) do
+    wire_data
+    |> :erlang.term_to_binary()
+    |> check_payload_size(opts)
+  end
+
+  defp json_value?(nil), do: true
+  defp json_value?(value) when is_boolean(value) or is_number(value), do: true
+  defp json_value?(value) when is_binary(value), do: String.valid?(value)
+  defp json_value?([]), do: true
+  defp json_value?([head | tail]) when is_list(tail), do: json_value?(head) and json_value?(tail)
+
+  defp json_value?(value) when is_map(value) and not is_struct(value) do
+    Enum.all?(value, fn {key, item} ->
+      is_binary(key) and String.valid?(key) and json_value?(item)
+    end)
+  end
+
+  defp json_value?(_value), do: false
 end

@@ -50,10 +50,33 @@ defmodule Jido.Signal.Bus.InstanceIsolationTest do
   end
 
   test "uses scoped child IDs", %{instance1: instance1, instance2: instance2} do
-    assert %{id: {:shared_bus, ^instance1}} =
+    assert %{id: {Bus, Jido.Signal.Registry, {^instance1, "shared_bus"}}} =
              Bus.child_spec(name: :shared_bus, jido: instance1)
 
-    assert %{id: {:shared_bus, ^instance2}} =
+    assert %{id: {Bus, Jido.Signal.Registry, {^instance2, "shared_bus"}}} =
              Bus.child_spec(name: :shared_bus, jido: instance2)
+  end
+
+  test "uses distinct child IDs for separate custom Registries" do
+    first_registry = unique_module("FirstRegistry")
+    second_registry = unique_module("SecondRegistry")
+    start_supervised!({Registry, keys: :unique, name: first_registry})
+    start_supervised!({Registry, keys: :unique, name: second_registry})
+
+    children = [
+      {Bus, name: :shared, registry: first_registry},
+      {Bus, name: :shared, registry: second_registry}
+    ]
+
+    supervisor =
+      start_supervised!(%{
+        id: unique_module("BusSupervisor"),
+        start: {Supervisor, :start_link, [children, [strategy: :one_for_one]]}
+      })
+
+    assert Process.alive?(supervisor)
+    assert {:ok, first} = Bus.whereis({:shared, first_registry})
+    assert {:ok, second} = Bus.whereis({:shared, second_registry})
+    assert first != second
   end
 end

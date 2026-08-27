@@ -129,9 +129,10 @@ JSON decoder protocol, runtime serializer configuration, and MessagePack format
 are removed. Convert stored MessagePack values to JSON or Erlang Term Format
 before the upgrade.
 
-JSON-safe Signal data uses `data`. Binary data and other Erlang-only terms use
-`data_base64`. Jido creates that value with `:erlang.term_to_binary/1` and
-`Base.encode64/1`. The reader uses the safe Erlang term option.
+JSON-safe Signal data uses `data`. Non-UTF-8 binary data uses `data_base64`.
+Jido applies `Base.encode64/1` directly to the raw bytes. JSON serialization
+rejects other Erlang-only terms. The trusted Erlang Term Format keeps them in
+`data` and uses the safe Erlang term decode option.
 
 ## Tighten Trace Context
 

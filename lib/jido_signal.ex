@@ -14,8 +14,9 @@ defmodule Jido.Signal do
   values follow the CloudEvents rules. Put domain fields in `data` and validate
   them with a custom Signal module.
 
-  The canonical map keeps JSON-safe values in `data`. It encodes binary and
-  other Erlang-only values as an Erlang term binary in `data_base64`.
+  The canonical map keeps Signal data in `data`. It encodes non-UTF-8 binary
+  data as raw bytes in the CloudEvents `data_base64` member. JSON serialization
+  accepts only JSON values in `data`.
 
   ## Examples
 
@@ -56,6 +57,11 @@ defmodule Jido.Signal do
 
   @default_data_schema Zoi.any()
 
+  @media_type_pattern ~r{\A[!#$%&'*+.^_`|~0-9A-Za-z-]+/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:[ \t]*;[ \t]*[!#$%&'*+.^_`|~0-9A-Za-z-]+[ \t]*=[ \t]*(?:[!#$%&'*+.^_`|~0-9A-Za-z-]+|"(?:[\x20-\x21\x23-\x5B\x5D-\x7E]|\\[\x20-\x7E])*"))*\z}
+  @invalid_uri_character_pattern ~r/[\x00-\x20\x7F]/
+  @invalid_percent_encoding_pattern ~r/%(?![0-9A-Fa-f]{2})/
+  @uri_reference_pattern ~r"\A(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=]|%[0-9A-Fa-f]{2})*\z"
+
   @definition_defaults %{
     datacontenttype: nil,
     dataschema: nil,
@@ -65,12 +71,19 @@ defmodule Jido.Signal do
 
   @definition_schema Zoi.keyword(
                        [
-                         type: Zoi.string() |> Zoi.min(1) |> Zoi.required(),
+                         type:
+                           Zoi.string()
+                           |> Zoi.min(1)
+                           |> Zoi.refine({__MODULE__, :validate_utf8_string, []})
+                           |> Zoi.required(),
                          default_source:
                            Zoi.string()
                            |> Zoi.min(1)
                            |> Zoi.refine({__MODULE__, :validate_uri_reference, []}),
-                         datacontenttype: Zoi.string() |> Zoi.min(1),
+                         datacontenttype:
+                           Zoi.string()
+                           |> Zoi.min(1)
+                           |> Zoi.refine({__MODULE__, :validate_media_type, []}),
                          dataschema:
                            Zoi.string()
                            |> Zoi.min(1)
@@ -86,27 +99,44 @@ defmodule Jido.Signal do
   @signal_schema Zoi.struct(
                    __MODULE__,
                    %{
-                     id: Zoi.string() |> Zoi.min(1),
+                     id:
+                       Zoi.string()
+                       |> Zoi.min(1)
+                       |> Zoi.refine({__MODULE__, :validate_utf8_string, []}),
                      source:
                        Zoi.string()
                        |> Zoi.min(1)
                        |> Zoi.refine({__MODULE__, :validate_uri_reference, []}),
-                     type: Zoi.string() |> Zoi.min(1),
+                     type:
+                       Zoi.string()
+                       |> Zoi.min(1)
+                       |> Zoi.refine({__MODULE__, :validate_utf8_string, []}),
                      specversion: Zoi.default(Zoi.literal("1.0"), "1.0") |> Zoi.optional(),
-                     subject: Zoi.string() |> Zoi.min(1) |> Zoi.nullable() |> Zoi.optional(),
+                     subject:
+                       Zoi.string()
+                       |> Zoi.min(1)
+                       |> Zoi.refine({__MODULE__, :validate_utf8_string, []})
+                       |> Zoi.nullable()
+                       |> Zoi.optional(),
                      time:
                        Zoi.string()
                        |> Zoi.refine({__MODULE__, :validate_rfc3339, []})
                        |> Zoi.nullable()
                        |> Zoi.optional(),
                      datacontenttype:
-                       Zoi.string() |> Zoi.min(1) |> Zoi.nullable() |> Zoi.optional(),
+                       Zoi.string()
+                       |> Zoi.min(1)
+                       |> Zoi.refine({__MODULE__, :validate_media_type, []})
+                       |> Zoi.nullable()
+                       |> Zoi.optional(),
                      dataschema:
                        Zoi.string()
                        |> Zoi.refine({__MODULE__, :validate_absolute_uri, []})
                        |> Zoi.nullable()
                        |> Zoi.optional(),
                      data: Zoi.any() |> Zoi.optional(),
+                     data_present?: Zoi.boolean() |> Zoi.default(false) |> Zoi.optional(),
+                     data_base64?: Zoi.boolean() |> Zoi.default(false) |> Zoi.optional(),
                      extensions: Zoi.default(Zoi.map(), %{}) |> Zoi.optional()
                    }
                  )
@@ -209,15 +239,18 @@ defmodule Jido.Signal do
   @doc false
   @spec __normalize_definition_attrs__(keyword() | map(), map()) ::
           {:ok, map()} | {:error, String.t()}
-  def __normalize_definition_attrs__(opts, defaults) when is_list(opts) or is_map(opts) do
-    attrs =
-      opts
-      |> Map.new()
-      |> Map.new(fn {key, value} -> {to_string(key), value} end)
+  def __normalize_definition_attrs__(opts, defaults) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      __normalize_definition_attrs__(Map.new(opts), defaults)
+    else
+      {:error, "expected Signal options to be a map or keyword list"}
+    end
+  end
 
-    {:ok, Map.merge(defaults, attrs)}
-  rescue
-    _exception -> {:error, "expected Signal options to be a map or keyword list"}
+  def __normalize_definition_attrs__(opts, defaults) when is_map(opts) do
+    with {:ok, attrs} <- Codec.normalize_keys(opts) do
+      {:ok, Map.merge(defaults, attrs)}
+    end
   end
 
   def __normalize_definition_attrs__(_opts, _defaults),
@@ -235,14 +268,19 @@ defmodule Jido.Signal do
 
   @doc "Creates a Signal from an attribute map or keyword list."
   @spec new(map() | keyword()) :: {:ok, t()} | {:error, String.t()}
-  def new(attrs) when is_list(attrs), do: attrs |> Map.new() |> new()
+  def new(attrs) when is_list(attrs) do
+    if Keyword.keyword?(attrs),
+      do: attrs |> Map.new() |> new(),
+      else: {:error, "parse error: expected a map or keyword list"}
+  end
 
   def new(attrs) when is_map(attrs) do
-    attrs
-    |> stringify_keys()
-    |> Map.put_new("id", ID.generate!())
-    |> Map.put_new("specversion", "1.0")
-    |> Codec.from_map()
+    with {:ok, attrs} <- Codec.normalize_keys(attrs) do
+      attrs
+      |> Map.put_new("id", ID.generate!())
+      |> Map.put_new("specversion", "1.0")
+      |> Codec.from_map()
+    end
   end
 
   def new(_attrs), do: {:error, "parse error: expected a map or keyword list"}
@@ -251,12 +289,21 @@ defmodule Jido.Signal do
   @spec new(String.t(), term(), map() | keyword()) :: {:ok, t()} | {:error, String.t()}
   def new(type, data, attrs \\ %{})
 
-  def new(type, data, attrs) when is_binary(type) and (is_map(attrs) or is_list(attrs)) do
-    attrs = Map.new(attrs)
+  def new(type, data, attrs) when is_binary(type) and is_list(attrs) do
+    if Keyword.keyword?(attrs),
+      do: new(type, data, Map.new(attrs)),
+      else: {:error, "expected new/3 (type :: String.t(), data :: any(), attrs :: map/keyword)"}
+  end
 
-    case Enum.find([:type, "type", :data, "data"], &Map.has_key?(attrs, &1)) do
-      nil -> attrs |> Map.put(:type, type) |> Map.put(:data, data) |> new()
-      key -> {:error, "attribute #{inspect(key)} must not be passed in attrs when calling new/3"}
+  def new(type, data, attrs) when is_binary(type) and is_map(attrs) do
+    with {:ok, attrs} <- Codec.normalize_keys(attrs) do
+      case Enum.find(["type", "data", "data_base64"], &Map.has_key?(attrs, &1)) do
+        nil ->
+          attrs |> Map.put("type", type) |> Map.put("data", data) |> new()
+
+        key ->
+          {:error, "attribute #{inspect(key)} must not be passed in attrs when calling new/3"}
+      end
     end
   end
 
@@ -323,26 +370,69 @@ defmodule Jido.Signal do
 
   @doc false
   def validate_uri_reference(value, _opts) when is_binary(value) do
-    case URI.new(value) do
-      {:ok, _uri} -> :ok
-      {:error, reason} -> {:error, "must be a URI-reference: #{inspect(reason)}"}
+    if valid_uri_text?(value) do
+      case URI.new(value) do
+        {:ok, _uri} -> :ok
+        {:error, reason} -> {:error, "must be a URI-reference: #{inspect(reason)}"}
+      end
+    else
+      {:error, "must be a valid URI-reference"}
     end
   end
+
+  def validate_uri_reference(_value, _opts), do: {:error, "must be a URI-reference"}
 
   @doc false
   def validate_absolute_uri(value, _opts) when is_binary(value) do
-    case URI.new(value) do
-      {:ok, %URI{scheme: scheme}} when is_binary(scheme) and scheme != "" -> :ok
-      _result -> {:error, "must be an absolute URI"}
+    if valid_uri_text?(value) do
+      case URI.new(value) do
+        {:ok, %URI{scheme: scheme}} when is_binary(scheme) and scheme != "" -> :ok
+        _result -> {:error, "must be an absolute URI"}
+      end
+    else
+      {:error, "must be an absolute URI"}
     end
   end
 
+  def validate_absolute_uri(_value, _opts), do: {:error, "must be an absolute URI"}
+
   @doc false
   def validate_rfc3339(value, _opts) when is_binary(value) do
-    case DateTime.from_iso8601(value) do
-      {:ok, _datetime, _offset} -> :ok
-      {:error, reason} -> {:error, "must be an RFC 3339 timestamp: #{inspect(reason)}"}
+    if String.valid?(value) do
+      case DateTime.from_iso8601(value) do
+        {:ok, _datetime, _offset} -> :ok
+        {:error, reason} -> {:error, "must be an RFC 3339 timestamp: #{inspect(reason)}"}
+      end
+    else
+      {:error, "must be an RFC 3339 timestamp"}
     end
+  end
+
+  def validate_rfc3339(_value, _opts), do: {:error, "must be an RFC 3339 timestamp"}
+
+  @doc false
+  def validate_utf8_string(value, _opts) when is_binary(value) do
+    if String.valid?(value), do: :ok, else: {:error, "must be valid UTF-8"}
+  end
+
+  def validate_utf8_string(_value, _opts), do: {:error, "must be valid UTF-8"}
+
+  @doc false
+  def validate_media_type(value, _opts) when is_binary(value) do
+    if String.valid?(value) and Regex.match?(@media_type_pattern, value) do
+      :ok
+    else
+      {:error, "must be a valid media type"}
+    end
+  end
+
+  def validate_media_type(_value, _opts), do: {:error, "must be a valid media type"}
+
+  defp valid_uri_text?(value) do
+    String.valid?(value) and
+      not Regex.match?(@invalid_uri_character_pattern, value) and
+      not Regex.match?(@invalid_percent_encoding_pattern, value) and
+      Regex.match?(@uri_reference_pattern, value)
   end
 
   defp ensure_static_schema!(schema, env) do
@@ -473,8 +563,4 @@ defmodule Jido.Signal do
 
   defp static_data_error(reason, []), do: {:error, reason}
   defp static_data_error(reason, path), do: {:error, "#{reason} at #{inspect(path)}"}
-
-  defp stringify_keys(map) do
-    Map.new(map, fn {key, value} -> {to_string(key), value} end)
-  end
 end

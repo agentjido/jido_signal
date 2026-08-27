@@ -117,10 +117,10 @@ defmodule Jido.Signal.Dispatch.PubSub do
     topic = Keyword.fetch!(opts, :topic)
 
     try do
-      Phoenix.PubSub.broadcast(target, topic, signal)
-      :ok
+      apply(Phoenix.PubSub, :broadcast, [target, topic, signal])
     rescue
       ArgumentError -> {:error, :pubsub_not_found}
+      MatchError -> {:error, :pubsub_not_found}
     catch
       :exit, {:noproc, _} -> {:error, :pubsub_not_found}
       :exit, reason -> {:error, reason}

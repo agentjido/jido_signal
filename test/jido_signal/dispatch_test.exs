@@ -99,6 +99,11 @@ defmodule Jido.Signal.DispatchTest do
 
     assert {:error, :invalid_dispatch_config} = Dispatch.dispatch(signal, :invalid)
     assert :ok = Dispatch.dispatch(signal, {nil, []})
+
+    assert {:error, :invalid_dispatch_config} = Dispatch.validate_opts({:noop, [1]})
+    assert {:error, :invalid_dispatch_config} = Dispatch.validate_opts({nil, [1]})
+    assert {:error, :invalid_dispatch_config} = Dispatch.dispatch(signal, {:noop, [1]})
+    assert {:error, :invalid_dispatch_config} = Dispatch.dispatch(signal, {nil, [1]})
   end
 
   test "does not expose removed runtime policy functions" do

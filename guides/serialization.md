@@ -66,19 +66,19 @@ JSON-safe data stays in the CloudEvents `data` field. JSON-safe data includes:
 - proper lists of JSON-safe values
 - maps with valid UTF-8 string keys and JSON-safe values
 
-Binary data and other Erlang-only values use `data_base64`. Jido encodes these
-values as follows:
+Non-UTF-8 binary data uses `data_base64`. Jido encodes the raw bytes as
+CloudEvents requires:
 
 ```elixir
-encoded = data |> :erlang.term_to_binary() |> Base.encode64()
+encoded = Base.encode64(data)
 ```
 
-The reader reverses these operations with the safe Erlang term option. The
-`data` and `data_base64` fields are mutually exclusive.
+The reader decodes the Base64 text to the original bytes. The `data` and
+`data_base64` fields are mutually exclusive.
 
-This rule keeps atom keys, tuples, structs, and non-UTF-8 binaries intact. A
-non-Jido consumer sees the decoded `data_base64` value as an Erlang external
-term binary.
+JSON serialization rejects tuples, structs, atom-key maps, and other
+Erlang-only values. The trusted Erlang Term Format keeps these values in
+`data`. Use that format only when all producers and consumers are trusted.
 
 The `datacontenttype` field describes the data. It does not select a format and
 does not transform the data.

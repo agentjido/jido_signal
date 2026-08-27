@@ -76,7 +76,10 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
   end
 
   defp deliver_to_process(pid, :sync, timeout, message) do
-    GenServer.call(pid, message, timeout)
+    case GenServer.call(pid, message, timeout) do
+      {:error, _reason} = error -> error
+      _successful_reply -> :ok
+    end
   catch
     :exit, {:timeout, _details} -> {:error, :timeout}
     :exit, {:noproc, _details} -> {:error, :process_not_alive}

@@ -7,7 +7,7 @@ defmodule Jido.Signal.Bus.RecordedSignalTest do
     first = signal("orders.created", %{id: 1})
     second = signal("orders.updated", %{id: 1})
 
-    {stored, entries, next_cursor} = RecordedSignal.build([first, second], 4)
+    {:ok, stored, entries, next_cursor} = RecordedSignal.build([first, second], 4)
 
     assert Enum.map(stored, & &1["cursor"]) == [4, 5]
     assert Enum.map(stored, & &1["type"]) == ["orders.created", "orders.updated"]
@@ -22,7 +22,7 @@ defmodule Jido.Signal.Bus.RecordedSignalTest do
 
   test "decodes stored records in order" do
     signals = [signal("orders.created"), signal("orders.updated")]
-    {stored, _entries, _next_cursor} = RecordedSignal.build(signals, 1)
+    {:ok, stored, _entries, _next_cursor} = RecordedSignal.build(signals, 1)
 
     assert {:ok, decoded} = RecordedSignal.decode(stored)
     assert Enum.map(decoded, & &1.cursor) == [1, 2]
@@ -44,11 +44,44 @@ defmodule Jido.Signal.Bus.RecordedSignalTest do
 
     assert {:error, :invalid_store_record} = RecordedSignal.from_record(malformed)
     assert {:error, :invalid_store_record} = RecordedSignal.decode([malformed])
+
+    assert {:ok, stored, _entries, _next_cursor} =
+             RecordedSignal.build([signal("orders.created")], 1)
+
+    [record] = stored
+
+    assert {:error, :invalid_store_record} =
+             RecordedSignal.from_record(%{record | "type" => "orders.different"})
+
+    assert {:error, :invalid_store_record} =
+             RecordedSignal.from_record(%{
+               record
+               | "signal" => Map.put(record["signal"], {:tuple, :key}, "invalid")
+             })
+  end
+
+  test "rejects malformed Signal structs without raising" do
+    malformed = %Jido.Signal{
+      id: "bad",
+      source: "/test",
+      type: "orders.created",
+      extensions: :invalid
+    }
+
+    assert {:error, {:invalid_signal, 0, _reason}} = RecordedSignal.build([malformed], 1)
+
+    valid = signal("orders.created")
+    malformed_extensions = %{valid | extensions: %{{:tuple, :key} => "invalid"}}
+
+    assert {:error, {:invalid_signal, 0, _reason}} =
+             RecordedSignal.build([malformed_extensions], 1)
   end
 
   test "exposes a schema for public record values" do
     signal = signal("orders.created")
-    {_stored, [{_record, ^signal, public}], _next_cursor} = RecordedSignal.build([signal], 1)
+
+    {:ok, _stored, [{_record, ^signal, public}], _next_cursor} =
+      RecordedSignal.build([signal], 1)
 
     assert {:ok, ^public} = Zoi.parse(RecordedSignal.schema(), public)
   end

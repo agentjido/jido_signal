@@ -242,6 +242,9 @@ data value, including a map, list, scalar, binary, or other Erlang term.
 `validate_data/1` and `new/2` return Zoi validation errors without a Jido
 wrapper. `new!/2` raises the Zoi parse exception for invalid data.
 
+JSON serialization accepts JSON values and non-UTF-8 binary data. Use the
+trusted Erlang Term Format when Signal data contains other Erlang-only values.
+
 Schemas must be static module data. Use named `{Module, :function, args}` MFA
 values for refinements, transforms, and other callbacks. Anonymous functions
 and lazy schemas are rejected at compile time.

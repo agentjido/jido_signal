@@ -29,6 +29,19 @@ defmodule Jido.Signal.CodecTest do
 
     assert error =~ "id"
     assert error =~ "type"
+
+    for map <- [
+          %{"id" => "missing-version", "source" => "/example", "type" => "example.event"},
+          %{
+            "specversion" => nil,
+            "id" => "null-version",
+            "source" => "/example",
+            "type" => "example.event"
+          }
+        ] do
+      assert {:error, error} = Signal.from_map(map)
+      assert error =~ "specversion is required"
+    end
   end
 
   test "normalizes the supported legacy spec version" do
@@ -69,9 +82,45 @@ defmodule Jido.Signal.CodecTest do
     assert {:error, error} = Signal.from_map(Map.put(wire, "data_base64", 123))
     assert error =~ "Base64 string"
 
-    unsafe_binary = Base.encode64(<<131, 255>>)
-    assert {:error, error} = Signal.from_map(Map.put(wire, "data_base64", unsafe_binary))
-    assert error =~ "safe Erlang term"
+    raw_binary = <<131, 255>>
+
+    assert {:ok, signal} =
+             Signal.from_map(Map.put(wire, "data_base64", Base.encode64(raw_binary)))
+
+    assert signal.data == raw_binary
+  end
+
+  test "preserves absent data and explicit null data" do
+    wire = %{
+      "specversion" => "1.0",
+      "id" => "null-data",
+      "source" => "/example",
+      "type" => "example.null"
+    }
+
+    assert {:ok, absent} = Signal.from_map(wire)
+    refute absent.data_present?
+    refute Map.has_key?(Signal.to_map(absent), "data")
+
+    assert {:ok, explicit_null} = Signal.from_map(Map.put(wire, "data", nil))
+    assert explicit_null.data_present?
+    assert Map.fetch(Signal.to_map(explicit_null), "data") == {:ok, nil}
+  end
+
+  test "rejects unsupported and colliding attribute keys" do
+    assert {:error, error} = Signal.from_map(%{{:tuple, :key} => "value"})
+    assert error =~ "attribute keys must be atoms or strings"
+
+    assert {:error, error} =
+             Signal.from_map(%{
+               "type" => "string.type",
+               type: "atom.type",
+               source: "/example",
+               id: "collision",
+               specversion: "1.0"
+             })
+
+    assert error =~ "duplicate attribute"
   end
 
   test "accepts supported legacy wire markers" do

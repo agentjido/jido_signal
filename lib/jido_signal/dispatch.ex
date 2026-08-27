@@ -41,6 +41,7 @@ defmodule Jido.Signal.Dispatch do
 
   alias __MODULE__.Target
   alias Jido.Signal.Error
+  alias Jido.Signal.Sanitizer
   alias Jido.Signal.Telemetry
 
   @type adapter ::
@@ -139,18 +140,24 @@ defmodule Jido.Signal.Dispatch do
   def dispatch(_signal, invalid_config), do: invalid_dispatch_config(invalid_config)
 
   defp normalize_target({nil, opts}) when is_list(opts) do
-    Target.new(nil, nil, strip_internal_opts(opts))
+    if Keyword.keyword?(opts),
+      do: Target.new(nil, nil, strip_internal_opts(opts)),
+      else: invalid_dispatch_config({nil, opts})
   end
 
   defp normalize_target({adapter, opts} = config) when is_atom(adapter) and is_list(opts) do
-    opts = strip_internal_opts(opts)
+    if Keyword.keyword?(opts) do
+      opts = strip_internal_opts(opts)
 
-    with {:ok, adapter_module} <- resolve_adapter(adapter),
-         {:ok, validated_opts} <- parse_adapter_options(adapter_module, opts),
-         {:ok, target} <- Target.new(adapter, adapter_module, validated_opts) do
-      {:ok, target}
+      with {:ok, adapter_module} <- resolve_adapter(adapter),
+           {:ok, validated_opts} <- parse_adapter_options(adapter_module, opts),
+           {:ok, target} <- Target.new(adapter, adapter_module, validated_opts) do
+        {:ok, target}
+      else
+        {:error, reason} -> normalize_validation_error(reason, adapter, config)
+      end
     else
-      {:error, reason} -> normalize_validation_error(reason, adapter, config)
+      invalid_dispatch_config(config)
     end
   end
 
@@ -242,21 +249,27 @@ defmodule Jido.Signal.Dispatch do
       adapter: target.adapter,
       runtime_surface: :dispatch,
       signal_type: signal_type(signal),
-      target: get_target_from_opts(target.opts),
-      target_kind: target_kind(target.opts)
+      target: get_target_from_opts(target.adapter, target.opts),
+      target_kind: target_kind(target.adapter, target.opts)
     }
   end
 
   defp signal_type(%{type: type}) when is_binary(type), do: type
   defp signal_type(_signal), do: :unknown
 
-  defp get_target_from_opts(opts) do
+  defp get_target_from_opts(:pubsub, opts) do
+    opts
+    |> Keyword.get(:topic, :unknown)
+    |> Sanitizer.sanitize(:telemetry)
+  end
+
+  defp get_target_from_opts(_adapter, opts) do
     cond do
-      target = Keyword.get(opts, :target) -> target
       url = Keyword.get(opts, :url) -> url_target_for_telemetry(url)
-      pid = Keyword.get(opts, :pid) -> pid
-      name = Keyword.get(opts, :name) -> name
-      topic = Keyword.get(opts, :topic) -> topic
+      target = Keyword.get(opts, :target) -> Sanitizer.sanitize(target, :telemetry)
+      pid = Keyword.get(opts, :pid) -> Sanitizer.sanitize(pid, :telemetry)
+      name = Keyword.get(opts, :name) -> Sanitizer.sanitize(name, :telemetry)
+      topic = Keyword.get(opts, :topic) -> Sanitizer.sanitize(topic, :telemetry)
       true -> :unknown
     end
   end
@@ -265,10 +278,7 @@ defmodule Jido.Signal.Dispatch do
     case URI.new(url) do
       {:ok, %URI{scheme: scheme, host: host} = uri}
       when scheme in ["http", "https"] and is_binary(host) and host != "" ->
-        uri
-        |> Map.put(:userinfo, nil)
-        |> Map.put(:query, nil)
-        |> Map.put(:fragment, nil)
+        %URI{scheme: uri.scheme, host: uri.host, port: uri.port}
         |> URI.to_string()
 
       _ ->
@@ -278,7 +288,9 @@ defmodule Jido.Signal.Dispatch do
 
   defp url_target_for_telemetry(_url), do: :invalid_url
 
-  defp target_kind(opts) do
+  defp target_kind(:pubsub, _opts), do: :topic
+
+  defp target_kind(_adapter, opts) do
     cond do
       Keyword.has_key?(opts, :url) -> :url
       Keyword.has_key?(opts, :topic) -> :topic
@@ -419,8 +431,8 @@ defmodule Jido.Signal.Dispatch do
   defp target_summary(adapter, {_configured_adapter, opts}) when is_list(opts) do
     %{
       adapter: adapter,
-      target: get_target_from_opts(opts),
-      target_kind: target_kind(opts)
+      target: get_target_from_opts(adapter, opts),
+      target_kind: target_kind(adapter, opts)
     }
   end
 

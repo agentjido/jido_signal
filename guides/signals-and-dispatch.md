@@ -31,7 +31,8 @@ signal.extensions      # Flat CloudEvents extension context attributes
 
 # Data semantics (CloudEvents):
 # - JSON-safe data uses the data field in the wire map.
-# - Binary and other Erlang-only data uses an Erlang term binary in data_base64.
+# - Non-UTF-8 binary data uses raw Base64 bytes in data_base64.
+# - JSON serialization rejects other Erlang-only data values.
 # - datacontenttype describes the data. It does not transform the data.
 ```
 

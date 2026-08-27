@@ -4,6 +4,27 @@ defmodule Jido.Signal.Dispatch.PubSubTest do
   alias Jido.Signal
   alias Jido.Signal.Dispatch
 
+  defmodule FailingAdapter do
+    @behaviour Phoenix.PubSub.Adapter
+
+    @impl true
+    def child_spec(opts) do
+      name = Keyword.fetch!(opts, :adapter_name)
+      %{id: name, start: {Agent, :start_link, [fn -> nil end, [name: name]]}}
+    end
+
+    @impl true
+    def node_name(_name), do: "failing"
+
+    @impl true
+    def broadcast(_name, _topic, _message, _dispatcher),
+      do: {:error, :cluster_unavailable}
+
+    @impl true
+    def direct_broadcast(_name, _node, _topic, _message, _dispatcher),
+      do: {:error, :cluster_unavailable}
+  end
+
   test "parses the PubSub target with Zoi" do
     assert {:ok, {:pubsub, opts}} =
              Dispatch.validate_opts({:pubsub, target: __MODULE__, topic: "events.created"})
@@ -49,5 +70,14 @@ defmodule Jido.Signal.Dispatch.PubSubTest do
                signal,
                {:pubsub, target: __MODULE__.Missing, topic: "orders"}
              )
+  end
+
+  test "propagates PubSub adapter broadcast failures" do
+    name = Module.concat(__MODULE__, "Failing#{System.unique_integer([:positive])}")
+    start_supervised!({Phoenix.PubSub, name: name, adapter: FailingAdapter})
+    signal = Signal.new!("order.created", %{}, source: "/test")
+
+    assert {:error, :cluster_unavailable} =
+             Dispatch.dispatch(signal, {:pubsub, target: name, topic: "orders"})
   end
 end

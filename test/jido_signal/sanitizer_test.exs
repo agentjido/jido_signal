@@ -204,6 +204,43 @@ defmodule Jido.Signal.SanitizerTest do
       assert Sanitizer.sanitize(bitstring, :transport)["__type__"] == "bitstring"
       assert is_binary(Sanitizer.sanitize(self(), :telemetry))
     end
+
+    test "handles improper lists without raising" do
+      improper = [1, [2 | 3] | 4]
+
+      assert %{__type__: :improper_list, preview: preview} =
+               Sanitizer.sanitize(improper, :telemetry)
+
+      assert is_binary(preview)
+
+      assert %{"__type__" => "improper_list"} =
+               Sanitizer.sanitize(%{nested: improper}, :transport)["nested"]
+    end
+
+    test "bounds large keys, invalid binaries, and maps" do
+      large_key = String.duplicate("k", 100_000)
+      invalid_binary = :binary.copy(<<255>>, 1_000_000)
+      large_map = Map.new(1..100_000, &{"key-#{&1}", &1})
+      large_composite_key = {:key, Enum.to_list(1..100_000)}
+
+      sanitized_key_map = Sanitizer.sanitize(%{large_key => "value"}, :telemetry)
+      [sanitized_key] = Map.keys(sanitized_key_map)
+      assert byte_size(sanitized_key) <= 163
+
+      sanitized_composite_map =
+        Sanitizer.sanitize(%{large_composite_key => "value"}, :transport)
+
+      [sanitized_composite_key] = Map.keys(sanitized_composite_map)
+      assert byte_size(sanitized_composite_key) <= 1_027
+
+      assert %{bytes: 1_000_000, preview: preview} =
+               Sanitizer.sanitize(invalid_binary, :telemetry)
+
+      assert byte_size(preview) <= 163
+
+      assert %{__truncated__: %{count: 100_000}} =
+               Sanitizer.sanitize(large_map, :telemetry)
+    end
   end
 
   describe "preview/3" do

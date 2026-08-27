@@ -26,6 +26,7 @@ defmodule Jido.Signal.TraceTest do
     test "uses explicit trace flags without selecting sampling policy" do
       assert Trace.new().trace_flags == "00"
       assert Trace.new(trace_flags: "01").trace_flags == "01"
+      assert Trace.new(trace_flags: "09").trace_flags == "09"
     end
 
     test "rejects invalid or unknown options" do
@@ -53,8 +54,10 @@ defmodule Jido.Signal.TraceTest do
       assert {:error, :invalid_traceparent} =
                Trace.from_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-zz")
 
-      assert {:error, :invalid_traceparent} =
-               Trace.from_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-02")
+      assert {:ok, trace} =
+               Trace.from_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-09")
+
+      assert trace.trace_flags == "09"
 
       assert {:error, :invalid_traceparent} =
                Trace.from_traceparent("00-00000000000000000000000000000000-00f067aa0ba902b7-01")
@@ -68,6 +71,27 @@ defmodule Jido.Signal.TraceTest do
                Trace.from_traceparent(@traceparent, String.duplicate("x", 513))
 
       assert trace.tracestate == nil
+    end
+
+    test "validates W3C tracestate grammar" do
+      valid = "vendor=value,1@system=opaque-123"
+      assert {:ok, trace} = Trace.from_traceparent(@traceparent, valid)
+      assert trace.tracestate == valid
+
+      invalid_values = [
+        "Vendor=value",
+        "vendor=one,vendor=two",
+        "vendor=value\r\ninjected=true",
+        "vendor=value,\r\ninjected=true",
+        "vendor=value ",
+        Enum.map_join(1..33, ",", &"vendor#{&1}=value")
+      ]
+
+      for tracestate <- invalid_values do
+        assert {:ok, trace} = Trace.from_traceparent(@traceparent, tracestate)
+        assert trace.tracestate == nil
+        assert_raise ArgumentError, fn -> Trace.new(tracestate: tracestate) end
+      end
     end
   end
 

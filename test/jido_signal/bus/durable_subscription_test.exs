@@ -282,6 +282,9 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert {:error, :target_not_alive} = Bus.subscribe(bus, "**", target: dead)
 
     assert {:error, :invalid_options} = Bus.replay(bus, "**", :invalid)
+    assert {:error, :invalid_options} = Bus.replay(bus, "**", [1])
+    assert {:error, :invalid_options} = Bus.subscribe(bus, "**", [1])
+    assert {:error, :invalid_options} = Bus.unsubscribe(bus, "missing", [1])
     assert {:error, {:unsupported_option, :unknown}} = Bus.replay(bus, "**", unknown: true)
     assert {:error, {:invalid_option, :after}} = Bus.replay(bus, "**", after: -1)
     assert {:error, {:invalid_option, :limit}} = Bus.replay(bus, "**", limit: 0)

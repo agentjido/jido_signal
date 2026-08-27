@@ -120,5 +120,34 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
              Dispatch.dispatch(signal, {:pid, target: crashing, delivery_mode: :sync})
   end
 
+  test "normalizes successful synchronous replies and continues list delivery" do
+    signal = signal()
+    receiver = reply_once({:ok, :accepted})
+
+    assert :ok =
+             Dispatch.dispatch(signal, [
+               {:pid, target: receiver, delivery_mode: :sync},
+               {:pid, target: self()}
+             ])
+
+    assert_received {:signal, ^signal}
+  end
+
+  test "keeps synchronous error replies" do
+    signal = signal()
+    receiver = reply_once({:error, :rejected})
+
+    assert {:error, :rejected} =
+             Dispatch.dispatch(signal, {:pid, target: receiver, delivery_mode: :sync})
+  end
+
   defp signal, do: Signal.new!("dispatch.process", %{}, source: "/test")
+
+  defp reply_once(reply) do
+    spawn(fn ->
+      receive do
+        {:"$gen_call", from, _message} -> GenServer.reply(from, reply)
+      end
+    end)
+  end
 end

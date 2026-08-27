@@ -14,12 +14,12 @@ defmodule Jido.Signal.Codec do
   @doc false
   @spec from_map(map()) :: {:ok, Signal.t()} | {:error, String.t()}
   def from_map(map) when is_map(map) do
-    attrs = stringify_keys(map)
-
-    with :ok <- validate_legacy_wire_version(attrs),
-         {:ok, data} <- extract_data(attrs),
+    with {:ok, attrs} <- normalize_keys(map),
+         :ok <- validate_specversion(attrs),
+         :ok <- validate_legacy_wire_version(attrs),
+         {:ok, data, data_present?, data_base64?} <- extract_data(attrs),
          {:ok, extensions} <- extract_extensions(attrs) do
-      parse_signal(attrs, data, extensions)
+      parse_signal(attrs, data, data_present?, data_base64?, extensions)
     end
   end
 
@@ -39,6 +39,20 @@ defmodule Jido.Signal.Codec do
     |> Map.merge(extensions)
   end
 
+  @doc false
+  @spec normalize_keys(map()) :: {:ok, map()} | {:error, String.t()}
+  def normalize_keys(map) when is_map(map) do
+    Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, normalized} ->
+      with {:ok, key} <- normalize_key(key),
+           false <- Map.has_key?(normalized, key) do
+        {:cont, {:ok, Map.put(normalized, key, value)}}
+      else
+        true -> {:halt, {:error, "parse error: duplicate attribute #{inspect(key)}"}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
   defp extract_extensions(attrs) do
     explicit = Map.get(attrs, "extensions", %{})
     unknown = Map.drop(attrs, @core_names ++ [@legacy_wire_version_key])
@@ -51,10 +65,12 @@ defmodule Jido.Signal.Codec do
     end
   end
 
-  defp parse_signal(attrs, data, extensions) do
+  defp parse_signal(attrs, data, data_present?, data_base64?, extensions) do
     signal =
       struct(Signal,
         data: data,
+        data_present?: data_present?,
+        data_base64?: data_base64?,
         datacontenttype: Map.get(attrs, "datacontenttype"),
         dataschema: Map.get(attrs, "dataschema"),
         extensions: extensions,
@@ -85,18 +101,19 @@ defmodule Jido.Signal.Codec do
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
-    |> Map.merge(encode_data(signal.data))
+    |> Map.merge(encode_data(signal.data, signal.data_present?, signal.data_base64?))
   end
 
-  defp encode_data(nil), do: %{}
+  defp encode_data(nil, false, _base64?), do: %{}
+  defp encode_data(nil, true, _base64?), do: %{"data" => nil}
 
-  defp encode_data(data) do
-    if json_data?(data) do
-      %{"data" => data}
-    else
-      %{"data_base64" => data |> :erlang.term_to_binary() |> Base.encode64()}
-    end
+  defp encode_data(data, _present?, base64?) when is_binary(data) do
+    if base64? or not String.valid?(data),
+      do: %{"data_base64" => Base.encode64(data)},
+      else: %{"data" => data}
   end
+
+  defp encode_data(data, _present?, _base64?), do: %{"data" => data}
 
   defp extract_data(attrs) do
     case {Map.fetch(attrs, "data"), Map.fetch(attrs, "data_base64")} do
@@ -104,50 +121,34 @@ defmodule Jido.Signal.Codec do
         {:error, "parse error: data and data_base64 are mutually exclusive"}
 
       {{:ok, data}, :error} ->
-        {:ok, data}
+        {:ok, data, true, is_binary(data) and not String.valid?(data)}
 
       {:error, {:ok, encoded}} ->
         decode_data_base64(encoded)
 
       {:error, :error} ->
-        {:ok, nil}
+        {:ok, nil, false, false}
     end
   end
 
   defp decode_data_base64(encoded) when is_binary(encoded) do
-    with {:ok, binary} <- Base.decode64(encoded) do
-      {:ok, :erlang.binary_to_term(binary, [:safe])}
-    else
+    case Base.decode64(encoded) do
+      {:ok, binary} -> {:ok, binary, true, true}
       :error -> {:error, "parse error: data_base64 must be valid Base64"}
     end
-  rescue
-    error in ArgumentError ->
-      {:error,
-       "parse error: data_base64 must contain a safe Erlang term: #{Exception.message(error)}"}
   end
 
   defp decode_data_base64(_encoded),
     do: {:error, "parse error: data_base64 must be a Base64 string"}
-
-  defp json_data?(nil), do: true
-  defp json_data?(value) when is_boolean(value) or is_number(value), do: true
-  defp json_data?(value) when is_binary(value), do: String.valid?(value)
-  defp json_data?([]), do: true
-  defp json_data?([head | tail]), do: json_data?(head) and json_data?(tail)
-
-  defp json_data?(value) when is_map(value) and not is_struct(value) do
-    Enum.all?(value, fn {key, item} ->
-      is_binary(key) and String.valid?(key) and json_data?(item)
-    end)
-  end
-
-  defp json_data?(_value), do: false
 
   defp normalize_specversion("1.0.2"), do: "1.0"
   defp normalize_specversion(value), do: value
 
   defp normalize_time(%DateTime{} = time), do: DateTime.to_iso8601(time)
   defp normalize_time(time), do: time
+
+  defp validate_specversion(%{"specversion" => value}) when not is_nil(value), do: :ok
+  defp validate_specversion(_attrs), do: {:error, "parse error: specversion is required"}
 
   defp validate_legacy_wire_version(%{@legacy_wire_version_key => version})
        when version in @legacy_wire_versions,
@@ -163,7 +164,14 @@ defmodule Jido.Signal.Codec do
     {:error, "parse error: unsupported jido_schema_version #{inspect(version)}"}
   end
 
-  defp stringify_keys(map) do
-    Map.new(map, fn {key, value} -> {to_string(key), value} end)
+  defp normalize_key(key) when is_atom(key), do: {:ok, Atom.to_string(key)}
+
+  defp normalize_key(key) when is_binary(key) do
+    if String.valid?(key),
+      do: {:ok, key},
+      else: {:error, "parse error: attribute names must be valid UTF-8 strings"}
   end
+
+  defp normalize_key(key),
+    do: {:error, "parse error: attribute keys must be atoms or strings, got: #{inspect(key)}"}
 end

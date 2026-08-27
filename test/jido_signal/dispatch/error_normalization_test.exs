@@ -42,6 +42,18 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     def deliver(_signal, _opts), do: {:error, :not_sent}
   end
 
+  defmodule TargetReportingAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def options_schema do
+      Zoi.keyword([target: Zoi.any() |> Zoi.required()], unrecognized_keys: :error)
+    end
+
+    @impl true
+    def deliver(_signal, _opts), do: {:error, :not_sent}
+  end
+
   setup do
     Application.delete_env(:jido_signal, :normalize_dispatch_errors)
     Application.delete_env(:jido, :normalize_dispatch_errors)
@@ -178,7 +190,7 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     assert {:error, _reason} = Dispatch.dispatch(signal, config)
 
     assert_received {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
-    assert metadata.target == "https://example.com/path"
+    assert metadata.target == "https://example.com"
     assert metadata.target_kind == :url
   end
 
@@ -195,10 +207,38 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     assert {:error, %Error.DispatchError{} = error} = Dispatch.dispatch(signal, config)
 
     error_text = inspect(error.details)
-    assert error_text =~ "https://example.com/path"
+    assert error_text =~ "https://example.com"
+    refute error_text =~ "/path"
     refute error_text =~ "url-secret"
     refute error_text =~ "header-secret"
     refute error_text =~ "adapter-secret"
+  end
+
+  test "bounds custom targets in telemetry and structured errors" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+    test_pid = self()
+    handler_id = {__MODULE__, :bounded_target, test_pid}
+    Process.put(:test_pid, test_pid)
+
+    :telemetry.attach(
+      handler_id,
+      [:jido, :dispatch, :start],
+      &__MODULE__.handle_telemetry_event/4,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+    target = "secret-" <> String.duplicate("x", 100_000)
+
+    assert {:error, %Error.DispatchError{} = error} =
+             Dispatch.dispatch(signal, {TargetReportingAdapter, target: target})
+
+    assert_received {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
+    assert byte_size(metadata.target) <= 163
+    assert byte_size(inspect(error.details.target)) < 1_000
+    refute inspect(error.details.target) =~ target
   end
 
   test "invalid dispatch configuration errors contain only the input shape" do
@@ -209,6 +249,23 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
 
     assert error.value == %{type: :map, size: 1}
     refute inspect(error) =~ "config-secret"
+  end
+
+  test "invalid dispatch configuration reports each input shape" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+
+    inputs_and_shapes = [
+      {[[:invalid]], %{type: :list, count: 1}},
+      {{:invalid}, %{type: :tuple, size: 1}},
+      {"invalid", %{type: :binary, bytes: 7}},
+      {:invalid, %{type: :atom}},
+      {42, %{type: :number}},
+      {self(), %{type: :other}}
+    ]
+
+    for {input, shape} <- inputs_and_shapes do
+      assert {:error, %Error.InvalidInputError{value: ^shape}} = Dispatch.validate_opts(input)
+    end
   end
 
   test "dispatch leaves raw adapter reasons unchanged by default" do

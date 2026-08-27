@@ -152,7 +152,11 @@ defmodule Jido.Signal.Bus.Subscriptions do
   end
 
   defp validate_target(target) when is_pid(target) do
-    if Process.alive?(target), do: {:ok, target}, else: {:error, :target_not_alive}
+    cond do
+      target == self() -> {:error, :target_is_bus}
+      Process.alive?(target) -> {:ok, target}
+      true -> {:error, :target_not_alive}
+    end
   end
 
   defp validate_target(_target), do: {:error, :invalid_target}

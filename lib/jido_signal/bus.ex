@@ -131,10 +131,14 @@ defmodule Jido.Signal.Bus do
   def subscribe(bus, path, opts \\ [])
 
   def subscribe(bus, path, opts) when is_list(opts) do
-    opts = Keyword.put_new(opts, :target, self())
+    if Keyword.keyword?(opts) do
+      opts = Keyword.put_new(opts, :target, self())
 
-    with {:ok, result} <- bus_call(bus, {:subscribe, path, opts}) do
-      result
+      with {:ok, result} <- bus_call(bus, {:subscribe, path, opts}) do
+        result
+      end
+    else
+      {:error, :invalid_options}
     end
   end
 
@@ -147,11 +151,19 @@ defmodule Jido.Signal.Bus do
   and can attach again through `subscribe/3` with the same durable ID.
   """
   @spec unsubscribe(server(), subscription_id(), keyword()) :: :ok | {:error, term()}
-  def unsubscribe(bus, subscription_id, opts \\ []) do
-    with {:ok, result} <- bus_call(bus, {:unsubscribe, subscription_id, opts}) do
-      result
+  def unsubscribe(bus, subscription_id, opts \\ [])
+
+  def unsubscribe(bus, subscription_id, opts) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      with {:ok, result} <- bus_call(bus, {:unsubscribe, subscription_id, opts}) do
+        result
+      end
+    else
+      {:error, :invalid_options}
     end
   end
+
+  def unsubscribe(_bus, _subscription_id, _opts), do: {:error, :invalid_options}
 
   @doc "Permanently removes a subscription and its durable cursor."
   @spec delete_subscription(server(), subscription_id()) :: :ok | {:error, term()}
@@ -182,11 +194,19 @@ defmodule Jido.Signal.Bus do
   """
   @spec replay(server(), path(), keyword()) ::
           {:ok, [RecordedSignal.t()]} | {:error, term()}
-  def replay(bus, path \\ "**", opts \\ []) do
-    with {:ok, result} <- bus_call(bus, {:replay, path, opts}) do
-      result
+  def replay(bus, path \\ "**", opts \\ [])
+
+  def replay(bus, path, opts) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      with {:ok, result} <- bus_call(bus, {:replay, path, opts}) do
+        result
+      end
+    else
+      {:error, :invalid_options}
     end
   end
+
+  def replay(_bus, _path, _opts), do: {:error, :invalid_options}
 
   @doc "Acknowledges the current record for a durable subscription."
   @spec ack(server(), durable_id(), non_neg_integer()) :: :ok | {:error, term()}
@@ -221,10 +241,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp child_id(name, opts) do
-    case Keyword.get(opts, :jido) do
-      nil -> name
-      scope -> {name, scope}
-    end
+    {__MODULE__, registry(opts), registry_key(name, opts)}
   end
 
   defp registry(opts), do: Keyword.get(opts, :registry, Jido.Signal.Registry)
@@ -253,7 +270,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp bus_call(bus, message) do
-    {:ok, GenServer.call(bus_call_target(bus), message)}
+    {:ok, GenServer.call(bus_call_target(bus), message, :infinity)}
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, :noproc -> {:error, :not_found}

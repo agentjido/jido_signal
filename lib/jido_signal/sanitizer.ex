@@ -71,6 +71,17 @@ defmodule Jido.Signal.Sanitizer do
   end
 
   defp sanitize(%Signal{} = value, profile, opts, depth) do
+    extension_names =
+      case value.extensions do
+        extensions when is_map(extensions) ->
+          extensions
+          |> Enum.take(opts.max_items)
+          |> Enum.map(fn {key, _value} -> bounded_key_token(key, opts.max_binary) end)
+
+        _invalid ->
+          []
+      end
+
     base =
       %{
         id: value.id,
@@ -78,7 +89,7 @@ defmodule Jido.Signal.Sanitizer do
         source: value.source,
         subject: value.subject,
         datacontenttype: value.datacontenttype,
-        extensions: Map.keys(value.extensions || %{})
+        extensions: extension_names
       }
       |> Map.reject(fn {_key, item} -> is_nil(item) end)
 
@@ -130,7 +141,7 @@ defmodule Jido.Signal.Sanitizer do
     if depth >= opts.max_depth do
       collection_summary(value, profile)
     else
-      entries = value |> Map.to_list() |> Enum.sort_by(fn {key, _item} -> key_token(key) end)
+      entries = value |> Enum.take(opts.max_items + 1) |> Enum.sort_by(&entry_key_token/1)
       {entries, truncated?} = bounded(entries, opts.max_items)
 
       sanitized =
@@ -138,7 +149,7 @@ defmodule Jido.Signal.Sanitizer do
           item =
             if sensitive_key?(key), do: @redacted, else: sanitize(item, profile, opts, depth + 1)
 
-          {boundary_key(profile, key), item}
+          {bounded_boundary_key(profile, key, opts.max_binary), item}
         end)
 
       mark_map_truncation(sanitized, truncated?, map_size(value), profile)
@@ -146,17 +157,21 @@ defmodule Jido.Signal.Sanitizer do
   end
 
   defp sanitize(value, profile, opts, depth) when is_list(value) do
-    cond do
-      value != [] and (Keyword.keyword?(value) or key_value_list?(value)) ->
-        sanitize(Map.new(value), profile, opts, depth)
+    if proper_list?(value) do
+      cond do
+        value != [] and (Keyword.keyword?(value) or key_value_list?(value)) ->
+          sanitize(Map.new(value), profile, opts, depth)
 
-      depth >= opts.max_depth ->
-        collection_summary(value, profile)
+        depth >= opts.max_depth ->
+          collection_summary(value, profile)
 
-      true ->
-        {items, truncated?} = bounded(value, opts.max_items)
-        items = Enum.map(items, &sanitize(&1, profile, opts, depth + 1))
-        mark_list_truncation(items, truncated?, length(value), profile)
+        true ->
+          {items, truncated?} = bounded(value, opts.max_items)
+          items = Enum.map(items, &sanitize(&1, profile, opts, depth + 1))
+          mark_list_truncation(items, truncated?, length(value), profile)
+      end
+    else
+      improper_list_summary(value, profile, opts)
     end
   end
 
@@ -191,7 +206,7 @@ defmodule Jido.Signal.Sanitizer do
     %{
       __type__: :binary,
       bytes: byte_size(value),
-      preview: value |> Base.encode64() |> truncate(max_binary)
+      preview: base64_prefix(value, max_binary)
     }
   end
 
@@ -199,7 +214,7 @@ defmodule Jido.Signal.Sanitizer do
     %{
       "__type__" => "binary",
       "bytes" => byte_size(value),
-      "preview" => value |> Base.encode64() |> truncate(max_binary)
+      "preview" => base64_prefix(value, max_binary)
     }
   end
 
@@ -255,13 +270,13 @@ defmodule Jido.Signal.Sanitizer do
   defp key_token(key) when is_atom(key), do: Atom.to_string(key)
 
   defp key_token(key) when is_binary(key) do
-    if String.valid?(key), do: key, else: "base64:" <> Base.encode64(key)
+    if String.valid?(key), do: key, else: "base64:" <> base64_prefix(key, 160)
   end
 
-  defp key_token(key), do: inspect(key)
+  defp key_token(key), do: inspect(key, limit: 10, printable_limit: 160)
 
   defp sensitive_key?(key) do
-    key = key |> key_token() |> String.downcase() |> String.replace("-", "_")
+    key = key |> bounded_key_token(160) |> String.downcase() |> String.replace("-", "_")
 
     MapSet.member?(@sensitive_keys, key) or
       MapSet.member?(@sensitive_keys, String.trim_leading(key, "x_"))
@@ -272,6 +287,47 @@ defmodule Jido.Signal.Sanitizer do
       {key, _value} when is_atom(key) or is_binary(key) -> true
       _item -> false
     end)
+  end
+
+  defp proper_list?(list) do
+    _length = :erlang.length(list)
+    true
+  rescue
+    ArgumentError -> false
+  end
+
+  defp improper_list_summary(value, :telemetry, opts) do
+    %{
+      __type__: :improper_list,
+      preview: inspect(value, limit: opts.max_items, printable_limit: opts.max_binary)
+    }
+  end
+
+  defp improper_list_summary(value, :transport, opts) do
+    %{
+      "__type__" => "improper_list",
+      "preview" => inspect(value, limit: opts.max_items, printable_limit: opts.max_binary)
+    }
+  end
+
+  defp bounded_boundary_key(:telemetry, key, _limit) when is_atom(key), do: key
+
+  defp bounded_boundary_key(profile, key, limit) do
+    key = bounded_key_token(key, limit)
+    boundary_key(profile, key)
+  end
+
+  defp bounded_key_token(key, limit), do: key |> key_token() |> truncate(limit)
+
+  defp entry_key_token({key, _value}), do: bounded_key_token(key, 160)
+
+  defp base64_prefix(value, max_encoded_bytes) do
+    raw_bytes = min(byte_size(value), div(max_encoded_bytes * 3, 4) + 3)
+
+    value
+    |> binary_part(0, raw_bytes)
+    |> Base.encode64()
+    |> truncate(max_encoded_bytes)
   end
 
   defp truncate(value, limit) when byte_size(value) <= limit, do: value

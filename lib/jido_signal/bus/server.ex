@@ -3,7 +3,6 @@ defmodule Jido.Signal.Bus.Server do
 
   use GenServer
 
-  alias Jido.Signal
   alias Jido.Signal.Bus.RecordedSignal
   alias Jido.Signal.Bus.Store
   alias Jido.Signal.Bus.Store.Memory
@@ -97,9 +96,17 @@ defmodule Jido.Signal.Bus.Server do
     {:noreply, Subscriptions.target_down(state, monitor_ref)}
   end
 
+  def handle_info(_message, state), do: {:noreply, state}
+
+  @impl GenServer
+  def format_status(%{state: state} = status) when is_map(state) do
+    %{status | state: redact_state(state)}
+  end
+
+  def format_status(status), do: status
+
   defp publish(state, signals) do
-    with :ok <- validate_signals(signals),
-         {stored_records, entries, next_cursor} <-
+    with {:ok, stored_records, entries, next_cursor} <-
            RecordedSignal.build(signals, state.next_cursor),
          {:ok, state} <- Store.write(state, :append, [stored_records]) do
       state = %{state | next_cursor: next_cursor}
@@ -111,15 +118,16 @@ defmodule Jido.Signal.Bus.Server do
 
       {:ok, Enum.map(entries, &elem(&1, 2)), state}
     else
-      {:error, reason} -> {:error, reason, state}
-    end
-  end
+      {:error, {:invalid_signal, index, reason}} ->
+        {:error,
+         Error.validation_error("Signals must be valid Signal structs", %{
+           field: :signals,
+           index: index,
+           reason: reason
+         }), state}
 
-  defp validate_signals(signals) do
-    if Enum.all?(signals, &match?(%Signal{}, &1)) do
-      :ok
-    else
-      {:error, Error.validation_error("Signals must be Signal structs", %{field: :signals})}
+      {:error, reason} ->
+        {:error, reason, state}
     end
   end
 
@@ -185,4 +193,15 @@ defmodule Jido.Signal.Bus.Server do
 
   defp validate_latest_cursor(cursor) when is_integer(cursor) and cursor >= 0, do: :ok
   defp validate_latest_cursor(_cursor), do: {:error, :invalid_store_cursor}
+
+  defp redact_state(state) do
+    %{
+      name: state.name,
+      jido: state.jido,
+      next_cursor: state.next_cursor,
+      store_module: state.store_module,
+      subscription_count: map_size(state.subscriptions),
+      monitor_count: map_size(state.monitors)
+    }
+  end
 end

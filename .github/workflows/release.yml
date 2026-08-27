@@ -24,7 +24,7 @@ permissions:
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5
+    uses: agentjido/github-actions/.github/workflows/jido-release.yml@c782c2d13584f0a7b43027eedd83807ed1a2b7dc
     with:
       operation: publish
       tag_name: ${{ inputs.tag_name }}

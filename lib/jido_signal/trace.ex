@@ -183,19 +183,27 @@ defmodule Jido.Signal.Trace do
 
   @doc false
   def validate_trace_flags(value, _opts) do
-    if value in ["00", "01"] do
+    if is_binary(value) and Regex.match?(~r/\A[0-9a-f]{2}\z/, value) do
       :ok
     else
-      {:error, "version 00 trace flags must be 00 or 01"}
+      {:error, "trace flags must be two lower-case hexadecimal characters"}
     end
   end
 
   @doc false
   def validate_tracestate(value, _opts) do
-    if is_binary(value) and String.valid?(value) and byte_size(value) <= 512 do
+    with true <-
+           is_binary(value) and String.valid?(value) and byte_size(value) <= 512 and
+             value == String.trim(value),
+         members <- String.split(value, ",", trim: false),
+         true <- length(members) in 1..32,
+         {:ok, keys} <- validate_tracestate_members(members),
+         true <- length(Enum.uniq(keys)) == length(keys) do
       :ok
     else
-      {:error, "tracestate must be a valid UTF-8 string with at most 512 bytes"}
+      _invalid ->
+        {:error,
+         "tracestate must contain at most 32 unique, valid W3C list-members and 512 bytes"}
     end
   end
 
@@ -242,6 +250,38 @@ defmodule Jido.Signal.Trace do
       {:error, "#{name} must be #{size} lower-case hexadecimal characters and not all zero"}
     end
   end
+
+  defp validate_tracestate_members(members) do
+    Enum.reduce_while(members, {:ok, []}, fn member, {:ok, keys} ->
+      case member |> String.trim(" \t") |> String.split("=", parts: 2) do
+        [key, value] ->
+          if valid_tracestate_key?(key) and valid_tracestate_value?(value) do
+            {:cont, {:ok, [key | keys]}}
+          else
+            {:halt, :error}
+          end
+
+        _invalid ->
+          {:halt, :error}
+      end
+    end)
+  end
+
+  defp valid_tracestate_key?(key) do
+    Regex.match?(~r/\A[a-z][a-z0-9_\-*\/]{0,255}\z/, key) or
+      Regex.match?(~r/\A[a-z0-9][a-z0-9_\-*\/]{0,240}@[a-z][a-z0-9_\-*\/]{0,13}\z/, key)
+  end
+
+  defp valid_tracestate_value?(value) when byte_size(value) in 1..256 do
+    valid_chars? =
+      Enum.all?(:binary.bin_to_list(value), fn char ->
+        char in 0x20..0x2B or char in 0x2D..0x3C or char in 0x3E..0x7E
+      end)
+
+    valid_chars? and :binary.last(value) != 0x20
+  end
+
+  defp valid_tracestate_value?(_value), do: false
 
   defp generate_id(bytes) do
     id = bytes |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
