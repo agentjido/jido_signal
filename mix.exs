@@ -1,7 +1,7 @@
 defmodule Jido.Signal.MixProject do
   use Mix.Project
 
-  @version "3.0.0-beta.1"
+  @version "3.0.0-beta.2"
   @source_url "https://github.com/agentjido/jido_signal"
   @description "Agent Communication Envelope, Routing, and Delivery"
 

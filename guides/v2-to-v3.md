@@ -38,7 +38,7 @@ removed APIs were policy systems inside those boundaries.
 ```elixir
 def deps do
   [
-    {:jido_signal, "~> 3.0.0-beta.1"}
+    {:jido_signal, "~> 3.0.0-beta.2"}
   ]
 end
 ```
