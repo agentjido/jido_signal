@@ -24,13 +24,13 @@ defmodule Jido.Signal.Bus.InstanceIsolationTest do
     assert {:ok, _id} = Bus.subscribe(bus1, "test.*")
     signal1 = signal("test.event", %{instance: 1})
     assert {:ok, [_record]} = Bus.publish(bus1, [signal1])
-    assert_receive {:signal, ^signal1}
-    refute_receive {:signal, _signal}, 20
+    assert_received {:signal, ^signal1}
+    refute_received {:signal, _signal}
 
     assert {:ok, _id} = Bus.subscribe(bus2, "test.*")
     signal2 = signal("test.event", %{instance: 2})
     assert {:ok, [_record]} = Bus.publish(bus2, [signal2])
-    assert_receive {:signal, ^signal2}
+    assert_received {:signal, ^signal2}
   end
 
   test "uses the global Registry without an instance" do

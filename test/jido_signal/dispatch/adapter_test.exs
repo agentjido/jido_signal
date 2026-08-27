@@ -80,7 +80,7 @@ defmodule Jido.Signal.Dispatch.AdapterTest do
     assert :ok =
              Dispatch.dispatch(signal, {CustomAdapter, target: self(), label: "accepted"})
 
-    assert_receive {:custom_delivery, "accepted"}
+    assert_received {:custom_delivery, "accepted"}
 
     assert {:error, :custom_failure} =
              Dispatch.dispatch(signal, {CustomAdapter, target: self(), fail: true})

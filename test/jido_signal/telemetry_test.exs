@@ -5,6 +5,10 @@ defmodule Jido.Signal.TelemetryTest do
   alias Jido.Signal.Telemetry
   alias Jido.Signal.Trace
 
+  def handle_event(event, measurements, metadata, test_pid) do
+    send(test_pid, {event, measurements, metadata})
+  end
+
   test "execute/4 adds trace metadata from a Signal" do
     signal = Signal.new!(type: "test.created", source: "/test")
     trace = Trace.new(trace_flags: "01")
@@ -18,17 +22,15 @@ defmodule Jido.Signal.TelemetryTest do
              :telemetry.attach(
                handler_id,
                event,
-               fn name, measurements, metadata, _config ->
-                 send(test_pid, {name, measurements, metadata})
-               end,
-               %{}
+               &__MODULE__.handle_event/4,
+               test_pid
              )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     assert :ok = Telemetry.execute(event, %{count: 1}, %{signal_type: signal.type}, signal)
 
-    assert_receive {^event, %{count: 1}, metadata}
+    assert_received {^event, %{count: 1}, metadata}
     assert metadata.jido_trace_id == trace.trace_id
     assert metadata.jido_span_id == trace.span_id
     assert metadata.jido_trace_flags == "01"
@@ -45,17 +47,15 @@ defmodule Jido.Signal.TelemetryTest do
              :telemetry.attach(
                handler_id,
                event,
-               fn name, _measurements, metadata, _config ->
-                 send(test_pid, {name, metadata})
-               end,
-               %{}
+               &__MODULE__.handle_event/4,
+               test_pid
              )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     assert :ok = Telemetry.execute(event, %{}, %{signal_type: signal.type}, signal)
 
-    assert_receive {^event, %{signal_type: "test.created"}}
+    assert_received {^event, %{}, %{signal_type: "test.created"}}
   end
 
   test "execute/3 drops nil metadata values" do
@@ -67,15 +67,13 @@ defmodule Jido.Signal.TelemetryTest do
              :telemetry.attach(
                handler_id,
                event,
-               fn name, measurements, metadata, _config ->
-                 send(test_pid, {name, measurements, metadata})
-               end,
-               %{}
+               &__MODULE__.handle_event/4,
+               test_pid
              )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     assert :ok = Telemetry.execute(event, %{count: 1}, %{keep: "value", drop: nil})
-    assert_receive {^event, %{count: 1}, %{keep: "value"}}
+    assert_received {^event, %{count: 1}, %{keep: "value"}}
   end
 end

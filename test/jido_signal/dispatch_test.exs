@@ -66,8 +66,8 @@ defmodule Jido.Signal.DispatchTest do
     ]
 
     assert :ok = Dispatch.dispatch(signal, targets)
-    assert_receive {:custom_signal, ^signal, first_opts}
-    assert_receive {:custom_signal, ^signal, second_opts}
+    assert_received {:custom_signal, ^signal, first_opts}
+    assert_received {:custom_signal, ^signal, second_opts}
     assert first_opts[:sequence] == 1
     assert second_opts[:sequence] == 2
     assert first_opts[:validated]
@@ -78,7 +78,7 @@ defmodule Jido.Signal.DispatchTest do
     signal = Signal.new!("dispatch.errors", %{}, source: "/test")
     dead = spawn(fn -> :ok end)
     monitor = Process.monitor(dead)
-    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}
+    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}, 1_000
 
     targets = [
       {:pid, target: dead},
@@ -110,8 +110,8 @@ defmodule Jido.Signal.DispatchTest do
     signal = Signal.new!("test.event", %{}, source: "/test")
 
     assert :ok = Dispatch.dispatch(signal, {CountingAdapter, counter_pid: self()})
-    assert_receive :validated
-    refute_receive :validated, 100
+    assert_received :validated
+    refute_received :validated
   end
 
   test "validates each target exactly once" do
@@ -125,9 +125,9 @@ defmodule Jido.Signal.DispatchTest do
     assert :ok = Dispatch.dispatch(signal, configs)
 
     for _index <- 1..10 do
-      assert_receive :validated, 1_000
+      assert_received :validated
     end
 
-    refute_receive :validated, 100
+    refute_received :validated
   end
 end

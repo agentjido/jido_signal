@@ -28,7 +28,7 @@ defmodule Jido.Signal.Dispatch.PubSubTest do
     signal = Signal.new!("order.created", %{id: "ord-1"}, source: "/test")
 
     assert :ok = Dispatch.dispatch(signal, {:pubsub, target: name, topic: "orders"})
-    assert_receive ^signal
+    assert_received ^signal
   end
 
   test "keeps topics isolated" do
@@ -38,7 +38,7 @@ defmodule Jido.Signal.Dispatch.PubSubTest do
     signal = Signal.new!("order.created", %{}, source: "/test")
 
     assert :ok = Dispatch.dispatch(signal, {:pubsub, target: name, topic: "other"})
-    refute_receive ^signal
+    refute_received ^signal
   end
 
   test "returns a stable error when the PubSub server is not running" do

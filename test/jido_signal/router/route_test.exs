@@ -66,7 +66,7 @@ defmodule Jido.Signal.Router.RouteTest do
       route = %Route{path: "test.path", target: :target, match: match}
 
       assert {:ok, ^route} = Router.validate(route)
-      refute_receive :match_called
+      refute_received :match_called
     end
 
     test "returns the path validation messages" do

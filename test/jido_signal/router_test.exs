@@ -5,8 +5,6 @@ defmodule Jido.Signal.RouterTest do
   alias Jido.Signal.ID
   alias Jido.Signal.Router
 
-  @moduletag :capture_log
-
   setup do
     test_pid = self()
 

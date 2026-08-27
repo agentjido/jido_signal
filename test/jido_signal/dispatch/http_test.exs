@@ -89,15 +89,11 @@ defmodule Jido.Signal.Dispatch.HttpTest do
                timeout: 100
              )
 
-    {:ok, listener} =
-      :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}, packet: :raw])
-
-    {:ok, {_address, port}} = :inet.sockname(listener)
-    :ok = :gen_tcp.close(listener)
+    url = start_closing_server()
     signal = Signal.new!("http.unavailable", %{}, source: "/test")
 
     assert {:error, {:transport, _reason}} =
-             Dispatch.dispatch(signal, {:http, url: "http://127.0.0.1:#{port}/events"})
+             Dispatch.dispatch(signal, {:http, url: url})
   end
 
   test "posts canonical structured CloudEvents JSON through OTP httpc" do
@@ -110,7 +106,7 @@ defmodule Jido.Signal.Dispatch.HttpTest do
                {:http, url: url, headers: [{"authorization", "Bearer test"}], timeout: 2_000}
              )
 
-    assert_receive {:http_request, ^server, request}
+    assert_receive {:http_request, ^server, request}, 1_000
     {head, body} = split_request(request)
 
     assert head =~ "POST /events HTTP/1.1"
@@ -137,7 +133,7 @@ defmodule Jido.Signal.Dispatch.HttpTest do
     assert {:error, {:http_status, 302}} =
              Dispatch.dispatch(signal, {:http, url: url, timeout: 2_000})
 
-    assert_receive {:http_request, ^server, _request}
+    assert_receive {:http_request, ^server, _request}, 1_000
   end
 
   test "returns status without the response body" do
@@ -147,7 +143,7 @@ defmodule Jido.Signal.Dispatch.HttpTest do
     assert {:error, {:http_status, 503}} =
              Dispatch.dispatch(signal, {:http, url: url, timeout: 2_000})
 
-    assert_receive {:http_request, ^server, _request}
+    assert_receive {:http_request, ^server, _request}, 1_000
   end
 
   defp validate_opts(opts) do
@@ -189,6 +185,36 @@ defmodule Jido.Signal.Dispatch.HttpTest do
     end)
 
     {"http://127.0.0.1:#{port}/events", server}
+  end
+
+  defp start_closing_server do
+    {:ok, listener} =
+      :gen_tcp.listen(0, [
+        :binary,
+        active: false,
+        ip: {127, 0, 0, 1},
+        packet: :raw,
+        reuseaddr: true
+      ])
+
+    {:ok, {_address, port}} = :inet.sockname(listener)
+
+    server =
+      spawn(fn ->
+        {:ok, socket} = :gen_tcp.accept(listener)
+        :gen_tcp.close(socket)
+        :gen_tcp.close(listener)
+      end)
+
+    on_exit(fn ->
+      :gen_tcp.close(listener)
+
+      if Process.alive?(server) do
+        Process.exit(server, :kill)
+      end
+    end)
+
+    "http://127.0.0.1:#{port}/events"
   end
 
   defp read_request(socket, received \\ <<>>) do

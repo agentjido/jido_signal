@@ -5,8 +5,6 @@ defmodule Jido.Signal.Dispatch.BusTest do
   alias Jido.Signal.Bus
   alias Jido.Signal.Dispatch
 
-  @moduletag :capture_log
-
   defp make_signal(type \\ "test.signal") do
     {:ok, signal} =
       Signal.new(%{
@@ -71,10 +69,11 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
       assert :ok = Dispatch.dispatch(signal, {:bus, target: bus_name})
 
-      assert_receive {:signal, received_signal}, 1000
+      assert_received {:signal, received_signal}
       assert received_signal.type == "test.signal"
     end
 
+    @tag :capture_log
     test "returns error when bus not found" do
       signal = make_signal()
 
@@ -100,10 +99,11 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
       assert :ok = Dispatch.dispatch(signal, {:bus, target: bus_name, jido: scope})
 
-      assert_receive {:signal, received_signal}, 1000
+      assert_received {:signal, received_signal}
       assert received_signal.type == "test.signal"
     end
 
+    @tag :capture_log
     test "returns an error when the Bus is not in the scope" do
       signal = make_signal()
 
@@ -129,7 +129,7 @@ defmodule Jido.Signal.Dispatch.BusTest do
 
       assert :ok = Dispatch.dispatch(signal, {:bus, [target: bus_name]})
 
-      assert_receive {:signal, received_signal}, 1000
+      assert_received {:signal, received_signal}
       assert received_signal.type == "test.signal"
     end
   end

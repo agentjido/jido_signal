@@ -47,7 +47,8 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
     signal = signal()
 
     assert :ok = Dispatch.dispatch(signal, {:pid, target: receiver})
-    assert_receive {:received_message, {:signal, ^signal}}
+    assert self() == :sys.get_state(receiver)
+    assert_received {:received_message, {:signal, ^signal}}
 
     assert :ok =
              Dispatch.dispatch(
@@ -55,10 +56,11 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
                {:pid, target: receiver, message_format: &{:custom, &1}}
              )
 
-    assert_receive {:received_message, {:custom, ^signal}}
+    assert self() == :sys.get_state(receiver)
+    assert_received {:received_message, {:custom, ^signal}}
 
     assert :ok = Dispatch.dispatch(signal, {:pid, target: receiver, delivery_mode: :sync})
-    assert_receive {:received_call, {:signal, ^signal}}
+    assert_received {:received_call, {:signal, ^signal}}
   end
 
   test "resolves a registered process for named delivery" do
@@ -68,19 +70,20 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
     signal = signal()
 
     assert :ok = Dispatch.dispatch(signal, {:named, target: {:name, name}})
-    assert_receive {:received_message, {:signal, ^signal}}
+    assert self() == :sys.get_state(receiver)
+    assert_received {:received_message, {:signal, ^signal}}
 
     assert :ok =
              Dispatch.dispatch(signal, {:named, target: {:name, name}, delivery_mode: :sync})
 
-    assert_receive {:received_call, {:signal, ^signal}}
+    assert_received {:received_call, {:signal, ^signal}}
   end
 
   test "returns stable errors for missing and dead processes" do
     signal = signal()
     dead = spawn(fn -> :ok end)
     monitor = Process.monitor(dead)
-    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}
+    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}, 1_000
 
     assert {:error, :process_not_alive} = Dispatch.dispatch(signal, {:pid, target: dead})
 

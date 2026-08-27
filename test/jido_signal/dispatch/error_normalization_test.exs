@@ -123,7 +123,7 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     assert :ok = Dispatch.dispatch(signal, config)
 
     # Should receive start and stop events
-    assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
+    assert_received {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
     assert metadata.adapter == :noop
     assert metadata.signal_type == "test.event"
     assert metadata.target == :unknown
@@ -133,7 +133,7 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     assert metadata.jido_span_id == trace.span_id
     assert metadata.jido_trace_flags == "01"
 
-    assert_receive {:telemetry, [:jido, :dispatch, :stop], measurements, metadata}
+    assert_received {:telemetry, [:jido, :dispatch, :stop], measurements, metadata}
     assert Map.has_key?(measurements, :latency_ms)
     assert metadata.success? == true
     assert metadata.outcome == :ok
@@ -146,8 +146,8 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     {:error, _} = Dispatch.dispatch(signal, config)
 
     # Should receive start and exception events for handled dispatch failures
-    assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, _}
-    assert_receive {:telemetry, [:jido, :dispatch, :exception], measurements, metadata}
+    assert_received {:telemetry, [:jido, :dispatch, :start], %{}, _}
+    assert_received {:telemetry, [:jido, :dispatch, :exception], measurements, metadata}
     assert Map.has_key?(measurements, :latency_ms)
     assert metadata.success? == false
     assert metadata.outcome == :error
@@ -177,7 +177,7 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
 
     assert {:error, _reason} = Dispatch.dispatch(signal, config)
 
-    assert_receive {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
+    assert_received {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
     assert metadata.target == "https://example.com/path"
     assert metadata.target_kind == :url
   end
@@ -247,7 +247,7 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
       Dispatch.dispatch(signal, {CrashingAdapter, []})
     end
 
-    assert_receive {:telemetry, [:jido, :dispatch, :exception], measurements, metadata}
+    assert_received {:telemetry, [:jido, :dispatch, :exception], measurements, metadata}
     assert is_integer(measurements.latency_ms)
     assert metadata.outcome == :raised
     assert metadata.success? == false

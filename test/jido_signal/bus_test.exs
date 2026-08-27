@@ -4,6 +4,10 @@ defmodule Jido.Signal.BusTest do
   alias Jido.Signal
   alias Jido.Signal.Bus
 
+  def handle_delivery(_event, _measurements, metadata, target) do
+    send(target, {:delivered_to, metadata.subscription_id})
+  end
+
   defmodule FailingStore do
     def init(_opts), do: {:error, :unavailable}
   end
@@ -111,9 +115,7 @@ defmodule Jido.Signal.BusTest do
       :telemetry.attach(
         handler_id,
         [:jido, :signal, :bus, :deliver],
-        fn _event, _measurements, metadata, target ->
-          send(target, {:delivered_to, metadata.subscription_id})
-        end,
+        &__MODULE__.handle_delivery/4,
         self()
       )
 
@@ -131,9 +133,9 @@ defmodule Jido.Signal.BusTest do
     event = signal("ordered.event")
     assert {:ok, [_record]} = Bus.publish(bus, [event])
 
-    assert_receive {:delivered_to, "exact"}
-    assert_receive {:delivered_to, "single"}
-    assert_receive {:delivered_to, "multi"}
+    assert_received {:delivered_to, "exact"}
+    assert_received {:delivered_to, "single"}
+    assert_received {:delivered_to, "multi"}
   end
 
   test "stores a versioned canonical Signal map before delivery" do
@@ -143,12 +145,12 @@ defmodule Jido.Signal.BusTest do
 
     assert {:ok, [_record]} = Bus.publish(bus, [event])
 
-    assert_receive {:stored_records, [stored]}
+    assert_received {:stored_records, [stored]}
     assert stored["format_version"] == 1
     assert stored["cursor"] == 1
     assert stored["signal"] == Signal.to_map(event)
     assert stored["signal"]["specversion"] == "1.0"
-    assert_receive {:signal, ^event}
+    assert_received {:signal, ^event}
   end
 
   test "removes a normal subscription after its target exits" do
@@ -211,7 +213,7 @@ defmodule Jido.Signal.BusTest do
       "id" => "ahead",
       "path" => "stored.*",
       "cursor" => 1,
-      "created_at" => DateTime.to_iso8601(DateTime.utc_now())
+      "created_at" => "2026-01-01T00:00:00Z"
     }
 
     assert {:error, :invalid_store_subscription_cursor} =
@@ -263,11 +265,11 @@ defmodule Jido.Signal.BusTest do
     assert {:ok, _id} = Bus.subscribe({:custom_bus, registry}, "custom.*")
     event = signal("custom.created")
     assert {:ok, [_record]} = Bus.publish({:custom_bus, registry}, [event])
-    assert_receive {:signal, ^event}
+    assert_received {:signal, ^event}
 
     dead = spawn(fn -> :ok end)
     monitor = Process.monitor(dead)
-    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}
+    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}, 1_000
     assert {:error, :not_found} = Bus.whereis(dead)
     assert {:error, :not_found} = Bus.whereis(:missing, registry: __MODULE__.MissingRegistry)
   end

@@ -57,19 +57,19 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     second = signal("durable.second")
     assert {:ok, [first_record, second_record]} = Bus.publish(bus, [first, second])
 
-    assert_receive {:signal, "orders-agent", %RecordedSignal{} = delivered_first}
+    assert_received {:signal, "orders-agent", %RecordedSignal{} = delivered_first}
     assert delivered_first.cursor == first_record.cursor
     assert delivered_first.signal == first
-    refute_receive {:signal, "orders-agent", _record}, 50
+    refute_received {:signal, "orders-agent", _record}
 
     assert {:error, {:unexpected_cursor, 1}} = Bus.ack(bus, "orders-agent", 2)
     assert :ok = Bus.ack(bus, "orders-agent", delivered_first.cursor)
 
-    assert_receive {:signal, "orders-agent", %RecordedSignal{} = delivered_second}
+    assert_received {:signal, "orders-agent", %RecordedSignal{} = delivered_second}
     assert delivered_second.cursor == second_record.cursor
     assert delivered_second.signal == second
     assert :ok = Bus.ack(bus, "orders-agent", delivered_second.cursor)
-    refute_receive {:signal, "orders-agent", _record}, 50
+    refute_received {:signal, "orders-agent", _record}
   end
 
   test "sends an unacknowledged record again after a target exits" do
@@ -82,7 +82,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
 
     event = signal("offline.created")
     assert {:ok, [published]} = Bus.publish(bus, [event])
-    assert_receive {:relayed, "offline-agent", %RecordedSignal{} = first_delivery}
+    assert_receive {:relayed, "offline-agent", %RecordedSignal{} = first_delivery}, 1_000
     assert first_delivery.cursor == published.cursor
 
     terminate_and_wait(bus, client)
@@ -90,7 +90,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert {:ok, "offline-agent"} =
              Bus.subscribe(bus, "offline.*", durable: "offline-agent")
 
-    assert_receive {:signal, "offline-agent", %RecordedSignal{} = repeated}
+    assert_received {:signal, "offline-agent", %RecordedSignal{} = repeated}
     assert repeated.cursor == first_delivery.cursor
     assert repeated.signal == event
   end
@@ -104,12 +104,12 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert :ok = Bus.unsubscribe(bus, "detached-agent")
     event = signal("detached.created")
     assert {:ok, [published]} = Bus.publish(bus, [event])
-    refute_receive {:signal, "detached-agent", _record}, 50
+    refute_received {:signal, "detached-agent", _record}
 
     assert {:ok, "detached-agent"} =
              Bus.subscribe(bus, "detached.*", durable: "detached-agent")
 
-    assert_receive {:signal, "detached-agent", %RecordedSignal{} = delivered}
+    assert_received {:signal, "detached-agent", %RecordedSignal{} = delivered}
     assert delivered.cursor == published.cursor
     assert delivered.signal == event
   end
@@ -123,7 +123,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
              Bus.subscribe(bus, "owned.*", durable: "owned-agent", target: client)
 
     assert {:ok, [published]} = Bus.publish(bus, [signal("owned.created")])
-    assert_receive {:relayed, "owned-agent", %RecordedSignal{cursor: cursor}}
+    assert_receive {:relayed, "owned-agent", %RecordedSignal{cursor: cursor}}, 1_000
     assert cursor == published.cursor
     assert {:error, :not_subscription_owner} = Bus.ack(bus, "owned-agent", cursor)
   end
@@ -139,16 +139,16 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     second = signal("pressure.second")
     assert {:ok, [_first, _second]} = Bus.publish(bus, [first, second])
 
-    assert_receive {:signal, "pressure-agent", %RecordedSignal{cursor: 1}}
-    assert_receive {:signal, ^first}
-    assert_receive {:signal, ^second}
+    assert_received {:signal, "pressure-agent", %RecordedSignal{cursor: 1}}
+    assert_received {:signal, ^first}
+    assert_received {:signal, ^second}
 
     third = signal("pressure.third")
 
     assert {:error, {:store_error, :append, {:store_full, ["pressure-agent"]}}} =
              Bus.publish(bus, [third])
 
-    refute_receive {:signal, ^third}, 50
+    refute_received {:signal, ^third}
     assert {:ok, replayed} = Bus.replay(bus, "pressure.*")
     assert Enum.map(replayed, & &1.cursor) == [1, 2]
   end
@@ -167,7 +167,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
 
     event = signal("restart.created")
     assert {:ok, [published]} = Bus.publish(bus, [event])
-    assert_receive {:signal, "restart-agent", %RecordedSignal{cursor: cursor}}
+    assert_received {:signal, "restart-agent", %RecordedSignal{cursor: cursor}}
     assert cursor == published.cursor
 
     assert :ok = DynamicSupervisor.terminate_child(dynamic_supervisor, bus)
@@ -178,7 +178,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert {:ok, "restart-agent"} =
              Bus.subscribe(restarted_bus, "restart.*", durable: "restart-agent")
 
-    assert_receive {:signal, "restart-agent", %RecordedSignal{} = repeated}
+    assert_received {:signal, "restart-agent", %RecordedSignal{} = repeated}
     assert repeated.cursor == published.cursor
     assert repeated.signal == event
   end
@@ -229,7 +229,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert {:ok, "cursor-one"} =
              Bus.subscribe(bus, "cursor.*", durable: "cursor-one", start_from: 1)
 
-    assert_receive {:signal, "cursor-one", %RecordedSignal{cursor: 2}}
+    assert_received {:signal, "cursor-one", %RecordedSignal{cursor: 2}}
 
     assert {:error, {:invalid_option, :start_from}} =
              Bus.subscribe(bus, "cursor.*", durable: "future", start_from: 3)
@@ -278,7 +278,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
 
     dead = spawn(fn -> :ok end)
     monitor = Process.monitor(dead)
-    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}
+    assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}, 1_000
     assert {:error, :target_not_alive} = Bus.subscribe(bus, "**", target: dead)
 
     assert {:error, :invalid_options} = Bus.replay(bus, "**", :invalid)
@@ -296,8 +296,8 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert :ok = Bus.delete_subscription(bus, "first")
     event = signal("kept.event")
     assert {:ok, [_record]} = Bus.publish(bus, [event])
-    assert_receive {:signal, ^event}
-    refute_receive {:signal, ^event}, 20
+    assert_received {:signal, ^event}
+    refute_received {:signal, ^event}
   end
 
   defp start_bus(opts \\ []) do
