@@ -1,4 +1,4 @@
-defmodule Jido.Signal.Router.PatternEquivalenceTest do
+defmodule Jido.Signal.Router.RoutingEquivalenceTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal.Router
@@ -127,6 +127,22 @@ defmodule Jido.Signal.Router.PatternEquivalenceTest do
                  "route mismatch for type #{inspect(type)} and pattern #{inspect(pattern)}"
         end)
       end)
+    end
+
+    test "routes deep paths through repeated multi-wildcards" do
+      middle = Enum.join(1..98, ".")
+      deep = %Jido.Signal{id: "deep", source: "/test", type: "start.#{middle}.end"}
+      assert {:ok, [:deep]} = Router.route(Router.new!({"start.**.end", :deep}), deep)
+
+      repeated = %Jido.Signal{id: "repeated", source: "/test", type: "a.b.c.m.x.y.z"}
+
+      router =
+        Router.new!([
+          {"a.**.z", :outer, 0},
+          {"**.m.**.z", :middle, 50}
+        ])
+
+      assert {:ok, [:middle, :outer]} = Router.route(router, repeated)
     end
   end
 

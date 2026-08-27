@@ -1,4 +1,4 @@
-defmodule Jido.Signal.Bus.StoreAdapterTest do
+defmodule Jido.Signal.Bus.StoreTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal.Bus.Store

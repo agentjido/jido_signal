@@ -1,4 +1,4 @@
-defmodule Jido.Signal.RouterPatternTest do
+defmodule Jido.Signal.Router.PatternTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal

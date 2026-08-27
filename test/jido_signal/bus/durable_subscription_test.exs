@@ -1,7 +1,6 @@
 defmodule Jido.Signal.Bus.DurableSubscriptionTest do
-  use ExUnit.Case, async: true
+  use JidoSignalTest.Case, async: true
 
-  alias Jido.Signal
   alias Jido.Signal.Bus
   alias Jido.Signal.Bus.RecordedSignal
 
@@ -77,7 +76,6 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     bus = start_bus()
     parent = self()
     client = spawn(fn -> relay_durable(parent) end)
-    client_ref = Process.monitor(client)
 
     assert {:ok, "offline-agent"} =
              Bus.subscribe(bus, "offline.*", durable: "offline-agent", target: client)
@@ -87,12 +85,10 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert_receive {:relayed, "offline-agent", %RecordedSignal{} = first_delivery}
     assert first_delivery.cursor == published.cursor
 
-    Process.exit(client, :kill)
-    assert_receive {:DOWN, ^client_ref, :process, ^client, :killed}
+    terminate_and_wait(bus, client)
 
-    assert_eventually(fn ->
-      Bus.subscribe(bus, "offline.*", durable: "offline-agent") == {:ok, "offline-agent"}
-    end)
+    assert {:ok, "offline-agent"} =
+             Bus.subscribe(bus, "offline.*", durable: "offline-agent")
 
     assert_receive {:signal, "offline-agent", %RecordedSignal{} = repeated}
     assert repeated.cursor == first_delivery.cursor
@@ -309,12 +305,6 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     start_supervised!({Bus, Keyword.put(opts, :name, name)})
   end
 
-  defp signal(type), do: Signal.new!(type, %{type: type}, source: "/test")
-
-  defp unique_name(prefix) do
-    "#{prefix}_#{System.unique_integer([:positive])}"
-  end
-
   defp relay_durable(parent) do
     receive do
       {:signal, durable_id, record} ->
@@ -322,17 +312,4 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
         relay_durable(parent)
     end
   end
-
-  defp assert_eventually(fun, attempts \\ 40)
-
-  defp assert_eventually(fun, attempts) when attempts > 0 do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(10)
-      assert_eventually(fun, attempts - 1)
-    end
-  end
-
-  defp assert_eventually(_fun, 0), do: flunk("condition did not become true")
 end

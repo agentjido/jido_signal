@@ -4,7 +4,7 @@ defmodule Jido.Signal.DocsExamplesTest do
   @invalid_doctest_placeholder ~r/iex>.*\n\s*(?:\[.*\.\.\.|%[A-Za-z0-9_.]+\{.*\.\.\.\}|\{:error,\s*\.\.\.\}|\*\* \([^)]+\).*\.\.\.)/m
 
   test "generated signal docs do not emit executable examples tied to a specific schema" do
-    docs = function_docs(JidoTest.TestSignals.DocExampleSignal)
+    docs = function_docs(JidoSignalTest.Fixtures.Signals.DocExampleSignal)
 
     for function_name <- [:new, :new!, :validate_data] do
       arity = if function_name == :validate_data, do: 1, else: 2

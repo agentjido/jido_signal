@@ -41,6 +41,16 @@ defmodule Jido.Signal.Dispatch.AdapterTest do
     def deliver(_signal, _opts), do: :ok
   end
 
+  defmodule RaisingSchemaAdapter do
+    @behaviour Adapter
+
+    @impl true
+    def options_schema, do: raise("schema failed")
+
+    @impl true
+    def deliver(_signal, _opts), do: :ok
+  end
+
   defmodule IncompleteAdapter do
     def deliver(_signal, _opts), do: :ok
   end
@@ -82,5 +92,8 @@ defmodule Jido.Signal.Dispatch.AdapterTest do
 
     assert {:error, {:invalid_options_schema, InvalidSchemaAdapter}} =
              Dispatch.validate_opts({InvalidSchemaAdapter, []})
+
+    assert {:error, {:invalid_options_schema, "schema failed"}} =
+             Dispatch.validate_opts({RaisingSchemaAdapter, []})
   end
 end

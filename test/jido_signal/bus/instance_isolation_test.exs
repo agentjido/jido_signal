@@ -1,7 +1,6 @@
-defmodule Jido.Signal.BusInstanceIsolationTest do
-  use ExUnit.Case, async: true
+defmodule Jido.Signal.Bus.InstanceIsolationTest do
+  use JidoSignalTest.Case, async: true
 
-  alias Jido.Signal
   alias Jido.Signal.Bus
 
   setup do
@@ -9,7 +8,7 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
   end
 
   test "uses one Registry with a scoped key", %{instance1: instance} do
-    bus_name = "bus-#{System.unique_integer([:positive])}"
+    bus_name = unique_name("bus")
     {:ok, bus_pid} = Bus.start_link(name: bus_name, jido: instance)
 
     assert [{^bus_pid, _}] =
@@ -23,19 +22,19 @@ defmodule Jido.Signal.BusInstanceIsolationTest do
     assert bus1 != bus2
 
     assert {:ok, _id} = Bus.subscribe(bus1, "test.*")
-    signal1 = Signal.new!("test.event", %{instance: 1}, source: "/test")
+    signal1 = signal("test.event", %{instance: 1})
     assert {:ok, [_record]} = Bus.publish(bus1, [signal1])
     assert_receive {:signal, ^signal1}
     refute_receive {:signal, _signal}, 20
 
     assert {:ok, _id} = Bus.subscribe(bus2, "test.*")
-    signal2 = Signal.new!("test.event", %{instance: 2}, source: "/test")
+    signal2 = signal("test.event", %{instance: 2})
     assert {:ok, [_record]} = Bus.publish(bus2, [signal2])
     assert_receive {:signal, ^signal2}
   end
 
   test "uses the global Registry without an instance" do
-    bus_name = "global-bus-#{System.unique_integer([:positive])}"
+    bus_name = unique_name("global-bus")
     {:ok, bus_pid} = Bus.start_link(name: bus_name)
     assert [{^bus_pid, _}] = Registry.lookup(Jido.Signal.Registry, bus_name)
   end

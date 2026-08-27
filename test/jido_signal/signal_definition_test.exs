@@ -1,5 +1,5 @@
-defmodule Jido.Signal.CustomTest do
-  use ExUnit.Case, async: true
+defmodule Jido.Signal.DefinitionTest do
+  use JidoSignalTest.Case, async: true
 
   alias Jido.Signal.ID
 
@@ -14,7 +14,7 @@ defmodule Jido.Signal.CustomTest do
           user_id: Zoi.string(),
           email:
             Zoi.string()
-            |> Zoi.refine({Jido.Signal.CustomTest, :valid_email, []}),
+            |> Zoi.refine({Jido.Signal.DefinitionTest, :valid_email, []}),
           count: Zoi.integer() |> Zoi.default(1)
         })
   end
@@ -244,13 +244,5 @@ defmodule Jido.Signal.CustomTest do
 
   def valid_email(email, _opts) do
     if String.contains?(email, "@"), do: :ok, else: {:error, "must contain @"}
-  end
-
-  defp create_module(module, body) do
-    Module.create(module, body, Macro.Env.location(__ENV__))
-  end
-
-  defp unique_module(suffix) do
-    Module.concat(__MODULE__, "#{suffix}#{System.unique_integer([:positive])}")
   end
 end

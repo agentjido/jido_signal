@@ -1,4 +1,4 @@
-defmodule JidoTest.Signal.IDTest do
+defmodule Jido.Signal.IDTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal.ID

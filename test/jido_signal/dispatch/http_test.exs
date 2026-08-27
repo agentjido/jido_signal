@@ -37,7 +37,9 @@ defmodule Jido.Signal.Dispatch.HttpTest do
           "https://example.com:0/events",
           "https://example.com/über",
           <<"https://example.com/", 255>>,
-          "https://example.com/" <> String.duplicate("a", 8_193)
+          "https://example.com/" <> String.duplicate("a", 8_193),
+          "ftp://example.com/events",
+          "/relative"
         ] do
       assert {:error, _reason} = validate_opts(url: url)
     end
@@ -60,11 +62,42 @@ defmodule Jido.Signal.Dispatch.HttpTest do
                headers: [{"authorization", "one"}, {"Authorization", "two"}]
              )
 
+    assert {:error, _reason} =
+             validate_opts(
+               url: "https://example.com",
+               headers: [{String.duplicate("a", 129), "value"}]
+             )
+
     too_many_headers =
       Enum.map(1..33, fn number -> {"x-test-#{number}", Integer.to_string(number)} end)
 
     assert {:error, _reason} =
              validate_opts(url: "https://example.com", headers: too_many_headers)
+
+    large_headers =
+      Enum.map(1..8, fn number -> {"x-large-#{number}", String.duplicate("a", 8_000)} end)
+
+    assert {:error, _reason} =
+             validate_opts(url: "https://example.com", headers: large_headers)
+  end
+
+  test "normalizes serialization and transport failures" do
+    assert {:error, {:serialization, _reason}} =
+             Jido.Signal.Dispatch.Http.deliver(:invalid,
+               url: "http://127.0.0.1/events",
+               headers: [],
+               timeout: 100
+             )
+
+    {:ok, listener} =
+      :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}, packet: :raw])
+
+    {:ok, {_address, port}} = :inet.sockname(listener)
+    :ok = :gen_tcp.close(listener)
+    signal = Signal.new!("http.unavailable", %{}, source: "/test")
+
+    assert {:error, {:transport, _reason}} =
+             Dispatch.dispatch(signal, {:http, url: "http://127.0.0.1:#{port}/events"})
   end
 
   test "posts canonical structured CloudEvents JSON through OTP httpc" do

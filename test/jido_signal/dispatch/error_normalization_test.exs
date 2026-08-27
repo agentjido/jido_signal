@@ -1,4 +1,4 @@
-defmodule Jido.Signal.DispatchErrorNormalizationTest do
+defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
   use ExUnit.Case, async: false
 
   alias Jido.Signal

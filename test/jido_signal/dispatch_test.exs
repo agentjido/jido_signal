@@ -1,4 +1,4 @@
-defmodule Jido.Signal.Dispatch.TargetContractTest do
+defmodule Jido.Signal.DispatchTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
@@ -24,6 +24,31 @@ defmodule Jido.Signal.Dispatch.TargetContractTest do
       send(Keyword.fetch!(opts, :target), {:custom_signal, signal, opts})
       :ok
     end
+  end
+
+  defmodule CountingAdapter do
+    @behaviour Jido.Signal.Dispatch.Adapter
+
+    @impl true
+    def options_schema do
+      Zoi.keyword(
+        [
+          counter_pid:
+            Zoi.pid()
+            |> Zoi.refine({__MODULE__, :count_validation, []})
+            |> Zoi.required()
+        ],
+        unrecognized_keys: :error
+      )
+    end
+
+    def count_validation(pid, _opts) do
+      send(pid, :validated)
+      :ok
+    end
+
+    @impl true
+    def deliver(_signal, _opts), do: :ok
   end
 
   test "normalizes and validates one tuple" do
@@ -63,8 +88,46 @@ defmodule Jido.Signal.Dispatch.TargetContractTest do
     assert {:error, [:process_not_alive, :process_not_found]} = Dispatch.dispatch(signal, targets)
   end
 
+  test "rejects invalid targets in validation and delivery lists" do
+    signal = Signal.new!("dispatch.invalid", %{}, source: "/test")
+
+    assert {:error, :invalid_dispatch_config} =
+             Dispatch.validate_opts([{:noop, []}, :invalid])
+
+    assert {:error, [:invalid_dispatch_config]} =
+             Dispatch.dispatch(signal, [{:noop, []}, :invalid])
+
+    assert {:error, :invalid_dispatch_config} = Dispatch.dispatch(signal, :invalid)
+    assert :ok = Dispatch.dispatch(signal, {nil, []})
+  end
+
   test "does not expose removed runtime policy functions" do
     refute function_exported?(Dispatch, :dispatch_async, 2)
     refute function_exported?(Dispatch, :dispatch_batch, 3)
+  end
+
+  test "validates one target exactly once" do
+    signal = Signal.new!("test.event", %{}, source: "/test")
+
+    assert :ok = Dispatch.dispatch(signal, {CountingAdapter, counter_pid: self()})
+    assert_receive :validated
+    refute_receive :validated, 100
+  end
+
+  test "validates each target exactly once" do
+    signal = Signal.new!("test.event", %{}, source: "/test")
+
+    configs =
+      for _index <- 1..10 do
+        {CountingAdapter, counter_pid: self()}
+      end
+
+    assert :ok = Dispatch.dispatch(signal, configs)
+
+    for _index <- 1..10 do
+      assert_receive :validated, 1_000
+    end
+
+    refute_receive :validated, 100
   end
 end

@@ -164,6 +164,82 @@ defmodule Jido.Signal.RouterTest do
     end
   end
 
+  describe "Router management" do
+    test "creates an empty Router" do
+      router = Router.new!()
+
+      assert %Router.Router{} = router
+      assert Router.empty?(router)
+      assert Router.count(router) == 0
+      assert {:ok, []} = Router.list(router)
+    end
+
+    test "creates and lists Routes in registration order" do
+      router = Router.new!([{"first", :first}, {"second", :second}])
+
+      assert Router.count(router) == 2
+      refute Router.empty?(router)
+      assert {:ok, routes} = Router.list(router)
+      assert Enum.map(routes, & &1.path) == ["first", "second"]
+    end
+
+    test "adds and removes Routes in registration order" do
+      router = Router.new!({"first", :first})
+      assert {:ok, router} = Router.add(router, [{"second", :second}, {"third", :third}])
+      assert {:ok, routes} = Router.list(router)
+      assert Enum.map(routes, & &1.path) == ["first", "second", "third"]
+
+      assert {:ok, router} = Router.remove(router, ["first", "third"])
+      assert {:ok, [remaining]} = Router.list(router)
+      assert remaining.path == "second"
+    end
+
+    test "removes all Routes at selected paths" do
+      router = Router.new!([{"same", :first}, {"same", :second}, {"keep", :keep}])
+
+      assert {:ok, router} = Router.remove(router, "same")
+      assert Router.count(router) == 1
+      assert {:ok, unchanged} = Router.remove(router, "missing")
+      assert Router.count(unchanged) == 1
+    end
+
+    test "updates exact and wildcard indexes during add and remove" do
+      router = Router.new!({"user.created", :exact})
+
+      assert {:ok, router} =
+               Router.add(router, [{"user.*", :single}, {"user.**", :multi}])
+
+      signal = %Signal{id: "indexes", source: "/test", type: "user.created"}
+      assert {:ok, [:exact, :single, :multi]} = Router.route(router, signal)
+
+      assert {:ok, router} = Router.remove(router, "user.*")
+      assert {:ok, [:exact, :multi]} = Router.route(router, signal)
+      refute Router.has_route?(router, "user.*")
+
+      assert {:ok, router} = Router.remove(router, ["user.created", "user.**"])
+      assert Router.empty?(router)
+      assert {:error, %Jido.Signal.Error.RoutingError{}} = Router.route(router, signal)
+    end
+
+    test "merges Routers by appending their Routes" do
+      first = Router.new!([{"one", :one}, {"two", :two}])
+      second = Router.new!([{"three", :three}, {"four", :four}])
+
+      assert {:ok, merged} = Router.merge(first, second)
+      assert {:ok, routes} = Router.list(merged)
+      assert Enum.map(routes, & &1.path) == ["one", "two", "three", "four"]
+    end
+
+    test "checks registered route paths exactly" do
+      router = Router.new!([{"user.created", :exact}, {"user.*", :wildcard}])
+
+      assert Router.has_route?(router, "user.created")
+      assert Router.has_route?(router, "user.*")
+      refute Router.has_route?(router, "user.updated")
+      refute Router.has_route?(router, "invalid..path")
+    end
+  end
+
   describe "router edge cases" do
     test "handles path pattern edge cases", %{router: _router} do
       # Test empty path segments

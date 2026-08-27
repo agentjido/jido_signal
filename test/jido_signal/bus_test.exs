@@ -1,5 +1,5 @@
 defmodule Jido.Signal.BusTest do
-  use ExUnit.Case, async: true
+  use JidoSignalTest.Case, async: true
 
   alias Jido.Signal
   alias Jido.Signal.Bus
@@ -154,18 +154,14 @@ defmodule Jido.Signal.BusTest do
   test "removes a normal subscription after its target exits" do
     bus = start_bus()
     client = spawn(fn -> receive do: (:stop -> :ok) end)
-    monitor_ref = Process.monitor(client)
 
     assert {:ok, "short-lived"} =
              Bus.subscribe(bus, "short.*", subscription_id: "short-lived", target: client)
 
-    Process.exit(client, :kill)
-    assert_receive {:DOWN, ^monitor_ref, :process, ^client, :killed}
+    terminate_and_wait(bus, client)
 
-    assert_eventually(fn ->
-      Bus.subscribe(bus, "short.*", subscription_id: "short-lived") ==
-        {:ok, "short-lived"}
-    end)
+    assert {:ok, "short-lived"} =
+             Bus.subscribe(bus, "short.*", subscription_id: "short-lived")
   end
 
   test "fails startup when the selected Store cannot start" do
@@ -297,23 +293,4 @@ defmodule Jido.Signal.BusTest do
     name = unique_name("bus")
     start_supervised!({Bus, Keyword.put(opts, :name, name)})
   end
-
-  defp signal(type), do: Signal.new!(type, %{type: type}, source: "/test")
-
-  defp unique_name(prefix) do
-    "#{prefix}_#{System.unique_integer([:positive])}"
-  end
-
-  defp assert_eventually(fun, attempts \\ 40)
-
-  defp assert_eventually(fun, attempts) when attempts > 0 do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(10)
-      assert_eventually(fun, attempts - 1)
-    end
-  end
-
-  defp assert_eventually(_fun, 0), do: flunk("condition did not become true")
 end

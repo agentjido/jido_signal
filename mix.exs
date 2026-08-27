@@ -32,7 +32,7 @@ defmodule Jido.Signal.MixProject do
         tool: ExCoveralls,
         summary: [threshold: 90],
         export: "cov",
-        ignore_modules: [~r/^JidoTest\./]
+        ignore_modules: [~r/^JidoSignalTest\./]
       ],
 
       # Dialyzer
@@ -201,7 +201,6 @@ defmodule Jido.Signal.MixProject do
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18.3", only: [:dev, :test]},
       {:castore, "~> 1.0", only: [:dev, :test]},
-      {:mimic, "~> 2.0", only: :test},
       {:stream_data, "~> 1.0", only: [:dev, :test]}
     ]
   end

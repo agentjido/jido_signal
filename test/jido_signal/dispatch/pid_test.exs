@@ -97,5 +97,25 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
     assert pid == self()
   end
 
+  test "normalizes synchronous process exits" do
+    signal = signal()
+
+    blocked = spawn(fn -> receive do: (:stop -> :ok) end)
+    on_exit(fn -> if Process.alive?(blocked), do: Process.exit(blocked, :kill) end)
+
+    assert {:error, :timeout} =
+             Dispatch.dispatch(signal, {:pid, target: blocked, delivery_mode: :sync, timeout: 1})
+
+    crashing =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", _from, _message} -> exit(:receiver_failed)
+        end
+      end)
+
+    assert {:error, {:receiver_failed, {GenServer, :call, _details}}} =
+             Dispatch.dispatch(signal, {:pid, target: crashing, delivery_mode: :sync})
+  end
+
   defp signal, do: Signal.new!("dispatch.process", %{}, source: "/test")
 end

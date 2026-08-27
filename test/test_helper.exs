@@ -1,12 +1,4 @@
 require Logger
-# Prepare modules for Mimic
-Enum.each(
-  [
-    :telemetry,
-    System
-  ],
-  &Mimic.copy/1
-)
 
 # Keep default logging volume low so async stress tests don't overload Logger
 # and introduce timing-dependent failures in process tests.

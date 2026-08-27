@@ -71,6 +71,38 @@ defmodule Jido.Signal.Bus.Store.MemoryTest do
              Memory.put_subscription(subscription("future", "orders.*", 1), state)
   end
 
+  test "validates append and read boundaries" do
+    assert {:ok, state} = Memory.init([])
+    assert {:ok, unchanged} = Memory.append([], state)
+    assert unchanged == state
+    assert {:error, :invalid_records} = Memory.append(:invalid, state)
+
+    invalid_record = Map.delete(record(1, "invalid"), "type")
+    assert {:error, :invalid_records} = Memory.append([invalid_record], state)
+
+    assert {:ok, state} = Memory.append([record(1, "one")], state)
+    assert {:ok, []} = Memory.read([after_cursor: 0, path: "audit.*"], state)
+    assert {:error, :invalid_read_options} = Memory.read([limit: 0], state)
+  end
+
+  test "rejects invalid and conflicting subscription updates" do
+    assert {:ok, state} = Memory.init([])
+    assert {:error, :invalid_subscription} = Memory.put_subscription(%{}, state)
+
+    assert {:ok, state} = Memory.append([record(1, "one")], state)
+    original = subscription("agent", "orders.*", 1)
+    assert {:ok, state} = Memory.put_subscription(original, state)
+
+    assert {:error, :subscription_conflict} =
+             Memory.put_subscription(%{original | "path" => "audit.*"}, state)
+
+    assert {:error, :subscription_conflict} =
+             Memory.put_subscription(%{original | "created_at" => "2026-01-02T00:00:00Z"}, state)
+
+    assert {:error, :cursor_regression} =
+             Memory.put_subscription(%{original | "cursor" => 0}, state)
+  end
+
   defp record(cursor, id) do
     %{
       "format_version" => 1,

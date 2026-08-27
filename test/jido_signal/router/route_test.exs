@@ -1,4 +1,4 @@
-defmodule Jido.Signal.RouterDefinitionTest do
+defmodule Jido.Signal.Router.RouteTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal.Router
@@ -102,107 +102,18 @@ defmodule Jido.Signal.RouterDefinitionTest do
       assert {:error, error} = Router.validate(:invalid)
       assert error.message == "Expected Route struct or list of Route structs"
     end
-  end
 
-  describe "Router management" do
-    test "creates an empty Router" do
-      router = Router.new!()
+    test "validates each Route field boundary" do
+      assert {:error, "Path must be a string"} = Route.validate_path(:invalid, [])
+      assert :ok = Route.validate_priority(nil, [])
+      assert :ok = Route.validate_priority(0, [])
 
-      assert %Router.Router{} = router
-      assert Router.empty?(router)
-      assert Router.count(router) == 0
-      assert {:ok, []} = Router.list(router)
-    end
+      assert {:error, "Priority value below minimum allowed"} =
+               Route.validate_priority(-101, [])
 
-    test "creates and lists Routes in registration order" do
-      router =
-        Router.new!([
-          {"first", :first},
-          {"second", :second}
-        ])
-
-      assert Router.count(router) == 2
-      refute Router.empty?(router)
-      assert {:ok, [%Route{path: "first"}, %Route{path: "second"}]} = Router.list(router)
-    end
-
-    test "adds Routes in registration order" do
-      router = Router.new!({"first", :first})
-      assert {:ok, router} = Router.add(router, [{"second", :second}, {"third", :third}])
-
-      assert {:ok, routes} = Router.list(router)
-      assert Enum.map(routes, & &1.path) == ["first", "second", "third"]
-    end
-
-    test "removes all Routes at the selected paths" do
-      router =
-        Router.new!([
-          {"same", :first},
-          {"same", :second},
-          {"keep", :keep}
-        ])
-
-      assert {:ok, router} = Router.remove(router, "same")
-      assert Router.count(router) == 1
-      assert {:ok, [%Route{path: "keep"}]} = Router.list(router)
-
-      assert {:ok, unchanged} = Router.remove(router, "missing")
-      assert Router.count(unchanged) == 1
-    end
-
-    test "updates exact and wildcard indexes during add and remove" do
-      router = Router.new!({"user.created", :exact})
-
-      assert {:ok, router} =
-               Router.add(router, [
-                 {"user.*", :single},
-                 {"user.**", :multi}
-               ])
-
-      signal = %Jido.Signal{id: "indexes", source: "/test", type: "user.created"}
-      assert {:ok, [:exact, :single, :multi]} = Router.route(router, signal)
-
-      assert {:ok, router} = Router.remove(router, "user.*")
-      assert {:ok, [:exact, :multi]} = Router.route(router, signal)
-      refute Router.has_route?(router, "user.*")
-
-      assert {:ok, router} = Router.remove(router, ["user.created", "user.**"])
-      assert Router.empty?(router)
-      assert {:error, %Jido.Signal.Error.RoutingError{}} = Router.route(router, signal)
-    end
-
-    test "merges Routers by appending their Routes" do
-      first = Router.new!([{"one", :one}, {"two", :two}])
-      second = Router.new!([{"three", :three}, {"four", :four}])
-
-      assert {:ok, merged} = Router.merge(first, second)
-      assert {:ok, routes} = Router.list(merged)
-      assert Enum.map(routes, & &1.path) == ["one", "two", "three", "four"]
-    end
-
-    test "checks registered route paths exactly" do
-      router = Router.new!([{"user.created", :exact}, {"user.*", :wildcard}])
-
-      assert Router.has_route?(router, "user.created")
-      assert Router.has_route?(router, "user.*")
-      refute Router.has_route?(router, "user.updated")
-      refute Router.has_route?(router, "invalid..path")
-    end
-
-    test "counts Route values through add and remove operations" do
-      router =
-        Router.new!([
-          {"user.created", :user},
-          {"system.error", [:logger, :metrics, :alert]}
-        ])
-
-      assert Router.count(router) == 2
-      assert {:ok, router} = Router.add(router, {"order.**", :order})
-      assert Router.count(router) == 3
-      assert {:ok, router} = Router.remove(router, ["user.created", "order.**"])
-      assert Router.count(router) == 1
-      assert {:ok, router} = Router.remove(router, "missing")
-      assert Router.count(router) == 1
+      assert {:error, "Priority must be an integer"} = Route.validate_priority("high", [])
+      assert :ok = Route.validate_match(nil, [])
+      assert :ok = Route.validate_match(fn _signal -> true end, [])
     end
   end
 end
