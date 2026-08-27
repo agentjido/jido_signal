@@ -46,6 +46,5 @@ Model domain events as validated signals and route them predictably through bus/
 
 ## References
 - `README.md`
-- `usage-rules.md`
 - `guides/`
 - https://hexdocs.pm/jido_signal

@@ -176,18 +176,3 @@ route = %Jido.Signal.Router.Route{
 
 The Route schema uses Zoi. Router targets remain generic terms. Dispatch
 validates a target when delivery starts.
-
-## Benchmark Lookup
-
-Run the included lookup benchmark for exact, `*`, `**`, and mixed route sets:
-
-```bash
-mix run bench/router_lookup.exs
-```
-
-It tests 1,000, 10,000, and 100,000 Routes by default. Pass other route counts
-as arguments when needed:
-
-```bash
-mix run bench/router_lookup.exs 5000 50000
-```

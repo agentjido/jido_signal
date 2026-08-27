@@ -161,8 +161,7 @@ defmodule Jido.Signal.MixProject do
         "README.md",
         "CONTRIBUTING.md",
         "LICENSE",
-        "CHANGELOG.md",
-        "usage-rules.md"
+        "CHANGELOG.md"
       ],
       maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
