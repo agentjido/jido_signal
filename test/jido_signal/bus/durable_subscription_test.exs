@@ -49,6 +49,80 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     end
   end
 
+  defmodule ControlledStore do
+    @behaviour Jido.Signal.Bus.Store
+
+    alias Jido.Signal.Bus.Store.Memory
+
+    def fail_next(agent, callback, reason) do
+      Agent.update(agent, fn state ->
+        %{state | failures: Map.put(state.failures, callback, reason)}
+      end)
+    end
+
+    @impl true
+    def init(opts) do
+      case Keyword.fetch(opts, :agent) do
+        {:ok, agent} when is_pid(agent) -> {:ok, agent}
+        _invalid -> {:error, :missing_agent}
+      end
+    end
+
+    @impl true
+    def append(records, agent),
+      do: write_operation(agent, :append, &Memory.append(records, &1))
+
+    @impl true
+    def read(opts, agent), do: read_operation(agent, :read, &Memory.read(opts, &1))
+
+    @impl true
+    def latest_cursor(agent),
+      do: read_operation(agent, :latest_cursor, &Memory.latest_cursor/1)
+
+    @impl true
+    def list_subscriptions(agent),
+      do: read_operation(agent, :list_subscriptions, &Memory.list_subscriptions/1)
+
+    @impl true
+    def put_subscription(subscription, agent),
+      do: write_operation(agent, :put_subscription, &Memory.put_subscription(subscription, &1))
+
+    @impl true
+    def delete_subscription(id, agent),
+      do: write_operation(agent, :delete_subscription, &Memory.delete_subscription(id, &1))
+
+    defp read_operation(agent, callback, function) do
+      Agent.get_and_update(agent, fn state ->
+        case Map.pop(state.failures, callback) do
+          {nil, failures} ->
+            {function.(state.memory), %{state | failures: failures}}
+
+          {reason, failures} ->
+            {{:error, reason}, %{state | failures: failures}}
+        end
+      end)
+    end
+
+    defp write_operation(agent, callback, function) do
+      Agent.get_and_update(agent, fn state ->
+        case Map.pop(state.failures, callback) do
+          {nil, failures} ->
+            case function.(state.memory) do
+              {:ok, memory} -> {{:ok, agent}, %{state | memory: memory, failures: failures}}
+              {:error, reason} -> {{:error, reason}, %{state | failures: failures}}
+            end
+
+          {reason, failures} ->
+            {{:error, reason}, %{state | failures: failures}}
+        end
+      end)
+    end
+  end
+
+  def handle_bus_event(event, measurements, metadata, target) do
+    send(target, {:bus_telemetry, event, measurements, metadata})
+  end
+
   test "sends one durable record at a time and advances only its cursor" do
     bus = start_bus()
     assert {:ok, "orders-agent"} = Bus.subscribe(bus, "durable.*", durable: "orders-agent")
@@ -183,6 +257,82 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert repeated.signal == event
   end
 
+  test "reports a Store read failure while attaching and remains usable" do
+    {bus, store} = start_controlled_bus()
+    attach_delivery_error_handler()
+    ControlledStore.fail_next(store, :read, :temporarily_unavailable)
+
+    assert {:ok, "attach-reader"} =
+             Bus.subscribe(bus, "attach.*", durable: "attach-reader", start_from: :origin)
+
+    assert_receive {:bus_telemetry, [:jido, :signal, :bus, :delivery_error], _measurements,
+                    %{
+                      subscription_id: "attach-reader",
+                      reason: {:store_error, :read, :temporarily_unavailable}
+                    }}
+
+    event = signal("attach.created")
+    assert {:ok, [_record]} = Bus.publish(bus, [event])
+
+    assert_receive {:signal, "attach-reader", %RecordedSignal{signal: ^event}}
+  end
+
+  test "reports a Store read failure during publish and retries on later work" do
+    {bus, store} = start_controlled_bus()
+    attach_delivery_error_handler()
+
+    assert {:ok, "publish-reader"} =
+             Bus.subscribe(bus, "publish.*", durable: "publish-reader", start_from: :origin)
+
+    ControlledStore.fail_next(store, :read, :temporarily_unavailable)
+    first = signal("publish.first")
+    assert {:ok, [_record]} = Bus.publish(bus, [first])
+    refute_received {:signal, "publish-reader", _record}
+
+    assert_receive {:bus_telemetry, [:jido, :signal, :bus, :delivery_error], _measurements,
+                    %{
+                      subscription_id: "publish-reader",
+                      signal_id: signal_id,
+                      signal_type: "publish.first",
+                      reason: {:store_error, :read, :temporarily_unavailable}
+                    }}
+
+    assert signal_id == first.id
+
+    assert {:ok, [_record]} = Bus.publish(bus, [signal("publish.second")])
+    assert_receive {:signal, "publish-reader", %RecordedSignal{signal: ^first}}
+  end
+
+  test "keeps acknowledgement state safe across Store write and read failures" do
+    {bus, store} = start_controlled_bus()
+    attach_delivery_error_handler()
+
+    assert {:ok, "ack-reader"} =
+             Bus.subscribe(bus, "ack.*", durable: "ack-reader", start_from: :origin)
+
+    first = signal("ack.first")
+    second = signal("ack.second")
+    assert {:ok, [_first_record, _second_record]} = Bus.publish(bus, [first, second])
+    assert_receive {:signal, "ack-reader", %RecordedSignal{cursor: first_cursor, signal: ^first}}
+
+    ControlledStore.fail_next(store, :put_subscription, :temporarily_unavailable)
+
+    assert {:error, {:store_error, :put_subscription, :temporarily_unavailable}} =
+             Bus.ack(bus, "ack-reader", first_cursor)
+
+    ControlledStore.fail_next(store, :read, :temporarily_unavailable)
+    assert :ok = Bus.ack(bus, "ack-reader", first_cursor)
+
+    assert_receive {:bus_telemetry, [:jido, :signal, :bus, :delivery_error], _measurements,
+                    %{
+                      subscription_id: "ack-reader",
+                      reason: {:store_error, :read, :temporarily_unavailable}
+                    }}
+
+    assert {:ok, [_record]} = Bus.publish(bus, [signal("ack.third")])
+    assert_receive {:signal, "ack-reader", %RecordedSignal{signal: ^second}}
+  end
+
   test "allows only one active target for a durable subscription" do
     bus = start_bus()
     other = spawn(fn -> receive do: (:stop -> :ok) end)
@@ -203,6 +353,20 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
 
     assert {:ok, "old-agent"} =
              Bus.subscribe(bus, "new.*", durable: "old-agent", start_from: :origin)
+  end
+
+  test "keeps other durable routes after one subscription is deleted" do
+    bus = start_bus()
+
+    assert {:ok, "removed"} = Bus.subscribe(bus, "removed.*", durable: "removed")
+    assert {:ok, "kept"} = Bus.subscribe(bus, "kept.*", durable: "kept")
+    assert :ok = Bus.delete_subscription(bus, "removed")
+
+    event = signal("kept.created")
+    assert {:ok, [_record]} = Bus.publish(bus, [event])
+
+    assert_receive {:signal, "kept", %RecordedSignal{signal: ^event}}
+    refute_received {:signal, "removed", _record}
   end
 
   test "validates durable acknowledgement state" do
@@ -306,6 +470,30 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
   defp start_bus(opts \\ []) do
     name = unique_name("durable_bus")
     start_supervised!({Bus, Keyword.put(opts, :name, name)})
+  end
+
+  defp start_controlled_bus do
+    {:ok, memory} = Jido.Signal.Bus.Store.Memory.init([])
+
+    store =
+      start_supervised!({Agent, fn -> %{memory: memory, failures: %{}} end})
+
+    bus = start_bus(store: ControlledStore, store_opts: [agent: store])
+    {bus, store}
+  end
+
+  defp attach_delivery_error_handler do
+    handler_id = {__MODULE__, self(), make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:jido, :signal, :bus, :delivery_error],
+        &__MODULE__.handle_bus_event/4,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 
   defp relay_durable(parent) do

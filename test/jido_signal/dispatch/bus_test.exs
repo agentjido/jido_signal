@@ -80,6 +80,25 @@ defmodule Jido.Signal.Dispatch.BusTest do
       assert {:error, :bus_not_found} =
                Dispatch.dispatch(signal, {:bus, target: :nonexistent_bus_xyz})
     end
+
+    test "returns a Bus publish failure without changing it" do
+      bus_name = Module.concat(__MODULE__, "FullBus#{System.unique_integer([:positive])}")
+      start_supervised!({Bus, name: bus_name, max_log_size: 1})
+
+      assert {:ok, "blocking-reader"} =
+               Bus.subscribe(
+                 bus_name,
+                 "test.signal",
+                 durable: "blocking-reader",
+                 start_from: :origin
+               )
+
+      assert {:ok, [_record]} = Bus.publish(bus_name, [make_signal()])
+      assert_received {:signal, "blocking-reader", _record}
+
+      assert {:error, {:store_error, :append, {:store_full, ["blocking-reader"]}}} =
+               Dispatch.dispatch(make_signal(), {:bus, target: bus_name})
+    end
   end
 
   describe "deliver/2 with a jido scope" do

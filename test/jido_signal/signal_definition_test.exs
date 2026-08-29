@@ -140,6 +140,62 @@ defmodule Jido.Signal.DefinitionTest do
       end
     end
 
+    test "rejects anonymous functions nested in named MFA arguments" do
+      module = unique_module("AnonymousMFAArgument")
+
+      assert_raise CompileError, ~r/anonymous functions are not supported/, fn ->
+        create_module(
+          module,
+          quote do
+            runtime_function = fn -> :runtime end
+
+            use Jido.Signal,
+              type: "anonymous.mfa.argument",
+              default_source: "/test",
+              schema:
+                Zoi.string()
+                |> Zoi.refine({Jido.Signal.DefinitionTest, :valid_email, [runtime_function]})
+          end
+        )
+      end
+    end
+
+    test "rejects runtime process values nested in schema data" do
+      module = unique_module("RuntimeSchemaValue")
+
+      assert_raise CompileError, ~r/runtime process values are not supported/, fn ->
+        create_module(
+          module,
+          quote do
+            runtime_reference = make_ref()
+
+            use Jido.Signal,
+              type: "runtime.schema.value",
+              default_source: "/test",
+              schema:
+                Zoi.string()
+                |> Zoi.refine({Jido.Signal.DefinitionTest, :valid_email, [runtime_reference]})
+          end
+        )
+      end
+    end
+
+    test "rejects improper lists nested in schema data" do
+      module = unique_module("ImproperSchemaList")
+
+      assert_raise CompileError, ~r/improper list tails are not supported/, fn ->
+        create_module(
+          module,
+          quote do
+            use Jido.Signal,
+              type: "improper.schema.list",
+              default_source: "/test",
+              schema: Zoi.string(example: ["head" | :tail])
+          end
+        )
+      end
+    end
+
     test "rejects lazy schemas at compile time" do
       module = unique_module("LazySchema")
 

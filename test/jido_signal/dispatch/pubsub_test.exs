@@ -72,6 +72,15 @@ defmodule Jido.Signal.Dispatch.PubSubTest do
              )
   end
 
+  test "returns a stable error when the target is a non-PubSub Registry" do
+    name = Module.concat(__MODULE__, "Registry#{System.unique_integer([:positive])}")
+    start_supervised!({Registry, keys: :unique, name: name})
+    signal = Signal.new!("order.created", %{}, source: "/test")
+
+    assert {:error, :pubsub_not_found} =
+             Dispatch.dispatch(signal, {:pubsub, target: name, topic: "orders"})
+  end
+
   test "propagates PubSub adapter broadcast failures" do
     name = Module.concat(__MODULE__, "Failing#{System.unique_integer([:positive])}")
     start_supervised!({Phoenix.PubSub, name: name, adapter: FailingAdapter})

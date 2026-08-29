@@ -57,6 +57,23 @@ defmodule Jido.Signal.DispatchTest do
     assert opts[:delivery_mode] == :async
   end
 
+  test "normalizes a target list without changing its order" do
+    assert {:ok, [{:pid, pid_opts}, {:noop, noop_opts}]} =
+             Dispatch.validate_opts([{:pid, target: self()}, {:noop, []}])
+
+    assert pid_opts[:target] == self()
+    assert pid_opts[:delivery_mode] == :async
+    assert noop_opts == []
+  end
+
+  test "rejects an unloaded adapter module" do
+    missing_adapter =
+      Module.concat(__MODULE__, "MissingAdapter#{System.unique_integer([:positive])}")
+
+    assert {:error, error} = Dispatch.validate_opts({missing_adapter, []})
+    assert error =~ "is not a valid adapter"
+  end
+
   test "normalizes tuples before ordered synchronous delivery" do
     signal = Signal.new!("dispatch.ordered", %{}, source: "/test")
 

@@ -243,6 +243,13 @@ defmodule Jido.Signal.BusTest do
                store_opts: [subscriptions: {:ok, :invalid}]
              )
 
+    assert {:error, :invalid_store_subscription} =
+             Bus.start_link(
+               name: unique_name("unsupported_subscription_version"),
+               store: StartupStore,
+               store_opts: [subscriptions: {:ok, [%{"format_version" => 2}]}]
+             )
+
     assert {:error, :invalid_store_cursor} =
              Bus.start_link(
                name: unique_name("invalid_cursor"),

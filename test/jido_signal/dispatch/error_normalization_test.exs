@@ -194,6 +194,32 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     assert metadata.target_kind == :url
   end
 
+  test "dispatch start telemetry marks an invalid URL without reporting its text" do
+    test_pid = self()
+    handler_id = {__MODULE__, :invalid_url_target, test_pid}
+    Process.put(:test_pid, test_pid)
+
+    :telemetry.attach(
+      handler_id,
+      [:jido, :dispatch, :start],
+      &__MODULE__.handle_telemetry_event/4,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
+    invalid_url = "not a URL with secret text"
+
+    assert {:error, :not_sent} =
+             Dispatch.dispatch(signal, {URLReportingAdapter, url: invalid_url})
+
+    assert_received {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
+    assert metadata.target == :invalid_url
+    assert metadata.target_kind == :url
+    refute inspect(metadata) =~ invalid_url
+  end
+
   test "structured dispatch errors do not contain target credentials" do
     Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
