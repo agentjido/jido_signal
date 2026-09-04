@@ -18,7 +18,7 @@ permissions:
 jobs:
   ci:
     name: CI
-    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@47d3cbe084575f45d178dc9dedbc21aca9a162ae
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@beaf72452f04fad84f815a31c6238259df259e30
     secrets: inherit
     with:
       docs_command: mix docs -f html
