@@ -66,10 +66,8 @@ defmodule Jido.Signal.Router.Index do
   @doc false
   @spec lookup(Router.t(), String.t(), Jido.Signal.t()) :: [term()]
   def lookup(%Router{} = router, type, signal) do
-    type_segments = String.split(type, ".")
-
     (Map.get(router.exact_index, type, []) ++
-       wildcard_matches(router.wildcard_index, type_segments))
+       wildcard_matches(router.wildcard_index, type))
     |> Enum.filter(&predicate_matches?(&1.route.match, signal))
     |> Enum.sort_by(&precedence_key/1, :desc)
     |> Enum.flat_map(&targets/1)
@@ -167,13 +165,13 @@ defmodule Jido.Signal.Router.Index do
 
   defp wildcard_matches(
          %{exact: exact, single: nil, multi: nil, terminals: []},
-         _segments
+         _type
        )
        when map_size(exact) == 0,
        do: []
 
-  defp wildcard_matches(root, segments) do
-    segments = List.to_tuple(segments)
+  defp wildcard_matches(root, type) do
+    segments = type |> String.split(".") |> List.to_tuple()
     {_visited, matches} = walk_trie(root, segments, tuple_size(segments), 0, %{}, [])
     matches
   end
