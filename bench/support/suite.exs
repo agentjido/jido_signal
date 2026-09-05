@@ -3,6 +3,7 @@ Code.require_file("helpers.exs", __DIR__)
 Code.require_file("signal_cases.exs", __DIR__)
 Code.require_file("router_cases.exs", __DIR__)
 Code.require_file("bus_cases.exs", __DIR__)
+Code.require_file("candidate_cases.exs", __DIR__)
 Code.require_file("measure.exs", __DIR__)
 Code.require_file("report.exs", __DIR__)
 
@@ -32,7 +33,8 @@ defmodule JidoSignalBench.Suite do
           dimensions: workload.dimensions,
           timing: Map.fetch!(timings, workload.id),
           resources: measure!(workload, fn -> Measure.resources(workload) end),
-          retained_term: Measure.term_size(workload.retained)
+          retained_term: Measure.term_size(workload.retained),
+          activity: measure!(workload, fn -> Measure.activity(workload) end)
         }
       end)
 
@@ -50,6 +52,9 @@ defmodule JidoSignalBench.Suite do
       cases: cases
     }
   end
+
+  def workloads("candidates"),
+    do: Enum.flat_map([2, 32], &JidoSignalBench.CandidateCases.workloads/1)
 
   def workloads(profile) do
     settings = settings(profile)
@@ -118,6 +123,16 @@ defmodule JidoSignalBench.Suite do
     File.write!(Path.join(directory, "report.md"), Report.markdown(report))
   end
 
+  defp settings("candidates"),
+    do: %{
+      profile: "candidates",
+      sizes: [2, 32],
+      payloads: [],
+      warmup: 3,
+      samples: 15,
+      resource_samples: 1
+    }
+
   defp settings("short"),
     do: %{
       profile: "short",
@@ -148,7 +163,7 @@ defmodule JidoSignalBench.Suite do
       resource_samples: 1
     }
 
-  defp settings(_), do: raise(ArgumentError, "profile must be short, scale, or smoke")
+  defp settings(_), do: raise(ArgumentError, "profile must be short, scale, smoke, or candidates")
 
   defp source do
     files = Path.wildcard(Path.expand("../**/*.exs", __DIR__)) |> Enum.sort()

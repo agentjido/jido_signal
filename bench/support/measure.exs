@@ -40,6 +40,61 @@ defmodule JidoSignalBench.Measure do
     isolated(fn -> trace_resources(workload) end)
   end
 
+  # This separate probe includes the caller and the Bus process when present.
+  # A full collection before/after the call makes retained memory comparable.
+  # minor_gcs is a net counter and can reset at a full collection.
+  def activity(workload) do
+    isolated(fn ->
+      prepared = workload.setup.(%{})
+
+      try do
+        processes =
+          if is_map(prepared) and is_pid(prepared[:bus]),
+            do: [caller: self(), bus: prepared.bus],
+            else: [caller: self()]
+
+        before =
+          Map.new(processes, fn {name, pid} ->
+            :erlang.garbage_collect(pid)
+            {name, process_activity(pid)}
+          end)
+
+        result = workload.run.(prepared)
+        after_run = Map.new(processes, fn {name, pid} -> {name, process_activity(pid)} end)
+
+        retained =
+          Map.new(processes, fn {name, pid} ->
+            :erlang.garbage_collect(pid)
+            {name, process_activity(pid)}
+          end)
+
+        :ok = workload.check.(result, prepared)
+
+        Map.new(processes, fn {name, _pid} ->
+          {name,
+           %{
+             reductions: after_run[name].reductions - before[name].reductions,
+             minor_gcs_net: after_run[name].minor_gcs - before[name].minor_gcs,
+             before_gc_bytes: before[name].memory,
+             after_gc_bytes: retained[name].memory
+           }}
+        end)
+      after
+        cleanup(workload, prepared)
+      end
+    end)
+  end
+
+  defp process_activity(pid) do
+    info = Process.info(pid, [:reductions, :garbage_collection, :memory])
+
+    %{
+      reductions: info[:reductions],
+      minor_gcs: info[:garbage_collection][:minor_gcs],
+      memory: info[:memory]
+    }
+  end
+
   def term_size(term) do
     word = :erlang.system_info(:wordsize)
     local = :erts_debug.size(term) * word

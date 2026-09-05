@@ -4,7 +4,7 @@ defmodule JidoSignalBench.Report do
   def limitations do
     [
       "Timing runs without tracing or memory sampling. Setup, result checks, delivery drains, and cleanup are outside each timed interval.",
-      "Caller reductions exclude Bus and receiver work. Total helper reductions and exact memory peaks are unavailable (null).",
+      "Timing reductions cover only the caller. Separate activity probes report caller and Bus reductions, net minor-GC count (can reset on full GC), and memory after forced GC. Other helper reductions and exact peaks remain unavailable (null).",
       "Observed memory maxima use start, setup, result, and completion barriers. Short allocations can be missed. Resource samples include setup and result checks.",
       "Process memory and heap include the caller and its traced descendants. Shared binary bytes count each observed off-heap reference once. ETS and application-owned Registry memory are excluded.",
       "VM memory includes the observer, loaded code, and unrelated activity. It does not establish ownership or leaks.",

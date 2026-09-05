@@ -178,3 +178,20 @@ Run the measurement tests directly with:
 ```bash
 mix test test/bench/signal_bench_test.exs test/bench/extended_bench_test.exs
 ```
+
+## Candidate profile
+
+Use `ERL_FLAGS='+S 2:2' mix run bench/run.exs --profile candidates --output bench/results/candidates`
+for the six follow-up optimization areas. The 78 cases use two sizes. They cover
+ASCII, mixed Unicode, non-ASCII text, emoji, invalid UTF-8 tails, Erlang term
+decoding, publication with zero or one subscriber, filtered store replay,
+subscription removal from 32 and 512 subscriptions, and log retention with zero,
+one, or 32 durable subscriptions. Retention includes pinned records and a full
+store that must reject the append.
+
+Each report also has an `activity` object. This separate call measures caller
+reductions and, when the fixture has a Bus, Bus process reductions. It records
+the net minor-GC counter and process memory after forced garbage collection.
+A full collection can reset the minor-GC counter. These values do not measure
+total allocation or an exact memory peak. The publication cases run eight
+batches on the same Bus. Timing remains free of tracing and memory probes.

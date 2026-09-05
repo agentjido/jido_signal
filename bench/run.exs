@@ -7,7 +7,7 @@ if args != [] or invalid != [],
   do:
     raise(
       ArgumentError,
-      "usage: mix run bench/run.exs --profile short|scale|smoke --output DIRECTORY"
+      "usage: mix run bench/run.exs --profile short|scale|smoke|candidates --output DIRECTORY"
     )
 
 profile = Keyword.get(opts, :profile, "short")
