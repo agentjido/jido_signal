@@ -107,6 +107,10 @@ defmodule Jido.Signal.Bus.Subscriptions do
 
   @doc false
   @spec deliver_published(map(), Jido.Signal.t()) :: map()
+  def deliver_published(%{subscriptions: subscriptions} = state, _signal)
+      when map_size(subscriptions) == 0,
+      do: state
+
   def deliver_published(state, signal) do
     case Router.route(state.router, signal) do
       {:ok, subscription_ids} ->

@@ -107,6 +107,28 @@ defmodule Jido.Signal.BusTest do
     assert last.cursor == 3
   end
 
+  test "keeps publication and replay correct as the last subscriber is removed" do
+    bus = start_bus(store: ObservingStore, store_opts: [observer: self()])
+    first = signal("stored.first")
+    assert {:ok, [one]} = Bus.publish(bus, [first])
+    assert_received {:stored_records, [_]}
+    refute_received {:signal, _}
+
+    assert {:ok, "only"} = Bus.subscribe(bus, "stored.**", subscription_id: "only")
+    second = signal("stored.second")
+    assert {:ok, [two]} = Bus.publish(bus, [second])
+    assert_received {:stored_records, [_]}
+    assert_received {:signal, ^second}
+    assert :ok = Bus.unsubscribe(bus, "only")
+
+    third = signal("stored.third")
+    assert {:ok, [three]} = Bus.publish(bus, [third])
+    assert_received {:stored_records, [_]}
+    refute_received {:signal, _}
+    assert {:ok, [^one, ^two, ^three]} = Bus.replay(bus)
+    assert [one.cursor, two.cursor, three.cursor] == [1, 2, 3]
+  end
+
   test "keeps Router precedence through Bus delivery" do
     bus = start_bus()
     handler_id = {__MODULE__, self(), make_ref()}
