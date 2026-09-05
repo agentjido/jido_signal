@@ -277,7 +277,7 @@ defmodule Jido.Signal do
   def new(attrs) when is_map(attrs) do
     with {:ok, attrs} <- Codec.normalize_keys(attrs) do
       attrs
-      |> Map.put_new("id", ID.generate!())
+      |> Map.put_new_lazy("id", &ID.generate!/0)
       |> Map.put_new("specversion", "1.0")
       |> Codec.from_map()
     end
