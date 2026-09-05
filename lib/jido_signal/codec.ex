@@ -99,8 +99,7 @@ defmodule Jido.Signal.Codec do
       "datacontenttype" => signal.datacontenttype,
       "dataschema" => signal.dataschema
     }
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-    |> Map.new()
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.merge(encode_data(signal.data, signal.data_present?, signal.data_base64?))
   end
 
