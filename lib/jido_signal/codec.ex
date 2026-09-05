@@ -67,7 +67,7 @@ defmodule Jido.Signal.Codec do
 
   defp parse_signal(attrs, data, data_present?, data_base64?, extensions) do
     signal =
-      struct(Signal,
+      %Signal{
         data: data,
         data_present?: data_present?,
         data_base64?: data_base64?,
@@ -80,7 +80,7 @@ defmodule Jido.Signal.Codec do
         subject: Map.get(attrs, "subject"),
         time: normalize_time(Map.get(attrs, "time")),
         type: Map.get(attrs, "type")
-      )
+      }
 
     case Zoi.parse(Signal.schema(), signal) do
       {:ok, validated} -> {:ok, validated}
