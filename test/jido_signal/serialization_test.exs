@@ -266,6 +266,37 @@ defmodule Jido.Signal.SerializationTest do
     end
   end
 
+  test "preserves UTF-8 and invalid byte sequences at both binary boundaries" do
+    values = [
+      "",
+      "ASCII",
+      "café 日本語 😀",
+      :binary.copy("a", 131_072),
+      :binary.copy("日本語", 8_192),
+      :binary.copy("😀", 8_192),
+      <<0xC0, 0xAF>>,
+      <<0xED, 0xA0, 0x80>>,
+      <<0xF4, 0x90, 0x80, 0x80>>,
+      <<0xE2, 0x82>>,
+      :binary.copy("a", 131_072) <> <<255>>
+    ]
+
+    boundaries = for n <- 0..15, suffix <- ["é😀text", <<255>>], do: :binary.copy("a", n) <> suffix
+
+    for data <- values ++ boundaries do
+      signal = Signal.new!(type: "test.text", source: "/test", data: data)
+      wire = Signal.to_map(signal)
+      assert Map.has_key?(wire, "data") == String.valid?(data)
+      assert Map.has_key?(wire, "data_base64") == not String.valid?(data)
+      assert {:ok, ^signal} = Signal.from_map(wire)
+      assert {:ok, json} = Signal.serialize(signal)
+      assert {:ok, ^signal} = Signal.deserialize(json)
+    end
+
+    signal = Signal.new!(type: "test.text", source: "/test", data: %{"text" => <<255>>})
+    assert {:error, {:json_encode_failed, _}} = Signal.serialize(signal)
+  end
+
   describe "legacy input" do
     test "normalizes supported v2 wire values" do
       json =

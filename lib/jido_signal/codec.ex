@@ -123,7 +123,7 @@ defmodule Jido.Signal.Codec do
   defp encode_data(nil, true, _base64?), do: %{"data" => nil}
 
   defp encode_data(data, _present?, base64?) when is_binary(data) do
-    if base64? or not String.valid?(data),
+    if base64? or not Jido.Signal.UTF8.valid?(data),
       do: %{"data_base64" => Base.encode64(data)},
       else: %{"data" => data}
   end
@@ -136,7 +136,7 @@ defmodule Jido.Signal.Codec do
         {:error, "parse error: data and data_base64 are mutually exclusive"}
 
       {{:ok, data}, :error} ->
-        {:ok, data, true, is_binary(data) and not String.valid?(data)}
+        {:ok, data, true, is_binary(data) and not Jido.Signal.UTF8.valid?(data)}
 
       {:error, {:ok, encoded}} ->
         decode_data_base64(encoded)

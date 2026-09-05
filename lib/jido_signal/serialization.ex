@@ -176,7 +176,7 @@ defmodule Jido.Signal.Serialization do
 
   defp json_value?(nil), do: true
   defp json_value?(value) when is_boolean(value) or is_number(value), do: true
-  defp json_value?(value) when is_binary(value), do: String.valid?(value)
+  defp json_value?(value) when is_binary(value), do: Jido.Signal.UTF8.valid?(value)
   defp json_value?([]), do: true
   defp json_value?([head | tail]) when is_list(tail), do: json_value?(head) and json_value?(tail)
 
