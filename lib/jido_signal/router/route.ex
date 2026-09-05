@@ -84,11 +84,9 @@ defmodule Jido.Signal.Router.Route do
   def validate_match(_match, _opts),
     do: {:error, "Match must be a function that takes one argument"}
 
-  defp consecutive_multi_wildcards?(segments) do
-    segments
-    |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.any?(fn [left, right] -> left == "**" and right == "**" end)
-  end
+  defp consecutive_multi_wildcards?(["**", "**" | _rest]), do: true
+  defp consecutive_multi_wildcards?([_segment | rest]), do: consecutive_multi_wildcards?(rest)
+  defp consecutive_multi_wildcards?([]), do: false
 
   defp valid_segment?("*"), do: true
   defp valid_segment?("**"), do: true

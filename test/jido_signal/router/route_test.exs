@@ -98,6 +98,15 @@ defmodule Jido.Signal.Router.RouteTest do
       assert error.message == "Match must be a function that takes one argument"
     end
 
+    test "rejects adjacent multi wildcards at each position" do
+      for path <- ["**.**", "**.**.tail", "head.**.**", "head.**.**.tail"] do
+        assert {:error, error} = Router.normalize({path, :target})
+        assert error.message == "Path cannot contain multiple wildcards"
+      end
+
+      assert {:ok, [_route]} = Router.normalize({"**.middle.**", :target})
+    end
+
     test "returns a structured error for invalid input" do
       assert {:error, error} = Router.validate(:invalid)
       assert error.message == "Expected Route struct or list of Route structs"
