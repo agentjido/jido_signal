@@ -266,6 +266,36 @@ defmodule Jido.Signal.SerializationTest do
     end
   end
 
+  test "uses the exact canonical Erlang size at the decoded size boundary" do
+    signal = Signal.new!(type: "test.term", source: "/test", data: :éééé)
+    wire = Signal.to_map(signal)
+    legacy = :erlang.term_to_binary(wire, minor_version: 0)
+    canonical = :erlang.term_to_binary(wire)
+    input_size = byte_size(legacy)
+    output_size = byte_size(canonical)
+    assert input_size < output_size
+
+    assert {:error, {:payload_too_large, ^output_size, ^input_size}} =
+             Signal.deserialize(legacy, format: :erlang_term, max_payload_bytes: input_size)
+
+    assert {:ok, ^signal} =
+             Signal.deserialize(legacy, format: :erlang_term, max_payload_bytes: output_size)
+
+    for data <- [:binary.copy("x", 131_072), %{blob: <<255>>, nested: [{:ok, [1, 2, 3]}]}] do
+      signal = Signal.new!(type: "test.term", source: "/test", data: data)
+      assert {:ok, encoded} = Signal.serialize(signal, format: :erlang_term)
+      size = byte_size(encoded)
+
+      assert {:ok, ^signal} =
+               Signal.deserialize(encoded, format: :erlang_term, max_payload_bytes: size)
+
+      assert {:error, {:payload_too_large, ^size, limit}} =
+               Signal.deserialize(encoded, format: :erlang_term, max_payload_bytes: size - 1)
+
+      assert limit == size - 1
+    end
+  end
+
   test "preserves UTF-8 and invalid byte sequences at both binary boundaries" do
     values = [
       "",

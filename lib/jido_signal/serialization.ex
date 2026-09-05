@@ -149,17 +149,22 @@ defmodule Jido.Signal.Serialization do
     error in ArgumentError -> {:error, {:erlang_term_decode_failed, Exception.message(error)}}
   end
 
-  defp check_payload_size(binary, opts) do
-    max =
-      Keyword.get_lazy(opts, :max_payload_bytes, fn ->
-        Application.get_env(:jido_signal, :max_payload_bytes, @default_max_payload_bytes)
-      end)
+  defp check_payload_size(binary, opts), do: check_size(byte_size(binary), opts)
 
+  defp check_size(size, opts), do: check_limit(size, payload_limit(opts))
+
+  defp payload_limit(opts) do
+    Keyword.get_lazy(opts, :max_payload_bytes, fn ->
+      Application.get_env(:jido_signal, :max_payload_bytes, @default_max_payload_bytes)
+    end)
+  end
+
+  defp check_limit(size, max) do
     if is_integer(max) and max >= 0 do
-      if byte_size(binary) <= max do
+      if size <= max do
         :ok
       else
-        {:error, {:payload_too_large, byte_size(binary), max}}
+        {:error, {:payload_too_large, size, max}}
       end
     else
       {:error, {:invalid_max_payload_bytes, max}}
@@ -169,9 +174,18 @@ defmodule Jido.Signal.Serialization do
   defp check_decoded_size(_wire_data, :json, _opts), do: :ok
 
   defp check_decoded_size(wire_data, :erlang_term, opts) do
-    wire_data
-    |> :erlang.term_to_binary()
-    |> check_payload_size(opts)
+    max = payload_limit(opts)
+
+    # external_size is an upper bound. It can prove acceptance, but only the
+    # canonical encoded size can determine the error and its exact byte count.
+    if is_integer(max) and max >= 0 and :erlang.external_size(wire_data) <= max do
+      :ok
+    else
+      wire_data
+      |> :erlang.term_to_iovec()
+      |> :erlang.iolist_size()
+      |> check_limit(max)
+    end
   end
 
   defp json_value?(nil), do: true
