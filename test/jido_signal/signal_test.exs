@@ -33,6 +33,35 @@ defmodule Jido.SignalTest do
       assert signal.id == "external-id"
     end
 
+    test "keeps key collision and explicit null errors when applying defaults" do
+      base = %{type: "example.event", source: "/example"}
+      assert {:error, error} = Signal.new(Map.put(base, "type", "other.event"))
+      assert error =~ "duplicate attribute"
+
+      for key <- [:id, :specversion] do
+        assert {:error, error} = Signal.new(Map.put(base, key, nil))
+        assert error =~ Atom.to_string(key)
+      end
+    end
+
+    test "normalizes mixed keys, legacy versions, extensions, and binary data together" do
+      assert {:ok, signal} =
+               Signal.new(%{
+                 "type" => "example.event",
+                 "data_base64" => "AQID",
+                 id: "external-id",
+                 source: "/example",
+                 specversion: "1.0.2",
+                 tenant: "one"
+               })
+
+      assert signal.id == "external-id"
+      assert signal.specversion == "1.0"
+      assert signal.extensions == %{"tenant" => "one"}
+      assert signal.data == <<1, 2, 3>>
+      assert Signal.to_map(signal)["data_base64"] == "AQID"
+    end
+
     test "validates event time and data schema" do
       assert {:ok, signal} =
                Signal.new(

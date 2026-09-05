@@ -3,6 +3,7 @@ defmodule Jido.Signal.Codec do
 
   alias Jido.Signal
   alias Jido.Signal.Context
+  alias Jido.Signal.ID
 
   @core_names ~w[
     specversion id source type subject time
@@ -12,15 +13,20 @@ defmodule Jido.Signal.Codec do
   @legacy_wire_versions [1, 2]
 
   @doc false
+  @spec new(map()) :: {:ok, Signal.t()} | {:error, String.t()}
+  def new(map) when is_map(map) do
+    with {:ok, attrs} <- normalize_keys(map) do
+      attrs
+      |> Map.put_new_lazy("id", &ID.generate!/0)
+      |> Map.put_new("specversion", "1.0")
+      |> from_normalized_map()
+    end
+  end
+
+  @doc false
   @spec from_map(map()) :: {:ok, Signal.t()} | {:error, String.t()}
   def from_map(map) when is_map(map) do
-    with {:ok, attrs} <- normalize_keys(map),
-         :ok <- validate_specversion(attrs),
-         :ok <- validate_legacy_wire_version(attrs),
-         {:ok, data, data_present?, data_base64?} <- extract_data(attrs),
-         {:ok, extensions} <- extract_extensions(attrs) do
-      parse_signal(attrs, data, data_present?, data_base64?, extensions)
-    end
+    with {:ok, attrs} <- normalize_keys(map), do: from_normalized_map(attrs)
   end
 
   def from_map(_map), do: {:error, "parse error: expected a map"}
@@ -51,6 +57,15 @@ defmodule Jido.Signal.Codec do
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  defp from_normalized_map(attrs) do
+    with :ok <- validate_specversion(attrs),
+         :ok <- validate_legacy_wire_version(attrs),
+         {:ok, data, data_present?, data_base64?} <- extract_data(attrs),
+         {:ok, extensions} <- extract_extensions(attrs) do
+      parse_signal(attrs, data, data_present?, data_base64?, extensions)
+    end
   end
 
   defp extract_extensions(attrs) do

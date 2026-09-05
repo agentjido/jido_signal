@@ -51,7 +51,6 @@ defmodule Jido.Signal do
   """
 
   alias Jido.Signal.Context
-  alias Jido.Signal.ID
   alias Jido.Signal.Codec
   alias Jido.Signal.Serialization
 
@@ -274,14 +273,7 @@ defmodule Jido.Signal do
       else: {:error, "parse error: expected a map or keyword list"}
   end
 
-  def new(attrs) when is_map(attrs) do
-    with {:ok, attrs} <- Codec.normalize_keys(attrs) do
-      attrs
-      |> Map.put_new_lazy("id", &ID.generate!/0)
-      |> Map.put_new("specversion", "1.0")
-      |> Codec.from_map()
-    end
-  end
+  def new(attrs) when is_map(attrs), do: Codec.new(attrs)
 
   def new(_attrs), do: {:error, "parse error: expected a map or keyword list"}
 
