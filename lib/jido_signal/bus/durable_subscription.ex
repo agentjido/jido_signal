@@ -5,6 +5,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   alias Jido.Signal.Bus.Store
   alias Jido.Signal.Bus.Subscriptions.Subscriber
   alias Jido.Signal.Router
+  alias Jido.Signal.Router.Index
   alias Jido.Signal.Telemetry
 
   @doc false
@@ -326,17 +327,11 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     subscriptions = Map.delete(state.subscriptions, subscriber.id)
     order = Enum.reject(state.subscription_order, &(&1 == subscriber.id))
 
-    routes =
-      Enum.map(order, fn id ->
-        current = Map.fetch!(subscriptions, id)
-        {current.path, current.id}
-      end)
-
     %{
       state
       | subscriptions: subscriptions,
         subscription_order: order,
-        router: Router.new!(routes)
+        router: Index.remove_target(state.router, subscriber.path, subscriber.id)
     }
   end
 

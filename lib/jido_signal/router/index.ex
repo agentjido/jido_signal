@@ -64,6 +64,35 @@ defmodule Jido.Signal.Router.Index do
   end
 
   @doc false
+  @spec remove_target(Router.t(), String.t(), term()) :: Router.t()
+  def remove_target(%Router{} = router, path, target) do
+    reject = fn entries ->
+      Enum.reject(entries, &(&1.route.path == path and &1.route.target == target))
+    end
+
+    {exact_index, wildcard_index} =
+      if wildcard_path?(path) do
+        {router.exact_index,
+         delete_trie_path(router.wildcard_index, String.split(path, "."), reject)}
+      else
+        exact =
+          case reject.(Map.get(router.exact_index, path, [])) do
+            [] -> Map.delete(router.exact_index, path)
+            entries -> Map.put(router.exact_index, path, entries)
+          end
+
+        {exact, router.wildcard_index}
+      end
+
+    %{
+      router
+      | entries: reject.(router.entries),
+        exact_index: exact_index,
+        wildcard_index: wildcard_index
+    }
+  end
+
+  @doc false
   @spec lookup(Router.t(), String.t(), Jido.Signal.t()) :: [term()]
   def lookup(%Router{} = router, type, signal) do
     (Map.get(router.exact_index, type, []) ++
@@ -244,15 +273,17 @@ defmodule Jido.Signal.Router.Index do
        ),
        do: {visited, matches}
 
-  defp delete_trie_path(node, []), do: %{node | terminals: []}
+  defp delete_trie_path(node, segments), do: delete_trie_path(node, segments, fn _ -> [] end)
 
-  defp delete_trie_path(node, [segment | rest]) do
+  defp delete_trie_path(node, [], reject), do: %{node | terminals: reject.(node.terminals)}
+
+  defp delete_trie_path(node, [segment | rest], reject) do
     case get_trie_child(node, segment) do
       nil ->
         node
 
       child ->
-        child = delete_trie_path(child, rest)
+        child = delete_trie_path(child, rest, reject)
         put_or_delete_trie_child(node, segment, child)
     end
   end
