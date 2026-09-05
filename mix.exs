@@ -87,6 +87,7 @@ defmodule Jido.Signal.MixProject do
         {"guides/signal-router.md", title: "Signal Router"},
         {"guides/event-bus.md", title: "Event Bus"},
         {"guides/advanced.md", title: "Advanced Usage"},
+        {"guides/benchmarks.md", title: "Benchmarks"},
         {"guides/v2-to-v3.md", title: "Migrate from v2 to v3"}
       ],
       groups_for_extras: [
@@ -108,7 +109,7 @@ defmodule Jido.Signal.MixProject do
           "guides/signal-router.md",
           "guides/event-bus.md"
         ],
-        "Advanced Use": ["guides/advanced.md"],
+        "Advanced Use": ["guides/advanced.md", "guides/benchmarks.md"],
         Upgrade: ["guides/v2-to-v3.md"]
       ],
       extra_section: "Guides",

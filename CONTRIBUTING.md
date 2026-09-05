@@ -80,6 +80,10 @@ gate requires at least 90 percent total coverage.
 
 ## Test rules
 
+For performance changes, use the [benchmark suite](guides/benchmarks.md).
+It writes JSON and Markdown reports and compares runs with matching settings.
+CI runs its smoke profile and checks results and process cleanup.
+
 - Test success and error paths through the public API.
 - Use `async: true` only when the test and its fixtures are isolated.
 - Use monitors and explicit messages for process synchronization.

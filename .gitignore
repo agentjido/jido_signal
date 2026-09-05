@@ -31,3 +31,6 @@ jido_signal-*.tar
 # Mnesia data files
 Mnesia.*
 MnesiaCore.*
+
+# Machine-specific benchmark output.
+/bench/results/

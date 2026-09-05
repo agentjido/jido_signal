@@ -543,6 +543,7 @@ you convert stored Signals or Bus subscriptions.
 **Advanced use**
 
 - **[Advanced Usage](guides/advanced.md)** - Add custom adapters, telemetry, and test support
+- **[Benchmarks](guides/benchmarks.md)** - Measure Signal operations and compare reports
 
 **Upgrade**
 
@@ -584,6 +585,20 @@ mix hex.audit
 
 `mix quality` runs formatting, compilation with warnings as errors, Doctor,
 ExDoc, Credo, and Dialyzer. The coverage floor is 90 percent.
+
+### Benchmarks
+
+```bash
+ERL_FLAGS='+S 2:2' mix run bench/run.exs --output bench/results/before
+```
+
+The suite measures construction, serialization, routing, dispatch, and Bus
+operations. It writes JSON and Markdown reports. See the
+[benchmark guide](guides/benchmarks.md) for profiles and comparison commands.
+
+The suite includes concurrent publishers, separate consumers, queued delivery,
+durable recovery, large route sets and logs, Base64 and batch serialization,
+and failure cases. Comparison commands can enforce time and memory budgets.
 
 ### Generate Documentation
 
