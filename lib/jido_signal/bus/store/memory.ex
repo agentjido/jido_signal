@@ -225,6 +225,12 @@ defmodule Jido.Signal.Bus.Store.Memory do
     end
   end
 
+  defp retain_within_bound(records, record_count, %{subscriptions: subscriptions} = state)
+       when map_size(subscriptions) == 0 do
+    remove_count = max(record_count - state.max_records, 0)
+    {:ok, remove_oldest(records, remove_count), record_count - remove_count}
+  end
+
   defp retain_within_bound(records, record_count, state) do
     remove_count = max(record_count - state.max_records, 0)
 
@@ -235,6 +241,13 @@ defmodule Jido.Signal.Bus.Store.Memory do
       :full ->
         {:error, {:store_full, blocking_subscription_ids(records, state.subscriptions)}}
     end
+  end
+
+  defp remove_oldest(records, 0), do: records
+
+  defp remove_oldest(records, count) do
+    {_cursor, _record, retained} = :gb_trees.take_smallest(records)
+    remove_oldest(retained, count - 1)
   end
 
   defp releasable_cursors(_records, _subscriptions, 0), do: {:ok, []}

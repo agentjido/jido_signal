@@ -159,6 +159,26 @@ defmodule Jido.Signal.Bus.Store.MemoryTest do
     end
   end
 
+  test "trims large bursts after the last durable subscription is deleted" do
+    assert {:ok, state} = Memory.init(max_records: 3)
+    assert {:ok, state} = Memory.put_subscription(subscription("pin", "orders.**", 0), state)
+    initial = for cursor <- 1..3, do: record(cursor, "r#{cursor}")
+    assert {:ok, state} = Memory.append(initial, state)
+    assert {:error, {:store_full, ["pin"]}} = Memory.append([record(4, "r4")], state)
+    assert {:ok, ^initial} = Memory.read([], state)
+    assert {:ok, state} = Memory.delete_subscription("pin", state)
+    burst = for cursor <- 4..12, do: record(cursor, "r#{cursor}")
+    assert {:ok, state} = Memory.append(burst, state)
+    assert state.record_count == 3
+    assert {:ok, 12} = Memory.latest_cursor(state)
+    assert {:ok, retained} = Memory.read([], state)
+    assert Enum.map(retained, & &1["cursor"]) == [10, 11, 12]
+    assert {:ok, ^state} = Memory.append([], state)
+    assert {:ok, state} = Memory.append([record(13, "r13")], state)
+    assert {:ok, retained} = Memory.read([], state)
+    assert Enum.map(retained, & &1["cursor"]) == [11, 12, 13]
+  end
+
   defp record(cursor, id) do
     %{
       "format_version" => 1,
