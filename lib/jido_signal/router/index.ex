@@ -285,27 +285,19 @@ defmodule Jido.Signal.Router.Index do
 
   defp pattern_complexity(segments) do
     length = length(segments)
-    base_score = length * 2000
-
-    exact_score =
-      segments
-      |> Enum.with_index()
-      |> Enum.reduce(0, fn
-        {segment, _index}, score when segment in ["*", "**"] -> score
-        {_segment, index}, score -> score + 3000 * (length - index)
-      end)
-
-    wildcard_penalty =
-      segments
-      |> Enum.with_index()
-      |> Enum.reduce(0, fn
-        {"*", index}, score -> score + 1000 - index * 100
-        {"**", index}, score -> score + 2000 - index * 200
-        {_segment, _index}, score -> score
-      end)
-
-    base_score + exact_score - wildcard_penalty
+    pattern_complexity(segments, length, 0, length * 2000)
   end
+
+  defp pattern_complexity([], _length, _index, score), do: score
+
+  defp pattern_complexity(["*" | rest], length, index, score),
+    do: pattern_complexity(rest, length, index + 1, score - 1000 + index * 100)
+
+  defp pattern_complexity(["**" | rest], length, index, score),
+    do: pattern_complexity(rest, length, index + 1, score - 2000 + index * 200)
+
+  defp pattern_complexity([_segment | rest], length, index, score),
+    do: pattern_complexity(rest, length, index + 1, score + 3000 * (length - index))
 
   defp precedence_key(entry) do
     {entry.class, entry.complexity, entry.route.priority, -entry.order}
