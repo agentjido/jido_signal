@@ -13,6 +13,7 @@ defmodule Jido.Signal.Bus.Store.Memory do
   @behaviour Jido.Signal.Bus.Store
 
   alias Jido.Signal.Router
+  alias Jido.Signal.Router.{Index, Route}
 
   @default_max_records 100_000
 
@@ -66,14 +67,19 @@ defmodule Jido.Signal.Bus.Store.Memory do
     path = Keyword.get(opts, :path)
     limit = Keyword.get(opts, :limit, :infinity)
 
-    if valid_read_options?(after_cursor, path, limit) do
-      records =
-        :gb_trees.iterator_from(after_cursor + 1, state.records)
-        |> collect_records(path, limit, [])
+    cond do
+      not valid_read_options?(after_cursor, path, limit) ->
+        {:error, :invalid_read_options}
 
-      {:ok, records}
-    else
-      {:error, :invalid_read_options}
+      not is_nil(path) and Route.validate_path(path, []) != :ok ->
+        {:ok, []}
+
+      true ->
+        records =
+          :gb_trees.iterator_from(after_cursor + 1, state.records)
+          |> collect_records(path, limit, [])
+
+        {:ok, records}
     end
   end
 
@@ -165,7 +171,7 @@ defmodule Jido.Signal.Bus.Store.Memory do
         Enum.reverse(records)
 
       {_cursor, record, next_iterator} ->
-        if is_nil(path) or Router.matches?(Map.fetch!(record, "type"), path) do
+        if is_nil(path) or Index.matches?(Map.fetch!(record, "type"), path) do
           collect_records(next_iterator, path, decrement(limit), [record | records])
         else
           collect_records(next_iterator, path, limit, records)

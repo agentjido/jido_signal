@@ -103,6 +103,30 @@ defmodule Jido.Signal.Bus.Store.MemoryTest do
              Memory.put_subscription(%{original | "cursor" => 0}, state)
   end
 
+  test "filters replay before applying the limit and keeps invalid patterns empty" do
+    assert {:ok, state} = Memory.init([])
+
+    records = [
+      record(1, "first"),
+      Map.put(record(2, "audit"), "type", "audit.saved"),
+      record(3, "third"),
+      record(4, "fourth")
+    ]
+
+    assert {:ok, state} = Memory.append(records, state)
+
+    for path <- ["orders.created", "orders.*", "orders.**", "**.created"] do
+      assert {:ok, [result]} = Memory.read([after_cursor: 1, path: path, limit: 1], state)
+      assert result["cursor"] == 3
+    end
+
+    for path <- ["", "orders..created", "**.**", "orders.invalid*", "absent.*"] do
+      assert {:ok, []} = Memory.read([path: path], state)
+    end
+
+    assert {:error, :invalid_read_options} = Memory.read([path: "**.**", limit: 0], state)
+  end
+
   defp record(cursor, id) do
     %{
       "format_version" => 1,
