@@ -75,9 +75,11 @@ defmodule Jido.Signal.Bus.Store.Memory do
         {:ok, []}
 
       true ->
+        pattern = if is_nil(path), do: nil, else: Index.compile_pattern(path)
+
         records =
           :gb_trees.iterator_from(after_cursor + 1, state.records)
-          |> collect_records(path, limit, [])
+          |> collect_records(pattern, limit, [])
 
         {:ok, records}
     end
@@ -171,7 +173,7 @@ defmodule Jido.Signal.Bus.Store.Memory do
         Enum.reverse(records)
 
       {_cursor, record, next_iterator} ->
-        if is_nil(path) or Index.matches?(Map.fetch!(record, "type"), path) do
+        if is_nil(path) or Index.matches_compiled?(Map.fetch!(record, "type"), path) do
           collect_records(next_iterator, path, decrement(limit), [record | records])
         else
           collect_records(next_iterator, path, limit, records)

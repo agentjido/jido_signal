@@ -80,6 +80,22 @@ defmodule Jido.Signal.Router.Index do
   end
 
   @doc false
+  @spec compile_pattern(String.t()) :: String.t() | tuple()
+  def compile_pattern(pattern) do
+    if wildcard_path?(pattern),
+      do: pattern |> String.split(".") |> List.to_tuple(),
+      else: pattern
+  end
+
+  @doc false
+  @spec matches_compiled?(String.t(), String.t() | tuple()) :: boolean()
+  def matches_compiled?(type, pattern) when is_binary(pattern), do: type == pattern
+
+  def matches_compiled?(type, pattern) when is_tuple(pattern) do
+    match_tuples?(type |> String.split(".") |> List.to_tuple(), pattern)
+  end
+
+  @doc false
   @spec has_route?(Router.t(), String.t()) :: boolean()
   def has_route?(%Router{} = router, path) do
     if wildcard_path?(path) do
@@ -315,9 +331,10 @@ defmodule Jido.Signal.Router.Index do
   defp targets(%{route: %Route{target: target}}), do: [target]
 
   defp match_segments?(type_segments, pattern_segments) do
-    type_segments = List.to_tuple(type_segments)
-    pattern_segments = List.to_tuple(pattern_segments)
+    match_tuples?(List.to_tuple(type_segments), List.to_tuple(pattern_segments))
+  end
 
+  defp match_tuples?(type_segments, pattern_segments) do
     do_match_segments(
       type_segments,
       pattern_segments,

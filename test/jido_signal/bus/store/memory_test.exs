@@ -127,6 +127,38 @@ defmodule Jido.Signal.Bus.Store.MemoryTest do
     assert {:error, :invalid_read_options} = Memory.read([path: "**.**", limit: 0], state)
   end
 
+  test "replay preserves exact, single, and multiple globstar matching" do
+    types = [
+      "orders",
+      "orders.created",
+      "orders.eu.created",
+      "audit",
+      "audit.eu.created",
+      "orders.created.extra"
+    ]
+
+    records =
+      for {type, cursor} <- Enum.with_index(types, 1),
+          do: Map.put(record(cursor, "r#{cursor}"), "type", type)
+
+    assert {:ok, state} = Memory.init([])
+    assert {:ok, state} = Memory.append(records, state)
+
+    for {path, cursors} <- [
+          {"orders", [1]},
+          {"orders.*", [2]},
+          {"orders.**", [1, 2, 3, 6]},
+          {"**.created", [2, 3, 5]},
+          {"**.eu.**", [3, 5]},
+          {"**.orders.**.created.**", [2, 3, 6]}
+        ] do
+      assert {:ok, found} = Memory.read([path: path], state)
+      assert Enum.map(found, & &1["cursor"]) == cursors
+      assert {:ok, limited} = Memory.read([path: path, after_cursor: 1, limit: 2], state)
+      assert Enum.map(limited, & &1["cursor"]) == Enum.take(Enum.filter(cursors, &(&1 > 1)), 2)
+    end
+  end
+
   defp record(cursor, id) do
     %{
       "format_version" => 1,
