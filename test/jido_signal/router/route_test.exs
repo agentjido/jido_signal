@@ -1,8 +1,13 @@
 defmodule Jido.Signal.Router.RouteTest do
-  use ExUnit.Case, async: true
+  use JidoSignalTest.Case, async: true
 
   alias Jido.Signal.Router
   alias Jido.Signal.Router.Route
+  alias JidoSignalTest.Fixtures.Signals.UserCreated
+
+  defmodule WildcardType do
+    use Jido.Signal, type: "user.*", default_source: "/test"
+  end
 
   describe "normalize/1" do
     test "accepts Route values and all tuple forms" do
@@ -43,6 +48,65 @@ defmodule Jido.Signal.Router.RouteTest do
     test "returns a structured error for an invalid specification" do
       assert {:error, error} = Router.normalize({:invalid, "format"})
       assert error.message == "Invalid route specification format"
+    end
+
+    test "accepts a Jido.Signal module as the path" do
+      match = fn _signal -> true end
+
+      assert {:ok, [%Route{path: "user.created", target: :created}]} =
+               Router.normalize({UserCreated, :created})
+
+      assert {:ok, [%Route{path: "user.created", target: :created, priority: 10}]} =
+               Router.normalize({UserCreated, :created, 10})
+
+      assert {:ok, [%Route{path: "user.created", match: ^match, target: :created}]} =
+               Router.normalize({UserCreated, match, :created})
+
+      assert {:ok, [%Route{path: "user.created", target: :created}]} =
+               Router.normalize(%Route{path: UserCreated, target: :created})
+    end
+
+    test "accepts an MFA match predicate" do
+      match = {__MODULE__, :always, []}
+
+      assert {:ok, [%Route{path: "matched", match: ^match, target: :matched}]} =
+               Router.normalize({"matched", match, :matched})
+
+      assert {:ok,
+              [%Route{path: "matched.priority", match: ^match, target: :matched, priority: 20}]} =
+               Router.normalize({"matched.priority", match, :matched, 20})
+    end
+
+    test "rejects a loaded module that is not a Jido.Signal definition" do
+      assert {:error, error} = Router.normalize({String, :target})
+      assert error.message == "Expected a route path string or a Jido.Signal module"
+      assert error.field == "path"
+      assert error.value == String
+    end
+  end
+
+  describe "path/1" do
+    test "returns strings and Signal module types" do
+      assert {:ok, "user.created"} = Router.path("user.created")
+      assert {:ok, "user.created"} = Router.path(UserCreated)
+    end
+
+    test "rejects values that are not a path or Signal module" do
+      assert {:error, error} = Router.path(String)
+      assert error.message == "Expected a route path string or a Jido.Signal module"
+
+      assert {:error, error} = Router.path(%{})
+      assert error.message == "Expected a route path string or a Jido.Signal module"
+    end
+
+    test "rejects a wildcard type from a Signal module" do
+      assert {:error, error} = Router.path(WildcardType)
+      assert error.message == "Signal module type must be an exact route path"
+      assert error.value == WildcardType
+      assert error.details.type == "user.*"
+
+      assert {:error, error} = Router.new({WildcardType, :target})
+      assert error.message == "Signal module type must be an exact route path"
     end
   end
 
@@ -95,7 +159,7 @@ defmodule Jido.Signal.Router.RouteTest do
       assert {:error, error} =
                Router.validate(%Route{path: "test", target: :target, match: "invalid"})
 
-      assert error.message == "Match must be a function that takes one argument"
+      assert error.message == "Match must be a unary function or a {module, function, args} MFA"
     end
 
     test "rejects adjacent multi wildcards at each position" do
@@ -123,6 +187,9 @@ defmodule Jido.Signal.Router.RouteTest do
       assert {:error, "Priority must be an integer"} = Route.validate_priority("high", [])
       assert :ok = Route.validate_match(nil, [])
       assert :ok = Route.validate_match(fn _signal -> true end, [])
+      assert :ok = Route.validate_match({__MODULE__, :always, []}, [])
     end
   end
+
+  def always(_signal), do: true
 end

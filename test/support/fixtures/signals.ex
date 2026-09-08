@@ -14,4 +14,12 @@ defmodule JidoSignalTest.Fixtures.Signals do
       type: "doc.example",
       schema: Zoi.object(%{user_id: Zoi.string(), message: Zoi.string()})
   end
+
+  defmodule UserCreated do
+    @moduledoc false
+
+    use Jido.Signal,
+      type: "user.created",
+      default_source: "/accounts"
+  end
 end

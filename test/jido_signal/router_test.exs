@@ -201,6 +201,18 @@ defmodule Jido.Signal.RouterTest do
       assert Router.count(unchanged) == 1
     end
 
+    test "returns an error for an invalid module removal path" do
+      router = Router.new!({"keep", :target})
+
+      assert {:error, error} = Router.remove(router, String)
+      assert error.message == "Expected a route path string or a Jido.Signal module"
+      assert error.value == String
+
+      assert {:error, error} = Router.remove(router, ["keep", String])
+      assert error.value == String
+      assert Router.count(router) == 1
+    end
+
     test "updates exact and wildcard indexes during add and remove" do
       router = Router.new!({"user.created", :exact})
 
@@ -235,6 +247,43 @@ defmodule Jido.Signal.RouterTest do
       assert Router.has_route?(router, "user.*")
       refute Router.has_route?(router, "user.updated")
       refute Router.has_route?(router, "invalid..path")
+    end
+
+    test "routes through an MFA match predicate with extra args" do
+      router =
+        Router.new!({"payment.processed", {__MODULE__, :amount_gt?, [1_000]}, :large})
+
+      large = %Signal{
+        id: "mfa-large",
+        source: "/test",
+        type: "payment.processed",
+        data: %{amount: 2_000}
+      }
+
+      small = %Signal{
+        id: "mfa-small",
+        source: "/test",
+        type: "payment.processed",
+        data: %{amount: 50}
+      }
+
+      assert {:ok, [:large]} = Router.route(router, large)
+      assert {:error, %Jido.Signal.Error.RoutingError{}} = Router.route(router, small)
+    end
+
+    test "accepts a Jido.Signal module as a route path" do
+      alias JidoSignalTest.Fixtures.Signals.UserCreated
+
+      router = Router.new!({UserCreated, :created})
+      signal = UserCreated.new!(%{user_id: "123"})
+
+      assert {:ok, [:created]} = Router.route(router, signal)
+      assert Router.has_route?(router, UserCreated)
+      assert Router.matches?("user.created", UserCreated)
+      assert [^signal] = Router.filter([signal], UserCreated)
+
+      assert {:ok, removed} = Router.remove(router, UserCreated)
+      assert Router.empty?(removed)
     end
   end
 
@@ -464,4 +513,6 @@ defmodule Jido.Signal.RouterTest do
       assert Enum.any?(targets, &match?({:logger, [level: :info]}, &1))
     end
   end
+
+  def amount_gt?(signal, min), do: signal.data.amount > min
 end

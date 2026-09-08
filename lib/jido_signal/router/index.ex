@@ -348,10 +348,8 @@ defmodule Jido.Signal.Router.Index do
     {entry.class, entry.complexity, entry.route.priority, -entry.order}
   end
 
-  defp predicate_matches?(nil, _signal), do: true
-
   defp predicate_matches?(match, signal) do
-    match.(signal) == true
+    Route.matched?(match, signal)
   rescue
     _error -> false
   catch

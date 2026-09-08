@@ -86,6 +86,8 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - Wildcard support (`*` single-level, `**` multi-level)
 - Priority-based execution ordering
 - Custom pattern matching functions
+- `use Jido.Signal` modules as exact route paths
+- `use Jido.Signal.Router` for compiled route modules
 
 ### **Pluggable Dispatch System**
 - Multiple delivery adapters (PID, PubSub, HTTP, Logger, Bus)

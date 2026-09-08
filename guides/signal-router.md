@@ -31,6 +31,60 @@ Use `new/2` when configuration errors must be returned:
 {:ok, router} = Router.new([{"user.created", HandleUserCreated}])
 ```
 
+## Typed Signal Modules
+
+A `use Jido.Signal` module is a valid route path when its `type/0` value is an
+exact path. The Router stores this value as an exact path. Use strings for
+wildcard routes.
+
+```elixir
+defmodule MyApp.UserCreated do
+  use Jido.Signal,
+    type: "user.created",
+    default_source: "/accounts"
+end
+
+router = Router.new!([
+  {MyApp.UserCreated, HandleUserCreated},
+  {"user.*", HandleUserEvent}
+])
+
+{:ok, signal} = MyApp.UserCreated.new(%{user_id: "123"})
+{:ok, [HandleUserCreated, HandleUserEvent]} = Router.route(router, signal)
+```
+
+`Router.path/1` resolves a string or Signal module to a path string.
+`has_route?/2`, `remove/2`, `matches?/2`, and `filter/2` accept the same
+values.
+
+## Router Modules
+
+`use Jido.Signal.Router` compiles the same specifications into a module. It
+does not use Spark. Each `route` is one `new/1` specification. Match
+predicates in this compiled form must be `{Module, :function, args}` MFA
+values so the Router can be stored in the module. Anonymous functions remain
+valid only for runtime `new/1` and `add/2`.
+
+```elixir
+defmodule MyApp.UserRouter do
+  use Jido.Signal.Router
+
+  route MyApp.UserCreated, HandleUserCreated
+  route "user.*", HandleUserEvent
+  route "audit.**", AuditEvent, -50
+  route "job.completed", {MyApp.Filter, :important?, []}, :notify
+end
+
+{:ok, targets} = MyApp.UserRouter.route(signal)
+MyApp.UserRouter.router()
+MyApp.UserRouter.routes()
+```
+
+An empty module is a valid empty Router. Invalid paths, non-Signal module
+paths, Signal module types with wildcards, and anonymous match functions fail
+compilation. Route declarations can use module attributes for paths,
+priorities, and MFA arguments.
+
 ## Path Patterns
 
 An exact path matches one Signal type:
@@ -99,8 +153,10 @@ router =
 
 ## Conditional Routes
 
-`Route.match` is an optional runtime predicate. It runs after the path matches.
-It must accept one Signal and return `true` for a match.
+`Route.match` is an optional runtime predicate. It runs after the path matches
+and must return `true`. Runtime routers accept a unary function or a
+`{Module, :function, args}` MFA. The Signal is prepended to the MFA args.
+Compiled `use Jido.Signal.Router` modules accept only the MFA form.
 
 ```elixir
 large_payment? = fn signal -> signal.data.amount > 1_000 end
@@ -110,9 +166,15 @@ large_payment? = fn signal -> signal.data.amount > 1_000 end
     router,
     {"payment.processed", large_payment?, HandleLargePayment, 50}
   )
+
+{:ok, router} =
+  Router.add(
+    router,
+    {"payment.processed", {MyApp.Filter, :amount_gt?, [1_000]}, HandleLargePayment, 50}
+  )
 ```
 
-Router creation checks the predicate arity but does not execute it. A predicate
+Router creation checks the predicate shape but does not execute it. A predicate
 that raises or returns a value other than `true` does not match.
 
 ## Manage Routes

@@ -31,21 +31,46 @@ defmodule Jido.Signal.Router do
         Router.route(router, Signal.new!(type: "user.created", source: "/example"))
 
   A Route can also use a predicate. The predicate runs only after its path
-  matches:
+  matches. Runtime routers accept a unary function. Compiled `use
+  Jido.Signal.Router` modules accept only a `{module, function, args}` MFA:
 
       important? = fn signal -> signal.data[:important] == true end
       {:ok, router} = Router.add(router, {"job.completed", important?, :notify})
+      {:ok, router} = Router.add(router, {"job.completed", {MyApp.Filter, :important?, []}, :notify})
 
   Router targets are generic terms. Dispatch target validation belongs to
   `Jido.Signal.Dispatch`.
+
+  A route path may be a string pattern or a module defined with
+  `use Jido.Signal`. A Signal module becomes its `type/0` value, which is
+  always an exact path.
+
+      defmodule MyApp.UserCreated do
+        use Jido.Signal, type: "user.created", default_source: "/accounts"
+      end
+
+      {:ok, router} = Router.new({MyApp.UserCreated, :create_user})
+
+  `use Jido.Signal.Router` compiles the same specifications into a module:
+
+      defmodule MyApp.UserRouter do
+        use Jido.Signal.Router
+
+        route MyApp.UserCreated, :create_user
+        route "user.*", :user_event
+        route "audit.**", :audit, -50
+        route "job.completed", {MyApp.Filter, :important?, []}, :notify
+      end
+
+      {:ok, [:create_user, :user_event]} = MyApp.UserRouter.route(signal)
   """
 
   alias Jido.Signal
   alias Jido.Signal.Error
   alias Jido.Signal.Router.Index
 
-  @type path :: String.t()
-  @type match :: (Signal.t() -> boolean())
+  @type path :: String.t() | module()
+  @type match :: (Signal.t() -> boolean()) | {module(), atom(), list()}
   @type priority :: -100..100
   @type target :: term()
 
@@ -88,17 +113,58 @@ defmodule Jido.Signal.Router do
   @type new_opts :: keyword()
 
   @doc """
+  Defines a Router module from `route` declarations.
+
+  Each `route` uses the same specifications as `new/1`. Paths may be strings
+  or `use Jido.Signal` modules. Match predicates in this compiled form must
+  be `{module, function, args}` MFA values, not anonymous functions. The
+  compiled module exposes `router/0`, `routes/0`, and `route/1`.
+  """
+  defmacro __using__(opts) do
+    if opts != [] do
+      raise ArgumentError, "use Jido.Signal.Router does not accept options"
+    end
+
+    quote do
+      import Jido.Signal.Router.DSL, only: [route: 2, route: 3, route: 4]
+      @before_compile Jido.Signal.Router.DSL
+      Module.register_attribute(__MODULE__, :__jido_signal_routes__, accumulate: true)
+    end
+  end
+
+  @doc """
+  Resolves a route path.
+
+  Accepts a path string or a module defined with `use Jido.Signal`. A Signal
+  module becomes its `type/0` value. This does not create atoms.
+  """
+  @spec path(term()) :: {:ok, String.t()} | {:error, term()}
+  def path(path) when is_binary(path), do: {:ok, path}
+
+  def path(module) when is_atom(module) do
+    if Signal.defined?(module) do
+      signal_module_path(module, module.type())
+    else
+      invalid_path(module)
+    end
+  end
+
+  def path(path), do: invalid_path(path)
+
+  @doc """
   Normalizes and validates one or more route specifications.
 
   Accepted forms are `%Route{}`, `{path, target}`, `{path, target, priority}`,
-  `{path, match, target}`, and `{path, match, target, priority}`.
+  `{path, match, target}`, and `{path, match, target, priority}`. `path` may
+  be a string or a `use Jido.Signal` module. `match` may be a unary function
+  or a `{module, function, args}` MFA.
   """
   @spec normalize(Route.t() | [Route.t()] | route_spec() | [route_spec()]) ::
           {:ok, [Route.t()]} | {:error, term()}
   def normalize(%Route{} = route) do
-    case validate(route) do
-      {:ok, validated} -> {:ok, [validated]}
-      {:error, _error} = error -> error
+    with {:ok, route} <- normalize_route_spec(route),
+         {:ok, validated} <- validate(route) do
+      {:ok, [validated]}
     end
   end
 
@@ -156,12 +222,15 @@ defmodule Jido.Signal.Router do
   end
 
   @doc "Removes all routes that have one of the specified paths."
-  @spec remove(t(), String.t() | [String.t()]) :: {:ok, t()}
+  @spec remove(t(), path() | [path()]) :: {:ok, t()} | {:error, term()}
   def remove(%Router{} = router, paths) when is_list(paths) do
-    {:ok, Index.remove(router, paths)}
+    with {:ok, paths} <- resolve_paths(paths) do
+      {:ok, Index.remove(router, paths)}
+    end
   end
 
-  def remove(%Router{} = router, path) when is_binary(path), do: remove(router, [path])
+  def remove(%Router{} = router, path) when is_binary(path) or is_atom(path),
+    do: remove(router, [path])
 
   @doc "Appends routes or another Router to a Router."
   @spec merge(t(), t() | [Route.t()]) :: {:ok, t()} | {:error, term()}
@@ -259,10 +328,16 @@ defmodule Jido.Signal.Router do
 
   @doc "Checks if a Signal type matches a route path pattern."
   @spec matches?(String.t() | term(), String.t() | term()) :: boolean()
-  def matches?(type, pattern) when is_binary(type) and is_binary(pattern) do
-    case Route.validate_path(pattern, []) do
-      :ok -> Index.matches?(type, pattern)
-      {:error, _reason} -> false
+  def matches?(type, pattern) when is_binary(type) do
+    case path(pattern) do
+      {:ok, pattern} ->
+        case Route.validate_path(pattern, []) do
+          :ok -> Index.matches?(type, pattern)
+          {:error, _reason} -> false
+        end
+
+      {:error, _reason} ->
+        false
     end
   end
 
@@ -270,13 +345,19 @@ defmodule Jido.Signal.Router do
 
   @doc "Filters Signals whose types match a route path pattern."
   @spec filter([Signal.t()] | term(), String.t() | term()) :: [Signal.t()]
-  def filter(signals, pattern) when is_list(signals) and is_binary(pattern) do
-    case Route.validate_path(pattern, []) do
-      :ok ->
-        Enum.filter(signals, fn
-          %Signal{type: type} when is_binary(type) -> Index.matches?(type, pattern)
-          _signal -> false
-        end)
+  def filter(signals, pattern) when is_list(signals) do
+    case path(pattern) do
+      {:ok, pattern} ->
+        case Route.validate_path(pattern, []) do
+          :ok ->
+            Enum.filter(signals, fn
+              %Signal{type: type} when is_binary(type) -> Index.matches?(type, pattern)
+              _signal -> false
+            end)
+
+          {:error, _reason} ->
+            []
+        end
 
       {:error, _reason} ->
         []
@@ -286,34 +367,125 @@ defmodule Jido.Signal.Router do
   def filter(_signals, _pattern), do: []
 
   @doc "Checks if an exact route path is registered."
-  @spec has_route?(t(), String.t()) :: boolean()
-  def has_route?(%Router{} = router, path) when is_binary(path) do
-    case Route.validate_path(path, []) do
-      :ok -> Index.has_route?(router, path)
-      {:error, _reason} -> false
+  @spec has_route?(t(), term()) :: boolean()
+  def has_route?(%Router{} = router, path) do
+    case path(path) do
+      {:ok, path} ->
+        case Route.validate_path(path, []) do
+          :ok -> Index.has_route?(router, path)
+          {:error, _reason} -> false
+        end
+
+      {:error, _reason} ->
+        false
     end
   end
 
   def has_route?(_router, _path), do: false
 
-  defp normalize_route_spec(%Route{} = route), do: {:ok, route}
+  defp normalize_route_spec(%Route{} = route) do
+    case resolve_path(route.path) do
+      {:ok, path} -> {:ok, %{route | path: path}}
+      :invalid_path -> {:ok, route}
+      {:error, _error} = error -> error
+    end
+  end
 
-  defp normalize_route_spec({path, target}) when is_binary(path),
-    do: {:ok, %Route{path: path, target: target}}
+  defp normalize_route_spec({path, target} = spec) do
+    bind_route(spec, resolve_path(path), fn path ->
+      %Route{path: path, target: target}
+    end)
+  end
 
-  defp normalize_route_spec({path, target, priority})
-       when is_binary(path) and is_integer(priority),
-       do: {:ok, %Route{path: path, target: target, priority: priority}}
+  defp normalize_route_spec({path, target, priority} = spec) when is_integer(priority) do
+    bind_route(spec, resolve_path(path), fn path ->
+      %Route{path: path, target: target, priority: priority}
+    end)
+  end
 
-  defp normalize_route_spec({path, match, target})
-       when is_binary(path) and is_function(match, 1),
-       do: {:ok, %Route{path: path, match: match, target: target}}
+  defp normalize_route_spec({path, match, target} = spec) do
+    if match_predicate?(match) do
+      bind_route(spec, resolve_path(path), fn path ->
+        %Route{path: path, match: match, target: target}
+      end)
+    else
+      invalid_route_spec(spec)
+    end
+  end
 
-  defp normalize_route_spec({path, match, target, priority})
-       when is_binary(path) and is_function(match, 1) and is_integer(priority),
-       do: {:ok, %Route{path: path, match: match, target: target, priority: priority}}
+  defp normalize_route_spec({path, match, target, priority} = spec) when is_integer(priority) do
+    if match_predicate?(match) do
+      bind_route(spec, resolve_path(path), fn path ->
+        %Route{path: path, match: match, target: target, priority: priority}
+      end)
+    else
+      invalid_route_spec(spec)
+    end
+  end
 
   defp normalize_route_spec(invalid), do: invalid_route_spec(invalid)
+
+  defp match_predicate?(match) when is_function(match, 1), do: true
+
+  defp match_predicate?({module, function, args})
+       when is_atom(module) and is_atom(function) and is_list(args),
+       do: true
+
+  defp match_predicate?(_match), do: false
+
+  defp bind_route(spec, resolved, fun) do
+    case resolved do
+      {:ok, path} -> {:ok, fun.(path)}
+      :invalid_path -> invalid_route_spec(spec)
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp resolve_path(path) do
+    case path(path) do
+      {:ok, path} ->
+        {:ok, path}
+
+      {:error, _error} = error ->
+        if is_atom(path) and not Code.ensure_loaded?(path), do: :invalid_path, else: error
+    end
+  end
+
+  defp resolve_paths(paths) do
+    Enum.reduce_while(paths, {:ok, []}, fn input, {:ok, resolved} ->
+      case path(input) do
+        {:ok, path} -> {:cont, {:ok, [path | resolved]}}
+        {:error, _error} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, resolved} -> {:ok, Enum.reverse(resolved)}
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp signal_module_path(module, path) when is_binary(path) do
+    if String.contains?(path, "*") do
+      {:error,
+       Error.validation_error("Signal module type must be an exact route path", %{
+         field: "path",
+         value: module,
+         type: path
+       })}
+    else
+      {:ok, path}
+    end
+  end
+
+  defp signal_module_path(module, _path), do: invalid_path(module)
+
+  defp invalid_path(path) do
+    {:error,
+     Error.validation_error("Expected a route path string or a Jido.Signal module", %{
+       field: "path",
+       value: path
+     })}
+  end
 
   defp invalid_route_spec(invalid) do
     {:error,
@@ -325,8 +497,8 @@ defmodule Jido.Signal.Router do
            "%Route{}",
            "{path, target}",
            "{path, target, priority}",
-           "{path, match_fn, target}",
-           "{path, match_fn, target, priority}"
+           "{path, match, target}",
+           "{path, match, target, priority}"
          ]
        }
      )}

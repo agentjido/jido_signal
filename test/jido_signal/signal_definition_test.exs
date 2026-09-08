@@ -110,6 +110,11 @@ defmodule Jido.Signal.DefinitionTest do
       assert UserCreated.datacontenttype() == "application/json"
       assert UserCreated.dataschema() == "https://example.com/schemas/user-created"
       assert %Zoi.Types.Map{} = UserCreated.schema()
+      assert Jido.Signal.defined?(UserCreated)
+      refute Jido.Signal.defined?(Jido.Signal)
+      refute Jido.Signal.defined?(String)
+      refute Jido.Signal.defined?(:not_a_module)
+      refute Jido.Signal.defined?("user.created")
     end
   end
 

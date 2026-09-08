@@ -4,7 +4,9 @@ defmodule Jido.Signal.Router.Route do
 
   `path` selects Signal types. `target` is any value returned by the Router.
   `priority` orders routes with equal path specificity. An optional `match`
-  predicate can inspect the full Signal after the path matches.
+  predicate can inspect the full Signal after the path matches. Runtime
+  routers accept a unary function. Compiled routers accept only a
+  `{module, function, args}` MFA.
   """
 
   alias Jido.Signal
@@ -29,11 +31,13 @@ defmodule Jido.Signal.Router.Route do
             }
           )
 
+  @type match :: (Signal.t() -> boolean()) | {module(), atom(), list()}
+
   @type t :: %__MODULE__{
           path: String.t(),
           target: term(),
           priority: -100..100,
-          match: nil | (Signal.t() -> boolean())
+          match: nil | match()
         }
 
   @enforce_keys Zoi.Struct.enforce_keys(@schema)
@@ -81,8 +85,23 @@ defmodule Jido.Signal.Router.Route do
   def validate_match(nil, _opts), do: :ok
   def validate_match(match, _opts) when is_function(match, 1), do: :ok
 
+  def validate_match({module, function, args}, _opts)
+      when is_atom(module) and is_atom(function) and is_list(args),
+      do: :ok
+
   def validate_match(_match, _opts),
-    do: {:error, "Match must be a function that takes one argument"}
+    do: {:error, "Match must be a unary function or a {module, function, args} MFA"}
+
+  @doc false
+  @spec matched?(nil | match(), Signal.t()) :: boolean()
+  def matched?(nil, _signal), do: true
+
+  def matched?(match, signal) when is_function(match, 1), do: match.(signal) == true
+
+  def matched?({module, function, args}, signal)
+      when is_atom(module) and is_atom(function) and is_list(args) do
+    apply(module, function, [signal | args]) == true
+  end
 
   defp consecutive_multi_wildcards?(["**", "**" | _rest]), do: true
   defp consecutive_multi_wildcards?([_segment | rest]), do: consecutive_multi_wildcards?(rest)

@@ -48,6 +48,9 @@ defmodule Jido.Signal do
   A custom schema can accept any Signal data value. Its `validate_data/1` and
   `new/2` functions return Zoi validation errors directly. Its `new!/2`
   function raises the Zoi parse exception when data validation fails.
+
+  `Jido.Signal.defined?/1` recognizes these modules. `Jido.Signal.Router`
+  accepts them as route paths and uses `type/0` as the exact path.
   """
 
   alias Jido.Signal.Context
@@ -148,10 +151,27 @@ defmodule Jido.Signal do
   @spec schema() :: Zoi.schema()
   def schema, do: @signal_schema
 
+  @doc """
+  Returns true when `module` was defined with `use Jido.Signal`.
+
+  Does not create atoms. An atom that is not a loaded Signal module returns
+  false.
+  """
+  @spec defined?(term()) :: boolean()
+  def defined?(module) when is_atom(module) do
+    Code.ensure_loaded?(module) and function_exported?(module, :__signal_definition__, 0)
+  end
+
+  def defined?(_module), do: false
+
   @doc "Defines a custom Signal module with a static Zoi data schema."
   defmacro __using__(opts_ast) do
     quote location: :keep do
       @signal_definition Jido.Signal.__compile_definition__(unquote(opts_ast), __ENV__)
+
+      @doc false
+      @spec __signal_definition__() :: map()
+      def __signal_definition__, do: @signal_definition
 
       @doc "Returns the Signal type."
       @spec type() :: String.t()
