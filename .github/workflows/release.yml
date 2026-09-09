@@ -48,7 +48,7 @@ permissions:
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5
+    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5.2.6
     with:
       runner: blacksmith-2vcpu-ubuntu-2404
       operation: ${{ inputs.operation || 'auto' }}
@@ -57,5 +57,6 @@ jobs:
       hex_dry_run: ${{ inputs.hex_dry_run || false }}
       skip_tests: ${{ inputs.skip_tests || false }}
       version_override: ${{ inputs.version_override || '' }}
+      release_tag_scope: reachable
     secrets:
       HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
