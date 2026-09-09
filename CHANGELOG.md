@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+## [v2.3.0](https://github.com/agentjido/jido_signal/compare/v2.2.2...v2.3.0) (2026-09-09)
+
+
+
+
+### Features:
+
+* signal: support Zoi data schemas (#185) by mikehostetler
+
+### Bug Fixes:
+
+* deps: update igniter to 0.8.4 (#193) by mikehostetler
+
+* deps: update Mint to 1.10.0 by mikehostetler
+
+* deps: update Mint for CVE-2026-59249 by mikehostetler
+
 ## [v2.2.2](https://github.com/agentjido/jido_signal/compare/v2.2.1...v2.2.2) (2026-06-09)
 
 
