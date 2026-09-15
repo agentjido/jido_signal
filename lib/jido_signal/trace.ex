@@ -19,6 +19,11 @@ defmodule Jido.Signal.Trace do
   @traceparent "traceparent"
   @tracestate "tracestate"
   @traceparent_pattern ~r/\A00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})\z/
+  @trace_id_pattern ~r/\A[0-9a-f]{32}\z/
+  @span_id_pattern ~r/\A[0-9a-f]{16}\z/
+  @zero_trace_id String.duplicate("0", 32)
+  @zero_span_id String.duplicate("0", 16)
+  @tracestate_whitespace ~r/\A[ \t]+|[ \t]+\z/
 
   @schema Zoi.struct(
             __MODULE__,
@@ -102,7 +107,7 @@ defmodule Jido.Signal.Trace do
   @spec to_traceparent(t()) :: String.t()
   def to_traceparent(%__MODULE__{} = trace) do
     if valid?(trace) do
-      "00-#{trace.trace_id}-#{trace.span_id}-#{trace.trace_flags}"
+      format_traceparent(trace)
     else
       raise ArgumentError, "invalid Trace"
     end
@@ -132,7 +137,7 @@ defmodule Jido.Signal.Trace do
       {:ok, trace} ->
         attributes =
           %{
-            @traceparent => to_traceparent(trace),
+            @traceparent => format_traceparent(trace),
             @tracestate => trace.tracestate
           }
           |> Map.reject(fn {_name, value} -> is_nil(value) end)
@@ -176,10 +181,12 @@ defmodule Jido.Signal.Trace do
   def valid?(_value), do: false
 
   @doc false
-  def validate_trace_id(value, _opts), do: validate_id(value, 32, "trace ID")
+  def validate_trace_id(value, _opts),
+    do: validate_id(value, @trace_id_pattern, @zero_trace_id, "trace ID")
 
   @doc false
-  def validate_span_id(value, _opts), do: validate_id(value, 16, "span ID")
+  def validate_span_id(value, _opts),
+    do: validate_id(value, @span_id_pattern, @zero_span_id, "span ID")
 
   @doc false
   def validate_trace_flags(value, _opts) do
@@ -193,11 +200,10 @@ defmodule Jido.Signal.Trace do
   @doc false
   def validate_tracestate(value, _opts) do
     with true <-
-           is_binary(value) and String.valid?(value) and byte_size(value) <= 512 and
-             value == String.trim(value),
+           is_binary(value) and String.valid?(value) and byte_size(value) <= 512,
          members <- String.split(value, ",", trim: false),
-         true <- length(members) in 1..32,
          {:ok, keys} <- validate_tracestate_members(members),
+         true <- length(keys) <= 32,
          true <- length(Enum.uniq(keys)) == length(keys) do
       :ok
     else
@@ -215,6 +221,9 @@ defmodule Jido.Signal.Trace do
   end
 
   defp parse(trace), do: Zoi.parse(@schema, trace)
+
+  defp format_traceparent(trace),
+    do: "00-#{trace.trace_id}-#{trace.span_id}-#{trace.trace_flags}"
 
   defp build!(trace) do
     case parse(trace) do
@@ -240,20 +249,23 @@ defmodule Jido.Signal.Trace do
     end
   end
 
-  defp validate_id(value, size, name) do
-    zero = String.duplicate("0", size)
-    pattern = ~r/\A[0-9a-f]{#{size}}\z/
-
+  defp validate_id(value, pattern, zero, name) do
     if is_binary(value) and value != zero and Regex.match?(pattern, value) do
       :ok
     else
-      {:error, "#{name} must be #{size} lower-case hexadecimal characters and not all zero"}
+      {:error,
+       "#{name} must be #{byte_size(zero)} lower-case hexadecimal characters and not all zero"}
     end
   end
 
   defp validate_tracestate_members(members) do
     Enum.reduce_while(members, {:ok, []}, fn member, {:ok, keys} ->
-      case member |> String.trim(" \t") |> String.split("=", parts: 2) do
+      member = Regex.replace(@tracestate_whitespace, member, "")
+
+      case String.split(member, "=", parts: 2) do
+        [""] ->
+          {:cont, {:ok, keys}}
+
         [key, value] ->
           if valid_tracestate_key?(key) and valid_tracestate_value?(value) do
             {:cont, {:ok, [key | keys]}}

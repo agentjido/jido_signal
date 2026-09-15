@@ -234,10 +234,11 @@ defmodule Jido.Signal.Bus.Store.Memory do
   defp retain_within_bound(records, record_count, state) do
     remove_count = max(record_count - state.max_records, 0)
 
-    with {:ok, cursors} <- releasable_cursors(records, state.subscriptions, remove_count) do
-      retained = Enum.reduce(cursors, records, &:gb_trees.delete_any/2)
-      {:ok, retained, record_count - length(cursors)}
-    else
+    case releasable_cursors(records, state.subscriptions, remove_count) do
+      {:ok, cursors} ->
+        retained = Enum.reduce(cursors, records, &:gb_trees.delete_any/2)
+        {:ok, retained, record_count - length(cursors)}
+
       :full ->
         {:error, {:store_full, blocking_subscription_ids(records, state.subscriptions)}}
     end
@@ -290,11 +291,11 @@ defmodule Jido.Signal.Bus.Store.Memory do
   end
 
   defp blocking_subscription_ids(records, subscriptions) do
+    retained_records = :gb_trees.values(records)
+
     subscriptions
     |> Enum.filter(fn {_id, subscription} ->
-      records
-      |> :gb_trees.values()
-      |> Enum.any?(&subscription_needs_record?(subscription, &1))
+      Enum.any?(retained_records, &subscription_needs_record?(subscription, &1))
     end)
     |> Enum.map(&elem(&1, 0))
     |> Enum.sort()

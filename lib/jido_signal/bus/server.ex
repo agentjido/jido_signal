@@ -8,7 +8,6 @@ defmodule Jido.Signal.Bus.Server do
   alias Jido.Signal.Bus.Store.Memory
   alias Jido.Signal.Bus.Subscriptions
   alias Jido.Signal.Error
-  alias Jido.Signal.Router
   alias Jido.Signal.Telemetry
 
   @impl GenServer
@@ -17,7 +16,7 @@ defmodule Jido.Signal.Bus.Server do
          {:ok, definitions} <- Store.read(store_module, store_state, :list_subscriptions, []),
          {:ok, latest_cursor} <- Store.read(store_module, store_state, :latest_cursor, []),
          :ok <- validate_latest_cursor(latest_cursor),
-         {:ok, subscriptions, order, router} <- Subscriptions.load(definitions),
+         {:ok, subscriptions, router} <- Subscriptions.load(definitions),
          :ok <- Subscriptions.validate_loaded_cursors(subscriptions, latest_cursor) do
       {:ok,
        %{
@@ -25,7 +24,6 @@ defmodule Jido.Signal.Bus.Server do
          jido: Keyword.get(opts, :jido),
          router: router,
          subscriptions: subscriptions,
-         subscription_order: order,
          monitors: %{},
          store_module: store_module,
          store_state: store_state,
@@ -135,7 +133,7 @@ defmodule Jido.Signal.Bus.Server do
     after_cursor = Keyword.get(opts, :after, 0)
     limit = Keyword.get(opts, :limit, :infinity)
 
-    with :ok <- validate_path(path),
+    with {:ok, path} <- Subscriptions.normalize_path(path),
          :ok <- validate_replay_options(opts, after_cursor, limit),
          {:ok, records} <-
            Store.read(state, :read, [[after_cursor: after_cursor, path: path, limit: limit]]),
@@ -149,13 +147,6 @@ defmodule Jido.Signal.Bus.Server do
   end
 
   defp replay(_state, _path, _opts), do: {:error, :invalid_options}
-
-  defp validate_path(path) do
-    case Router.normalize({path, :subscription}) do
-      {:ok, _routes} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
 
   defp validate_replay_options(opts, after_cursor, limit) do
     unsupported = Enum.find(Keyword.keys(opts), &(&1 not in [:after, :limit]))

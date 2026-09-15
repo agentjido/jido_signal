@@ -5,11 +5,10 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   alias Jido.Signal.Bus.Store
   alias Jido.Signal.Bus.Subscriptions.Subscriber
   alias Jido.Signal.Router
-  alias Jido.Signal.Router.Index
   alias Jido.Signal.Telemetry
 
   @doc false
-  @spec attach(map(), String.t(), Router.path(), pid(), keyword()) ::
+  @spec attach(map(), String.t(), String.t(), pid(), keyword()) ::
           {:ok, String.t(), map()} | {:error, term(), map()}
   def attach(state, id, path, target, opts) do
     case Map.get(state.subscriptions, id) do
@@ -21,10 +20,10 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   @doc false
   @spec detach(map(), Subscriber.t()) :: {:ok, map()}
   def detach(state, subscriber) do
-    state = demonitor_target(state, subscriber)
+    state = Subscriber.demonitor_target(state, subscriber)
     subscriber = %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}
-    state = put_subscriber(state, subscriber)
-    emit_subscription(:detached, state, subscriber)
+    state = Subscriber.put_subscriber(state, subscriber)
+    Subscriber.emit_subscription(:detached, state, subscriber)
     {:ok, state}
   end
 
@@ -32,7 +31,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   @spec delete(map(), Subscriber.t()) :: {:ok, map()} | {:error, term()}
   def delete(state, subscriber) do
     with {:ok, state} <- Store.write(state, :delete_subscription, [subscriber.id]) do
-      {:ok, remove_subscriber(state, subscriber)}
+      {:ok, Subscriber.remove_subscriber(state, subscriber)}
     end
   end
 
@@ -69,8 +68,8 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   @spec target_down(map(), Subscriber.t()) :: map()
   def target_down(state, subscriber) do
     subscriber = %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}
-    state = put_subscriber(state, subscriber)
-    emit_subscription(:detached, state, subscriber)
+    state = Subscriber.put_subscriber(state, subscriber)
+    Subscriber.emit_subscription(:detached, state, subscriber)
     state
   end
 
@@ -84,21 +83,18 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   end
 
   @doc false
-  @spec load(term()) :: {:ok, map(), [String.t()], Router.t()} | {:error, term()}
+  @spec load(term()) :: {:ok, map(), Router.t()} | {:error, term()}
   def load(definitions) when is_list(definitions) do
-    definitions
-    |> Enum.reduce_while({:ok, %{}, [], Router.new!()}, fn definition,
-                                                           {:ok, subscriptions, order, router} ->
+    Enum.reduce_while(definitions, {:ok, %{}, Router.new!()}, fn definition,
+                                                                 {:ok, subscriptions, router} ->
       with {:ok, subscriber} <- subscriber_from_definition(definition),
            false <- Map.has_key?(subscriptions, subscriber.id),
            {:ok, router} <- Router.add(router, {subscriber.path, subscriber.id}) do
-        {:cont,
-         {:ok, Map.put(subscriptions, subscriber.id, subscriber), [subscriber.id | order], router}}
+        {:cont, {:ok, Map.put(subscriptions, subscriber.id, subscriber), router}}
       else
         _invalid -> {:halt, {:error, :invalid_store_subscription}}
       end
     end)
-    |> reverse_loaded_order()
   end
 
   def load(_definitions), do: {:error, :invalid_store_subscriptions}
@@ -116,7 +112,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
          created_at <- DateTime.utc_now(),
          definition <- definition(id, path, cursor, created_at),
          {:ok, state} <- Store.write(state, :put_subscription, [definition]) do
-      {monitor_ref, state} = monitor_target(state, id, target)
+      {monitor_ref, state} = Subscriber.monitor_target(state, id, target)
 
       subscriber = %Subscriber{
         id: id,
@@ -129,8 +125,8 @@ defmodule Jido.Signal.Bus.DurableSubscription do
         created_at: created_at
       }
 
-      state = insert_subscriber(state, subscriber)
-      emit_subscription(:attached, state, subscriber)
+      state = Subscriber.insert_subscriber(state, subscriber)
+      Subscriber.emit_subscription(:attached, state, subscriber)
       finish_attach(state, subscriber)
     else
       {:error, reason} -> {:error, reason, state}
@@ -155,10 +151,10 @@ defmodule Jido.Signal.Bus.DurableSubscription do
           {:error, :subscription_in_use, state}
 
         true ->
-          {monitor_ref, state} = monitor_target(state, subscriber.id, target)
+          {monitor_ref, state} = Subscriber.monitor_target(state, subscriber.id, target)
           subscriber = %{subscriber | target: target, monitor_ref: monitor_ref, in_flight: nil}
-          state = put_subscriber(state, subscriber)
-          emit_subscription(:attached, state, subscriber)
+          state = Subscriber.put_subscriber(state, subscriber)
+          Subscriber.emit_subscription(:attached, state, subscriber)
           finish_attach(state, subscriber)
       end
     end
@@ -179,7 +175,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     if Process.alive?(target) do
       {state, subscriber}
     else
-      state = demonitor_target(state, subscriber)
+      state = Subscriber.demonitor_target(state, subscriber)
       {state, %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}}
     end
   end
@@ -210,8 +206,8 @@ defmodule Jido.Signal.Bus.DurableSubscription do
          {:ok, public} <- RecordedSignal.from_record(record) do
       send(subscriber.target, {:signal, subscriber.id, public})
       subscriber = %{subscriber | in_flight: public.cursor}
-      state = put_subscriber(state, subscriber)
-      emit_delivery(state, subscriber, public.signal, public.cursor)
+      state = Subscriber.put_subscriber(state, subscriber)
+      Subscriber.emit_delivery(state, subscriber, public.signal, public.cursor)
       {:ok, state}
     else
       nil -> {:ok, state}
@@ -224,7 +220,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     case Store.write(state, :put_subscription, [definition(subscriber, cursor)]) do
       {:ok, state} ->
         subscriber = %{subscriber | cursor: cursor, in_flight: nil}
-        state = put_subscriber(state, subscriber)
+        state = Subscriber.put_subscriber(state, subscriber)
 
         Telemetry.execute(
           [:jido, :signal, :bus, :ack],
@@ -287,82 +283,6 @@ defmodule Jido.Signal.Bus.DurableSubscription do
       "cursor" => cursor,
       "created_at" => DateTime.to_iso8601(created_at)
     }
-  end
-
-  defp reverse_loaded_order({:ok, subscriptions, order, router}) do
-    {:ok, subscriptions, Enum.reverse(order), router}
-  end
-
-  defp reverse_loaded_order(error), do: error
-
-  defp monitor_target(state, subscription_id, target) do
-    monitor_ref = Process.monitor(target)
-    {monitor_ref, %{state | monitors: Map.put(state.monitors, monitor_ref, subscription_id)}}
-  end
-
-  defp demonitor_target(state, %Subscriber{monitor_ref: nil}), do: state
-
-  defp demonitor_target(state, %Subscriber{monitor_ref: monitor_ref}) do
-    Process.demonitor(monitor_ref, [:flush])
-    %{state | monitors: Map.delete(state.monitors, monitor_ref)}
-  end
-
-  defp insert_subscriber(state, subscriber) do
-    {:ok, router} = Router.add(state.router, {subscriber.path, subscriber.id})
-
-    %{
-      state
-      | subscriptions: Map.put(state.subscriptions, subscriber.id, subscriber),
-        subscription_order: state.subscription_order ++ [subscriber.id],
-        router: router
-    }
-  end
-
-  defp put_subscriber(state, subscriber) do
-    %{state | subscriptions: Map.put(state.subscriptions, subscriber.id, subscriber)}
-  end
-
-  defp remove_subscriber(state, subscriber) do
-    state = demonitor_target(state, subscriber)
-    subscriptions = Map.delete(state.subscriptions, subscriber.id)
-    order = Enum.reject(state.subscription_order, &(&1 == subscriber.id))
-
-    %{
-      state
-      | subscriptions: subscriptions,
-        subscription_order: order,
-        router: Index.remove_target(state.router, subscriber.path, subscriber.id)
-    }
-  end
-
-  defp emit_subscription(event, state, subscriber) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :subscription, event],
-      %{system_time: System.system_time()},
-      %{
-        bus_name: state.name,
-        subscription_id: subscriber.id,
-        subscription_path: subscriber.path,
-        durable: true
-      }
-    )
-  end
-
-  defp emit_delivery(state, subscriber, signal, cursor) do
-    Telemetry.execute(
-      [:jido, :signal, :bus, :deliver],
-      %{system_time: System.system_time()},
-      %{
-        bus_name: state.name,
-        subscription_id: subscriber.id,
-        subscription_path: subscriber.path,
-        durable: true,
-        cursor: cursor,
-        signal_id: signal.id,
-        signal_type: signal.type
-      },
-      signal
-    )
   end
 
   defp emit_delivery_error(state, subscriber, signal, reason) do

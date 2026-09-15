@@ -51,15 +51,20 @@ defmodule Jido.Signal.IDTest do
     test "compares complete UUID values" do
       older = "017f22e2-79b0-7000-8000-000000000000"
       newer = "017f22e2-79b1-7000-8000-000000000000"
+      same_time = "017f22e2-79b0-7000-8000-000000000001"
 
       assert ID.compare(older, newer) == :lt
       assert ID.compare(newer, older) == :gt
       assert ID.compare(older, older) == :eq
+      assert ID.compare(older, same_time) == :lt
+      assert ID.compare(same_time, older) == :gt
+      assert ID.extract_timestamp(older) == ID.extract_timestamp(same_time)
     end
 
     test "treats mixed-case forms of one UUID as equal" do
       uuid = "017f22e2-79b0-7cc3-98c4-dc0c0c07398f"
       assert ID.compare(uuid, String.upcase(uuid)) == :eq
+      assert ID.extract_timestamp(uuid) == ID.extract_timestamp(String.upcase(uuid))
     end
 
     test "raises a clear error for invalid input" do

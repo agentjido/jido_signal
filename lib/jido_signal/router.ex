@@ -329,13 +329,9 @@ defmodule Jido.Signal.Router do
   @doc "Checks if a Signal type matches a route path pattern."
   @spec matches?(String.t() | term(), String.t() | term()) :: boolean()
   def matches?(type, pattern) when is_binary(type) do
-    case path(pattern) do
-      {:ok, pattern} ->
-        case Route.validate_path(pattern, []) do
-          :ok -> Index.matches?(type, pattern)
-          {:error, _reason} -> false
-        end
-
+    with {:ok, pattern} <- query_path(pattern) do
+      Index.matches?(type, pattern)
+    else
       {:error, _reason} ->
         false
     end
@@ -346,19 +342,12 @@ defmodule Jido.Signal.Router do
   @doc "Filters Signals whose types match a route path pattern."
   @spec filter([Signal.t()] | term(), String.t() | term()) :: [Signal.t()]
   def filter(signals, pattern) when is_list(signals) do
-    case path(pattern) do
-      {:ok, pattern} ->
-        case Route.validate_path(pattern, []) do
-          :ok ->
-            Enum.filter(signals, fn
-              %Signal{type: type} when is_binary(type) -> Index.matches?(type, pattern)
-              _signal -> false
-            end)
-
-          {:error, _reason} ->
-            []
-        end
-
+    with {:ok, pattern} <- query_path(pattern) do
+      Enum.filter(signals, fn
+        %Signal{type: type} when is_binary(type) -> Index.matches?(type, pattern)
+        _signal -> false
+      end)
+    else
       {:error, _reason} ->
         []
     end
@@ -369,19 +358,22 @@ defmodule Jido.Signal.Router do
   @doc "Checks if an exact route path is registered."
   @spec has_route?(t(), term()) :: boolean()
   def has_route?(%Router{} = router, path) do
-    case path(path) do
-      {:ok, path} ->
-        case Route.validate_path(path, []) do
-          :ok -> Index.has_route?(router, path)
-          {:error, _reason} -> false
-        end
-
+    with {:ok, path} <- query_path(path) do
+      Index.has_route?(router, path)
+    else
       {:error, _reason} ->
         false
     end
   end
 
   def has_route?(_router, _path), do: false
+
+  defp query_path(input) do
+    with {:ok, path} <- path(input),
+         :ok <- Route.validate_path(path, []) do
+      {:ok, path}
+    end
+  end
 
   defp normalize_route_spec(%Route{} = route) do
     case resolve_path(route.path) do

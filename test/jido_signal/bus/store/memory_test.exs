@@ -62,6 +62,33 @@ defmodule Jido.Signal.Bus.Store.MemoryTest do
     assert Enum.map(records, & &1["cursor"]) == [2, 3]
   end
 
+  test "reports sorted blockers and excludes acknowledged or unrelated subscriptions" do
+    assert {:ok, state} = Memory.init(max_records: 2)
+    records = [Map.put(record(1, "one"), "type", "orders.special"), record(2, "two")]
+    assert {:ok, state} = Memory.append(records, state)
+
+    state =
+      Enum.reduce(
+        [
+          subscription("z-agent", "orders.*", 0),
+          subscription("a-agent", "orders.**", 1),
+          subscription("acknowledged", "orders.special", 2),
+          subscription("unrelated", "metrics.**", 0)
+        ],
+        state,
+        fn definition, state ->
+          assert {:ok, state} = Memory.put_subscription(definition, state)
+          state
+        end
+      )
+
+    assert {:error, {:store_full, ["a-agent", "z-agent"]}} =
+             Memory.append([record(3, "three"), record(4, "four")], state)
+
+    assert {:ok, ^records} = Memory.read([], state)
+    assert {:ok, 2} = Memory.latest_cursor(state)
+  end
+
   test "rejects invalid bounds and non-contiguous cursors" do
     assert {:error, {:invalid_option, :max_records}} = Memory.init(max_records: 0)
     assert {:ok, state} = Memory.init([])

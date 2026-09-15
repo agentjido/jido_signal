@@ -50,17 +50,19 @@ defmodule Jido.Signal.ID do
 
   @doc "Returns true when the value is a valid UUID7 string."
   @spec valid?(term()) :: boolean()
-  def valid?(uuid) when is_binary(uuid) do
+  def valid?(uuid), do: match?({:ok, _raw}, decode_uuid7(uuid))
+
+  defp decode_uuid7(uuid) when is_binary(uuid) do
     with true <- Regex.match?(@uuid7_regex, uuid),
-         {:ok, <<_timestamp::48, 7::4, _rand_a::12, 2::2, _rand_b::62>>} <-
+         {:ok, <<_timestamp::48, 7::4, _rand_a::12, 2::2, _rand_b::62>> = raw} <-
            decode_uuid(uuid) do
-      true
+      {:ok, raw}
     else
-      _error -> false
+      _error -> :error
     end
   end
 
-  def valid?(_value), do: false
+  defp decode_uuid7(_value), do: :error
 
   defp uuid7(timestamp_ms, random_bytes)
        when is_integer(timestamp_ms) and timestamp_ms in 0..@max_unix_ts_ms and
@@ -73,11 +75,9 @@ defmodule Jido.Signal.ID do
   end
 
   defp decode_uuid7!(uuid) do
-    if valid?(uuid) do
-      {:ok, raw} = decode_uuid(uuid)
-      raw
-    else
-      raise ArgumentError, "expected a valid UUID7 string"
+    case decode_uuid7(uuid) do
+      {:ok, raw} -> raw
+      :error -> raise ArgumentError, "expected a valid UUID7 string"
     end
   end
 

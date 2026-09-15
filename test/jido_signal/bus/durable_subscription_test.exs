@@ -3,6 +3,8 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
 
   alias Jido.Signal.Bus
   alias Jido.Signal.Bus.RecordedSignal
+  alias Jido.Signal.Router
+  alias JidoSignalTest.Fixtures.Signals.UserCreated
 
   defmodule SharedStore do
     @behaviour Jido.Signal.Bus.Store
@@ -257,6 +259,43 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert repeated.signal == event
   end
 
+  test "restores durable module paths in Store creation order" do
+    {:ok, memory} = Jido.Signal.Bus.Store.Memory.init([])
+    store_agent = start_supervised!({Agent, fn -> memory end})
+    supervisor = start_supervised!({DynamicSupervisor, strategy: :one_for_one})
+
+    opts = [
+      name: unique_name("module_restore"),
+      store: SharedStore,
+      store_opts: [agent: store_agent]
+    ]
+
+    assert {:ok, bus} = DynamicSupervisor.start_child(supervisor, {Bus, opts})
+
+    for id <- ["first", "middle", "last"] do
+      assert {:ok, ^id} = Bus.subscribe(bus, UserCreated, durable: id)
+    end
+
+    event = UserCreated.new!()
+    assert {:ok, [record]} = Bus.publish(bus, [event])
+    for id <- ["first", "middle", "last"], do: assert_received({:signal, ^id, ^record})
+    assert :ok = Bus.delete_subscription(bus, "middle")
+    assert :ok = DynamicSupervisor.terminate_child(supervisor, bus)
+    assert {:ok, restored} = DynamicSupervisor.start_child(supervisor, {Bus, opts})
+    assert {:ok, ["first", "last"]} = Router.route(:sys.get_state(restored).router, event)
+
+    for id <- ["last", "first"] do
+      assert {:ok, ^id} = Bus.subscribe(restored, UserCreated.type(), durable: id)
+      assert_received {:signal, ^id, ^record}
+      assert :ok = Bus.ack(restored, id, record.cursor)
+    end
+
+    assert {:ok, ["first", "last"]} = Router.route(:sys.get_state(restored).router, event)
+    assert {:ok, definitions} = SharedStore.list_subscriptions(store_agent)
+    assert Enum.map(definitions, & &1["id"]) == ["first", "last"]
+    assert Enum.all?(definitions, &(&1["path"] == UserCreated.type()))
+  end
+
   test "reports a Store read failure while attaching and remains usable" do
     {bus, store} = start_controlled_bus()
     attach_delivery_error_handler()
@@ -423,6 +462,9 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
 
     assert {:error, {:invalid_option, :subscription_id}} =
              Bus.subscribe(bus, "**", subscription_id: "")
+
+    assert {:error, {:invalid_option, :subscription_id}} =
+             Bus.subscribe(bus, "**", subscription_id: nil)
 
     assert {:ok, "shared"} =
              Bus.subscribe(bus, "normal.*", subscription_id: "shared")

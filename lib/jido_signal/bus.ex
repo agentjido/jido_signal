@@ -134,9 +134,7 @@ defmodule Jido.Signal.Bus do
     if Keyword.keyword?(opts) do
       opts = Keyword.put_new(opts, :target, self())
 
-      with {:ok, result} <- bus_call(bus, {:subscribe, path, opts}) do
-        result
-      end
+      bus_call(bus, {:subscribe, path, opts})
     else
       {:error, :invalid_options}
     end
@@ -155,9 +153,7 @@ defmodule Jido.Signal.Bus do
 
   def unsubscribe(bus, subscription_id, opts) when is_list(opts) do
     if Keyword.keyword?(opts) do
-      with {:ok, result} <- bus_call(bus, {:unsubscribe, subscription_id, opts}) do
-        result
-      end
+      bus_call(bus, {:unsubscribe, subscription_id, opts})
     else
       {:error, :invalid_options}
     end
@@ -168,9 +164,7 @@ defmodule Jido.Signal.Bus do
   @doc "Permanently removes a subscription and its durable cursor."
   @spec delete_subscription(server(), subscription_id()) :: :ok | {:error, term()}
   def delete_subscription(bus, subscription_id) do
-    with {:ok, result} <- bus_call(bus, {:delete_subscription, subscription_id}) do
-      result
-    end
+    bus_call(bus, {:delete_subscription, subscription_id})
   end
 
   @doc "Publishes Signals after the Store accepts all records."
@@ -179,9 +173,7 @@ defmodule Jido.Signal.Bus do
   def publish(_bus, []), do: {:ok, []}
 
   def publish(bus, signals) when is_list(signals) do
-    with {:ok, result} <- bus_call(bus, {:publish, signals}) do
-      result
-    end
+    bus_call(bus, {:publish, signals})
   end
 
   def publish(_bus, _signals), do: {:error, :invalid_signals}
@@ -198,9 +190,7 @@ defmodule Jido.Signal.Bus do
 
   def replay(bus, path, opts) when is_list(opts) do
     if Keyword.keyword?(opts) do
-      with {:ok, result} <- bus_call(bus, {:replay, path, opts}) do
-        result
-      end
+      bus_call(bus, {:replay, path, opts})
     else
       {:error, :invalid_options}
     end
@@ -211,9 +201,7 @@ defmodule Jido.Signal.Bus do
   @doc "Acknowledges the current record for a durable subscription."
   @spec ack(server(), durable_id(), non_neg_integer()) :: :ok | {:error, term()}
   def ack(bus, durable_id, cursor) do
-    with {:ok, result} <- bus_call(bus, {:ack, durable_id, cursor}) do
-      result
-    end
+    bus_call(bus, {:ack, durable_id, cursor})
   end
 
   @doc false
@@ -270,7 +258,7 @@ defmodule Jido.Signal.Bus do
   end
 
   defp bus_call(bus, message) do
-    {:ok, GenServer.call(bus_call_target(bus), message, :infinity)}
+    GenServer.call(bus_call_target(bus), message, :infinity)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, :noproc -> {:error, :not_found}

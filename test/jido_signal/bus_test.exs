@@ -350,6 +350,22 @@ defmodule Jido.Signal.BusTest do
     assert {:error, :invalid_signals} = Bus.publish(:not_started, :invalid)
     assert {:error, :not_found} = Bus.publish(:not_started, [signal("missing.event")])
     assert {:error, :invalid_options} = Bus.subscribe(:not_started, "**", :invalid)
+    assert {:error, :not_found} = Bus.subscribe(:not_started, "**")
+    assert {:error, :not_found} = Bus.unsubscribe(:not_started, "missing")
+    assert {:error, :not_found} = Bus.delete_subscription(:not_started, "missing")
+    assert {:error, :not_found} = Bus.replay(:not_started)
+    assert {:error, :not_found} = Bus.ack(:not_started, "missing", 1)
+  end
+
+  test "lets unexpected server exits reach the caller" do
+    server = spawn(fn -> receive do: ({:"$gen_call", _from, _message} -> exit(:shutdown)) end)
+    monitor = Process.monitor(server)
+    on_exit(fn -> if Process.alive?(server), do: Process.exit(server, :kill) end)
+
+    assert {:shutdown, {GenServer, :call, [^server, {:replay, "**", []}, :infinity]}} =
+             catch_exit(Bus.replay(server))
+
+    assert_receive {:DOWN, ^monitor, :process, ^server, :shutdown}
   end
 
   test "rejects removed dispatch and persistent subscription options" do

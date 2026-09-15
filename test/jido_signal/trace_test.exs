@@ -83,7 +83,6 @@ defmodule Jido.Signal.TraceTest do
         "vendor=one,vendor=two",
         "vendor=value\r\ninjected=true",
         "vendor=value,\r\ninjected=true",
-        "vendor=value ",
         Enum.map_join(1..33, ",", &"vendor#{&1}=value")
       ]
 
@@ -91,6 +90,54 @@ defmodule Jido.Signal.TraceTest do
         assert {:ok, trace} = Trace.from_traceparent(@traceparent, tracestate)
         assert trace.tracestate == nil
         assert_raise ArgumentError, fn -> Trace.new(tracestate: tracestate) end
+      end
+    end
+
+    test "preserves ASCII whitespace and empty tracestate members" do
+      values = [
+        "a=one, b=two",
+        "a=one,  b=two",
+        "a=one,\tb=two",
+        "a=one, \t b=two",
+        " \ta=one\t , b=two \t",
+        "a=opaque value ,,, \t,b=two,",
+        "vendor=value ",
+        "",
+        " \t",
+        ",,"
+      ]
+
+      for value <- values do
+        assert {:ok, trace} = Trace.from_traceparent(@traceparent, value)
+        assert trace.tracestate == value
+        assert Trace.new(tracestate: value).tracestate == value
+      end
+    end
+
+    test "counts nonempty members and enforces tracestate byte and character limits" do
+      members = Enum.map_join(1..32, ",", &"vendor#{&1}=value")
+      assert {:ok, trace} = Trace.from_traceparent(@traceparent, ",," <> members <> ",,")
+      assert trace.tracestate == ",," <> members <> ",,"
+
+      at_limit = "a=" <> String.duplicate("x", 256) <> ",b=" <> String.duplicate("y", 251)
+      assert byte_size(at_limit) == 512
+      assert {:ok, trace} = Trace.from_traceparent(@traceparent, at_limit)
+      assert trace.tracestate == at_limit
+
+      for value <- [
+            at_limit <> " ",
+            "a=" <> String.duplicate("x", 257),
+            "a=one, \ta=two",
+            "a=one,\rb=two",
+            "a=one,\nb=two",
+            "a=one,\vb=two",
+            "a=one,\u00A0b=two",
+            "a=one\tb=two",
+            "a=one=b=two"
+          ] do
+        assert {:ok, trace} = Trace.from_traceparent(@traceparent, value)
+        assert trace.tracestate == nil
+        assert_raise ArgumentError, fn -> Trace.new(tracestate: value) end
       end
     end
   end
