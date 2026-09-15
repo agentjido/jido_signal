@@ -4,8 +4,8 @@ defmodule Jido.Signal.BusTest do
   alias Jido.Signal
   alias Jido.Signal.Bus
 
-  def handle_delivery(_event, _measurements, metadata, target) do
-    send(target, {:delivered_to, metadata.subscription_id})
+  def handle_delivery(_event, _measurements, metadata, {bus, target}) do
+    if self() == bus, do: send(target, {:delivered_to, metadata})
   end
 
   defmodule FailingStore do
@@ -130,7 +130,8 @@ defmodule Jido.Signal.BusTest do
   end
 
   test "keeps Router precedence through Bus delivery" do
-    bus = start_bus()
+    name = unique_name("ordered_bus")
+    bus = start_supervised!({Bus, name: name})
     handler_id = {__MODULE__, self(), make_ref()}
 
     :ok =
@@ -138,7 +139,7 @@ defmodule Jido.Signal.BusTest do
         handler_id,
         [:jido, :signal, :bus, :deliver],
         &__MODULE__.handle_delivery/4,
-        self()
+        {bus, self()}
       )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
@@ -152,12 +153,34 @@ defmodule Jido.Signal.BusTest do
     assert {:ok, "exact"} =
              Bus.subscribe(bus, "ordered.event", subscription_id: "exact")
 
-    event = signal("ordered.event")
-    assert {:ok, [_record]} = Bus.publish(bus, [event])
+    assert {:ok, "durable"} =
+             Bus.subscribe(bus, "ordered.event", durable: "durable")
 
-    assert_received {:delivered_to, "exact"}
-    assert_received {:delivered_to, "single"}
-    assert_received {:delivered_to, "multi"}
+    event = signal("ordered.event")
+    assert {:ok, [record]} = Bus.publish(bus, [event])
+
+    deliveries =
+      for _index <- 1..4 do
+        assert_received {:delivered_to, metadata}
+        metadata
+      end
+
+    assert Enum.map(deliveries, & &1.subscription_id) == ["exact", "durable", "single", "multi"]
+
+    assert Enum.map(deliveries, & &1.subscription_path) ==
+             ["ordered.event", "ordered.event", "ordered.*", "ordered.**"]
+
+    assert Enum.map(deliveries, & &1.durable) == [false, true, false, false]
+    assert Enum.at(deliveries, 1).cursor == record.cursor
+
+    for metadata <- deliveries do
+      assert metadata.signal_id == event.id
+      assert metadata.signal_type == event.type
+      assert metadata.bus_name == name
+      if not metadata.durable, do: refute(Map.has_key?(metadata, :cursor))
+    end
+
+    refute_received {:delivered_to, _metadata}
   end
 
   test "stores a versioned canonical Signal map before delivery" do
