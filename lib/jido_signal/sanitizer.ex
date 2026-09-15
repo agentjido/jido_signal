@@ -121,11 +121,9 @@ defmodule Jido.Signal.Sanitizer do
     fields = Map.from_struct(value)
 
     condensed =
-      fields
-      |> Enum.filter(fn {key, item} ->
+      Map.filter(fields, fn {key, item} ->
         scalar?(item) or key in [:id, :name, :path, :type, :source, :target, :status]
       end)
-      |> Map.new()
 
     base =
       if map_size(condensed) == 0,

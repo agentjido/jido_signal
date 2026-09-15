@@ -81,6 +81,19 @@ defmodule Jido.Signal.Dispatch.HttpTest do
              validate_opts(url: "https://example.com", headers: large_headers)
   end
 
+  test "keeps the header byte limit and duplicate-name error order" do
+    headers = for number <- 1..8, do: {"x-#{number}", String.duplicate("a", 7_997)}
+    assert {:ok, _opts} = validate_opts(url: "https://example.com", headers: headers)
+
+    over_limit = List.replace_at(headers, 7, {"x-8", String.duplicate("a", 7_998)})
+
+    assert {:error, "must contain at most 64000 bytes"} =
+             Jido.Signal.Dispatch.Http.validate_headers(over_limit, [])
+
+    assert {:error, "must not contain duplicate header names"} =
+             Jido.Signal.Dispatch.Http.validate_headers(over_limit ++ [{"X-1", "duplicate"}], [])
+  end
+
   test "normalizes serialization and transport failures" do
     assert {:error, {:serialization, _reason}} =
              Jido.Signal.Dispatch.Http.deliver(:invalid,

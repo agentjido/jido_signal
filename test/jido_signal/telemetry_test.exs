@@ -73,7 +73,22 @@ defmodule Jido.Signal.TelemetryTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    assert :ok = Telemetry.execute(event, %{count: 1}, %{keep: "value", drop: nil})
-    assert_received {^event, %{count: 1}, %{keep: "value"}}
+    expected = %{keep: "value", false: false, zero: 0, empty: "", list: [], map: %{}}
+    assert :ok = Telemetry.execute(event, %{count: 1}, Map.put(expected, :drop, nil))
+    assert_received {^event, %{count: 1}, ^expected}
+
+    pairs = [
+      keep: "value",
+      keep: nil,
+      drop: nil,
+      false: false,
+      zero: 0,
+      empty: "",
+      list: [],
+      map: %{}
+    ]
+
+    assert :ok = Telemetry.execute(event, %{count: 1}, pairs)
+    assert_received {^event, %{count: 1}, ^expected}
   end
 end

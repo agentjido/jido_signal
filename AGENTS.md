@@ -74,6 +74,12 @@ the ignored `priv/plts/` directory and must not be committed.
 ## Contract rules
 
 - Validate package-owned boundaries with Zoi.
+- Use Zoi-defined structs at public data boundaries. Keep internal structs
+  plain unless a Zoi schema gives a clear validation or maintenance benefit.
+- Define Signals created and emitted by package code with `use Jido.Signal`.
+  Construct them through their custom Signal module so their type and data
+  contract are clear during debugging. Generic envelope construction and wire
+  decoding serve public input boundaries.
 - Keep Signal type paths dot-delimited and deterministic.
 - Preserve Router order: exact paths, `*`, `**`, specificity, priority, and
   registration order.

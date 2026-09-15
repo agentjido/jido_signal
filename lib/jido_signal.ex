@@ -207,8 +207,7 @@ defmodule Jido.Signal do
             "datacontenttype" => datacontenttype(),
             "dataschema" => dataschema()
           }
-          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-          |> Map.new()
+          |> Map.reject(fn {_key, value} -> is_nil(value) end)
 
         with {:ok, validated_data} <- validate_data(data),
              {:ok, attrs} <- Jido.Signal.__normalize_definition_attrs__(opts, defaults) do

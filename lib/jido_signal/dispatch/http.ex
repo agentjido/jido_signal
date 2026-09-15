@@ -156,7 +156,9 @@ defmodule Jido.Signal.Dispatch.Http do
     normalized_names = Enum.map(headers, fn {name, _value} -> String.downcase(name) end)
 
     total_bytes =
-      Enum.sum(Enum.map(headers, fn {name, value} -> byte_size(name) + byte_size(value) end))
+      Enum.reduce(headers, 0, fn {name, value}, total ->
+        total + byte_size(name) + byte_size(value)
+      end)
 
     cond do
       length(headers) > @max_header_count ->

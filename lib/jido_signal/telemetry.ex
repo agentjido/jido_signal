@@ -29,9 +29,15 @@ defmodule Jido.Signal.Telemetry do
     :telemetry.execute(event_name, measurements, metadata)
   end
 
+  defp drop_nil_entries(metadata) when is_map(metadata) do
+    Map.reject(metadata, fn {_key, value} -> is_nil(value) end)
+  end
+
   defp drop_nil_entries(metadata) do
-    Enum.reject(metadata, fn {_key, value} -> is_nil(value) end)
-    |> Enum.into(%{})
+    Enum.reduce(metadata, %{}, fn
+      {_key, nil}, acc -> acc
+      {key, value}, acc -> Map.put(acc, key, value)
+    end)
   end
 
   defp add_signal_trace(metadata, signal) do

@@ -14,7 +14,6 @@ defmodule Jido.Signal.Bus.SubscriptionRemovalTest do
       assert :ok = Bus.delete_subscription(bus, removed)
       remaining = Enum.reject(ids, &(&1 == removed))
       state = :sys.get_state(bus)
-      assert state.subscription_order == remaining
       assert map_size(state.monitors) == 2
       assert {:ok, ^remaining} = Router.route(state.router, event)
 
@@ -36,7 +35,6 @@ defmodule Jido.Signal.Bus.SubscriptionRemovalTest do
       refute_received {:signal, _, _}
       for id <- expected, do: assert(:ok == Bus.delete_subscription(bus, id))
       state = :sys.get_state(bus)
-      assert state.subscription_order == []
       assert state.monitors == %{}
       assert Router.empty?(state.router)
       refute Router.has_route?(state.router, path)

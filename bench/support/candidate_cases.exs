@@ -168,7 +168,8 @@ defmodule JidoSignalBench.CandidateCases do
           actual = :sys.get_state(state.bus)
           expect!(map_size(actual.subscriptions), count - 1)
           expected = for n <- 1..count, n != removed, do: "sub#{n}"
-          expect!(actual.subscription_order, expected)
+          {:ok, routes} = Jido.Signal.Router.list(actual.router)
+          expect!(Enum.map(routes, & &1.target), expected)
           expect!(Jido.Signal.Router.count(actual.router), count - 1)
         end,
         %{subscriptions: count, removed: removed, kind: kind, shape: shape}
