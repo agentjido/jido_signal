@@ -329,9 +329,10 @@ defmodule Jido.Signal.Router do
   @doc "Checks if a Signal type matches a route path pattern."
   @spec matches?(String.t() | term(), String.t() | term()) :: boolean()
   def matches?(type, pattern) when is_binary(type) do
-    with {:ok, pattern} <- query_path(pattern) do
-      Index.matches?(type, pattern)
-    else
+    case query_path(pattern) do
+      {:ok, pattern} ->
+        Index.matches?(type, pattern)
+
       {:error, _reason} ->
         false
     end
@@ -342,12 +343,13 @@ defmodule Jido.Signal.Router do
   @doc "Filters Signals whose types match a route path pattern."
   @spec filter([Signal.t()] | term(), String.t() | term()) :: [Signal.t()]
   def filter(signals, pattern) when is_list(signals) do
-    with {:ok, pattern} <- query_path(pattern) do
-      Enum.filter(signals, fn
-        %Signal{type: type} when is_binary(type) -> Index.matches?(type, pattern)
-        _signal -> false
-      end)
-    else
+    case query_path(pattern) do
+      {:ok, pattern} ->
+        Enum.filter(signals, fn
+          %Signal{type: type} when is_binary(type) -> Index.matches?(type, pattern)
+          _signal -> false
+        end)
+
       {:error, _reason} ->
         []
     end
@@ -358,9 +360,10 @@ defmodule Jido.Signal.Router do
   @doc "Checks if an exact route path is registered."
   @spec has_route?(t(), term()) :: boolean()
   def has_route?(%Router{} = router, path) do
-    with {:ok, path} <- query_path(path) do
-      Index.has_route?(router, path)
-    else
+    case query_path(path) do
+      {:ok, path} ->
+        Index.has_route?(router, path)
+
       {:error, _reason} ->
         false
     end

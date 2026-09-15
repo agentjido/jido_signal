@@ -203,7 +203,7 @@ defmodule Jido.Signal.Trace do
            is_binary(value) and String.valid?(value) and byte_size(value) <= 512,
          members <- String.split(value, ",", trim: false),
          {:ok, keys} <- validate_tracestate_members(members),
-         true <- length(keys) <= 32,
+         true <- Enum.count_until(keys, 33) <= 32,
          true <- length(Enum.uniq(keys)) == length(keys) do
       :ok
     else
