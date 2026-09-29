@@ -66,6 +66,7 @@ defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   @spec remove_subscriber(map(), t(), boolean()) :: map()
   def remove_subscriber(state, subscriber, demonitor? \\ true) do
     state = if demonitor?, do: demonitor_target(state, subscriber), else: state
+    if is_pid(subscriber.target), do: emit_subscription(:detached, state, subscriber)
 
     %{
       state
@@ -102,6 +103,8 @@ defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   defp metadata(state, subscriber) do
     %{
       bus_name: state.name,
+      bus_jido: state.jido,
+      bus_registry: state.registry,
       subscription_id: subscriber.id,
       subscription_path: subscriber.path,
       durable: subscriber.durable?

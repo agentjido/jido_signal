@@ -8,6 +8,10 @@ defmodule Jido.Signal.BusTest do
     if self() == bus, do: send(target, {:delivered_to, metadata})
   end
 
+  def handle_subscription_event(event, _measurements, metadata, {bus, target}) do
+    if self() == bus, do: send(target, {:subscription_event, event, metadata})
+  end
+
   defmodule FailingStore do
     def init(_opts), do: {:error, :unavailable}
   end
@@ -230,6 +234,93 @@ defmodule Jido.Signal.BusTest do
              Bus.subscribe(bus, "short.*", subscription_id: "short-lived")
   end
 
+  test "emits one detach event when an active subscription target is removed" do
+    bus = start_bus()
+    handler_id = {__MODULE__, self(), make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:jido, :signal, :bus, :subscription, :detached],
+        &__MODULE__.handle_subscription_event/4,
+        {bus, self()}
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    assert {:ok, "normal"} = Bus.subscribe(bus, "normal.*", subscription_id: "normal")
+    assert :ok = Bus.unsubscribe(bus, "normal")
+    assert_receive {:subscription_event, _event, %{subscription_id: "normal", durable: false}}
+
+    target = spawn(fn -> receive do: (:stop -> :ok) end)
+    assert {:ok, "down"} = Bus.subscribe(bus, "down.*", subscription_id: "down", target: target)
+    terminate_and_wait(bus, target)
+    assert_receive {:subscription_event, _event, %{subscription_id: "down", durable: false}}
+
+    assert {:ok, "active"} = Bus.subscribe(bus, "active.*", durable: "active")
+    assert :ok = Bus.delete_subscription(bus, "active")
+    assert_receive {:subscription_event, _event, %{subscription_id: "active", durable: true}}
+
+    assert {:ok, "detached"} = Bus.subscribe(bus, "detached.*", durable: "detached")
+    assert :ok = Bus.unsubscribe(bus, "detached")
+    assert_receive {:subscription_event, _event, %{subscription_id: "detached", durable: true}}
+
+    assert :ok = Bus.unsubscribe(bus, "detached")
+    refute_receive {:subscription_event, _event, %{subscription_id: "detached"}}
+    assert :ok = Bus.delete_subscription(bus, "detached")
+    refute_receive {:subscription_event, _event, %{subscription_id: "detached"}}
+  end
+
+  test "emits detach before attach when replacing a dead durable target" do
+    bus = start_bus()
+    old_target = spawn(fn -> receive do: (:stop -> :ok) end)
+    replacement = spawn(fn -> receive do: (:stop -> :ok) end)
+    handler_id = {__MODULE__, self(), make_ref()}
+
+    on_exit(fn ->
+      if Process.alive?(bus), do: :sys.resume(bus)
+      :telemetry.detach(handler_id)
+      if Process.alive?(old_target), do: Process.exit(old_target, :kill)
+      if Process.alive?(replacement), do: Process.exit(replacement, :kill)
+    end)
+
+    assert {:ok, "replace"} =
+             Bus.subscribe(bus, "replace.*", durable: "replace", target: old_target)
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:jido, :signal, :bus, :subscription, :detached],
+          [:jido, :signal, :bus, :subscription, :attached]
+        ],
+        &__MODULE__.handle_subscription_event/4,
+        {bus, self()}
+      )
+
+    :ok = :sys.suspend(bus)
+    call_ref = make_ref()
+
+    send(
+      bus,
+      {:"$gen_call", {self(), call_ref},
+       {:subscribe, "replace.*", [durable: "replace", target: replacement]}}
+    )
+
+    Process.exit(old_target, :kill)
+    :ok = :sys.resume(bus)
+
+    assert_receive {^call_ref, {:ok, "replace"}}
+
+    assert_receive {:subscription_event, [:jido, :signal, :bus, :subscription, :detached],
+                    %{subscription_id: "replace"}}
+
+    assert_receive {:subscription_event, [:jido, :signal, :bus, :subscription, :attached],
+                    %{subscription_id: "replace"}}
+
+    refute_receive {:subscription_event, _event, %{subscription_id: "replace"}}
+  end
+
   test "rejects self-subscription and ignores unrelated messages" do
     bus = start_bus()
 
@@ -389,6 +480,17 @@ defmodule Jido.Signal.BusTest do
              catch_exit(Bus.replay(server))
 
     assert_receive {:DOWN, ^monitor, :process, ^server, :shutdown}
+  end
+
+  test "does not report a server timeout exit as a call timeout" do
+    server = spawn(fn -> receive do: ({:"$gen_call", _from, _message} -> exit(:timeout)) end)
+    monitor = Process.monitor(server)
+    on_exit(fn -> if Process.alive?(server), do: Process.exit(server, :kill) end)
+
+    assert {:timeout, {GenServer, :call, [^server, {:replay, "**", []}, :infinity]}} =
+             catch_exit(Bus.replay(server))
+
+    assert_receive {:DOWN, ^monitor, :process, ^server, :timeout}
   end
 
   test "rejects removed dispatch and persistent subscription options" do

@@ -33,6 +33,36 @@ defmodule Jido.Signal.Bus.InstanceIsolationTest do
     assert_received {:signal, ^signal2}
   end
 
+  test "identifies scoped Buses in publish telemetry", context do
+    handler_id = {__MODULE__, self(), make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:jido, :signal, :bus, :publish],
+        &__MODULE__.handle_publish/4,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    bus_name = :shared_telemetry_name
+    {:ok, bus1} = Bus.start_link(name: bus_name, jido: context.instance1)
+    {:ok, bus2} = Bus.start_link(name: bus_name, jido: context.instance2)
+
+    assert {:ok, [_record]} = Bus.publish(bus1, [signal("scope.first")])
+    assert {:ok, [_record]} = Bus.publish(bus2, [signal("scope.second")])
+
+    assert_receive {:published,
+                    %{bus_name: ^bus_name, bus_jido: first, bus_registry: Jido.Signal.Registry}}
+
+    assert_receive {:published,
+                    %{bus_name: ^bus_name, bus_jido: second, bus_registry: Jido.Signal.Registry}}
+
+    assert first == context.instance1
+    assert second == context.instance2
+  end
+
   test "uses the global Registry without an instance" do
     bus_name = unique_name("global-bus")
     {:ok, bus_pid} = Bus.start_link(name: bus_name)
@@ -78,5 +108,9 @@ defmodule Jido.Signal.Bus.InstanceIsolationTest do
     assert {:ok, first} = Bus.whereis({:shared, first_registry})
     assert {:ok, second} = Bus.whereis({:shared, second_registry})
     assert first != second
+  end
+
+  def handle_publish(_event, _measurements, metadata, target) do
+    send(target, {:published, metadata})
   end
 end

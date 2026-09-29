@@ -22,6 +22,7 @@ defmodule Jido.Signal.Bus.Server do
        %{
          name: name,
          jido: Keyword.get(opts, :jido),
+         registry: Keyword.get(opts, :registry, Jido.Signal.Registry),
          router: router,
          subscriptions: subscriptions,
          monitors: %{},
@@ -68,7 +69,11 @@ defmodule Jido.Signal.Bus.Server do
         Telemetry.execute(
           [:jido, :signal, :bus, :publish],
           %{count: length(records), duration: System.monotonic_time() - started_at},
-          %{bus_name: state.name}
+          %{
+            bus_name: state.name,
+            bus_jido: state.jido,
+            bus_registry: state.registry
+          }
         )
 
         {:reply, {:ok, records}, state}
@@ -189,6 +194,7 @@ defmodule Jido.Signal.Bus.Server do
     %{
       name: state.name,
       jido: state.jido,
+      registry: state.registry,
       next_cursor: state.next_cursor,
       store_module: state.store_module,
       subscription_count: map_size(state.subscriptions),

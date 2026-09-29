@@ -191,7 +191,7 @@ Signals are CloudEvents-compliant message envelopes that carry your application'
 
 ```elixir
 # Basic signal with positional constructor (preferred)
-{:ok, signal} = Signal.new("order.created", %{order_id: "ord_123", amount: 99.99},
+{:ok, signal} = Signal.new("order.created", %{"order_id" => "ord_123", "amount" => 99.99},
   source: "/ecommerce/orders"
 )
 
@@ -199,7 +199,7 @@ Signals are CloudEvents-compliant message envelopes that carry your application'
 {:ok, signal} = Signal.new(%{
   type: "order.created",
   source: "/ecommerce/orders",
-  data: %{order_id: "ord_123", amount: 99.99}
+  data: %{"order_id" => "ord_123", "amount" => 99.99}
 })
 
 # Dispatch is configured when subscribing or dispatching, not on the signal
@@ -389,8 +389,9 @@ events with bounded metadata, and package execution logging defaults to
 `config :jido_signal, default_log_level: :info`.
 
 The Bus emits publish, delivery, acknowledgement, and subscription events.
-The Router emits no telemetry. Instrument the operation that calls the Router
-when route timing is useful.
+Bus event metadata includes `bus_name`, `bus_jido`, and `bus_registry` so
+same-name scoped Buses remain distinct. The Router emits no telemetry.
+Instrument the operation that calls the Router when route timing is useful.
 
 ```elixir
 config :jido_signal,
@@ -428,9 +429,10 @@ Read the bounded Bus log by cursor:
   Bus.replay(:my_app_bus, "user.*", after: 100, limit: 100)
 ```
 
-The default memory Store keeps the newest 100,000 records and does not survive a
-Bus restart. Set a custom `Jido.Signal.Bus.Store` implementation for restart
-durability:
+The default memory Store keeps at most 100,000 records and does not survive a
+Bus restart. A durable cursor can retain older matching records or cause
+`{:store_full, durable_ids}` when the Store cannot remove enough records. Set a
+custom `Jido.Signal.Bus.Store` implementation for restart durability:
 
 ```elixir
 {:ok, _bus} = Bus.start_link(

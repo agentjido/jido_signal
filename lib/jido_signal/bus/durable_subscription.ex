@@ -19,6 +19,8 @@ defmodule Jido.Signal.Bus.DurableSubscription do
 
   @doc false
   @spec detach(map(), Subscriber.t()) :: {:ok, map()}
+  def detach(state, %Subscriber{target: nil}), do: {:ok, state}
+
   def detach(state, subscriber) do
     state = Subscriber.demonitor_target(state, subscriber)
     subscriber = %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}
@@ -67,9 +69,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
   @doc false
   @spec target_down(map(), Subscriber.t()) :: map()
   def target_down(state, subscriber) do
-    subscriber = %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}
-    state = Subscriber.put_subscriber(state, subscriber)
-    Subscriber.emit_subscription(:detached, state, subscriber)
+    {:ok, state} = detach(state, subscriber)
     state
   end
 
@@ -175,8 +175,8 @@ defmodule Jido.Signal.Bus.DurableSubscription do
     if Process.alive?(target) do
       {state, subscriber}
     else
-      state = Subscriber.demonitor_target(state, subscriber)
-      {state, %{subscriber | target: nil, monitor_ref: nil, in_flight: nil}}
+      {:ok, state} = detach(state, subscriber)
+      {state, Map.fetch!(state.subscriptions, subscriber.id)}
     end
   end
 
@@ -225,7 +225,12 @@ defmodule Jido.Signal.Bus.DurableSubscription do
         Telemetry.execute(
           [:jido, :signal, :bus, :ack],
           %{cursor: cursor},
-          %{bus_name: state.name, subscription_id: subscriber.id}
+          %{
+            bus_name: state.name,
+            bus_jido: state.jido,
+            bus_registry: state.registry,
+            subscription_id: subscriber.id
+          }
         )
 
         case deliver_next(state, subscriber) do
@@ -291,6 +296,8 @@ defmodule Jido.Signal.Bus.DurableSubscription do
       %{system_time: System.system_time()},
       %{
         bus_name: state.name,
+        bus_jido: state.jido,
+        bus_registry: state.registry,
         subscription_id: subscriber.id,
         signal_id: signal.id,
         signal_type: signal.type,
@@ -308,6 +315,8 @@ defmodule Jido.Signal.Bus.DurableSubscription do
       %{system_time: System.system_time()},
       %{
         bus_name: state.name,
+        bus_jido: state.jido,
+        bus_registry: state.registry,
         subscription_id: subscriber.id,
         reason: reason
       }

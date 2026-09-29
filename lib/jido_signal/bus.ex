@@ -262,8 +262,6 @@ defmodule Jido.Signal.Bus do
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, :noproc -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
-    :exit, :timeout -> {:error, :timeout}
   end
 
   defp bus_call_target(pid) when is_pid(pid), do: pid
