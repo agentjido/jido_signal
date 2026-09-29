@@ -321,7 +321,7 @@ defmodule Jido.Signal.Error do
     retryable_from_details?(details)
   end
 
-  def retryable?(%{errors: errors}) when is_list(errors) do
+  def retryable?(%{errors: errors}) when is_list(errors) and is_integer(length(errors)) do
     Enum.any?(errors, &retryable?/1)
   end
 
@@ -368,7 +368,7 @@ defmodule Jido.Signal.Error do
   defp retryable_reason?(%Internal.UnknownError{details: details}),
     do: retryable_from_details?(details)
 
-  defp retryable_reason?(%{errors: errors}) when is_list(errors),
+  defp retryable_reason?(%{errors: errors}) when is_list(errors) and is_integer(length(errors)),
     do: Enum.any?(errors, &retryable?/1)
 
   defp retryable_reason?(:timeout), do: true

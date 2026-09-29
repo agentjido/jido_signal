@@ -34,7 +34,7 @@ defimpl Inspect, for: Jido.Signal.Router.Router do
     "→ {#{inspect(adapter)}, #{inspect(opts)}}"
   end
 
-  defp format_target(targets) when is_list(targets) do
+  defp format_target(targets) when is_list(targets) and is_integer(length(targets)) do
     "→ [#{Enum.count(targets)} items]"
   end
 

@@ -75,7 +75,10 @@ mix deps.unlock --check-unused
 mix hex.audit
 ```
 
-The default `mix test` command excludes `:flaky` and `:skip` tests. The coverage
+The default `mix test` command excludes `:flaky`, `:skip`, `:property`, and `:fuzz` tests.
+Run `mix test.property` and `mix test.fuzz` for generated contract tests. See
+[Property and Fuzz Tests](guides/property-testing.md) for seeds, limits, saved
+inputs, and reports. The coverage
 gate requires at least 90 percent total coverage.
 
 ## Test rules

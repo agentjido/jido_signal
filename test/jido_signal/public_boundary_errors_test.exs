@@ -52,6 +52,27 @@ defmodule Jido.Signal.PublicBoundaryErrorsTest do
   end
 
   describe "Router error boundaries" do
+    test "rejects improper route and path collections before traversal" do
+      router = Router.new!({"valid.path", :target})
+      route = %Route{path: "valid.path", target: :target}
+      invalid = [{"valid.path", :target} | :tail]
+
+      for result <- [
+            Router.normalize(invalid),
+            Router.new(invalid),
+            Router.add(router, invalid),
+            Router.merge(router, invalid),
+            Router.validate([route | :tail]),
+            Router.remove(router, ["valid.path" | :tail])
+          ] do
+        assert {:error, _} = result
+      end
+
+      signal = Signal.new!("valid.path", %{}, source: "/test")
+      assert Router.filter([signal | :tail], "**") == []
+      assert {:ok, [:target]} = Router.route(router, signal)
+    end
+
     test "rejects invalid route definitions through each public constructor" do
       assert {:error, _error} = Router.normalize(:invalid)
       assert_raise Jido.Signal.Error.InvalidInputError, fn -> Router.new!(:invalid) end

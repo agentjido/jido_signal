@@ -37,7 +37,7 @@ defmodule Jido.Signal.Bus.Store.Memory do
   end
 
   @impl true
-  def append(records, state) when is_list(records) do
+  def append(records, state) when is_list(records) and is_integer(length(records)) do
     with :ok <- validate_records(records, state.latest_cursor),
          records_tree <- insert_records(state.records, records),
          record_count <- state.record_count + length(records),
@@ -129,13 +129,17 @@ defmodule Jido.Signal.Bus.Store.Memory do
   defp validate_records([], _latest_cursor), do: :ok
 
   defp validate_records(records, latest_cursor) do
-    expected = Enum.to_list((latest_cursor + 1)..(latest_cursor + length(records)))
-    actual = Enum.map(records, &Map.get(&1, "cursor"))
+    if Enum.all?(records, &is_map/1) do
+      expected = Enum.to_list((latest_cursor + 1)..(latest_cursor + length(records)))
+      actual = Enum.map(records, &Map.get(&1, "cursor"))
 
-    cond do
-      actual != expected -> {:error, :invalid_record_cursors}
-      Enum.all?(records, &valid_record?/1) -> :ok
-      true -> {:error, :invalid_records}
+      cond do
+        actual != expected -> {:error, :invalid_record_cursors}
+        Enum.all?(records, &valid_record?/1) -> :ok
+        true -> {:error, :invalid_records}
+      end
+    else
+      {:error, :invalid_records}
     end
   end
 

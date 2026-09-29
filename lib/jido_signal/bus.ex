@@ -106,7 +106,9 @@ defmodule Jido.Signal.Bus do
   def whereis(server, opts \\ [])
 
   def whereis(pid, _opts) when is_pid(pid) do
-    if Process.alive?(pid), do: {:ok, pid}, else: {:error, :not_found}
+    if node(pid) == node() and Process.alive?(pid),
+      do: {:ok, pid},
+      else: {:error, :not_found}
   end
 
   def whereis({name, registry}, _opts) when is_atom(registry) do
@@ -172,7 +174,7 @@ defmodule Jido.Signal.Bus do
           {:ok, [RecordedSignal.t()]} | {:error, term()}
   def publish(_bus, []), do: {:ok, []}
 
-  def publish(bus, signals) when is_list(signals) do
+  def publish(bus, signals) when is_list(signals) and is_integer(length(signals)) do
     bus_call(bus, {:publish, signals})
   end
 
@@ -215,9 +217,15 @@ defmodule Jido.Signal.Bus do
   def not_nil(_value, _opts), do: :ok
 
   defp validate_start_options(opts) do
-    case Zoi.parse(@start_options_schema, opts) do
-      {:ok, validated_opts} -> {:ok, validated_opts}
-      {:error, errors} -> {:error, {:invalid_options, Zoi.prettify_errors(errors)}}
+    with true <- Keyword.keyword?(opts),
+         store_opts <- opts |> Keyword.get_values(:store_opts) |> List.last([]),
+         true <- is_nil(store_opts) or Keyword.keyword?(store_opts) do
+      case Zoi.parse(@start_options_schema, opts) do
+        {:ok, validated_opts} -> {:ok, validated_opts}
+        {:error, errors} -> {:error, {:invalid_options, Zoi.prettify_errors(errors)}}
+      end
+    else
+      false -> {:error, {:invalid_options, "options and store_opts must be keyword lists"}}
     end
   end
 

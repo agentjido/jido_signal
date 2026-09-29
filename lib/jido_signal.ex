@@ -63,6 +63,7 @@ defmodule Jido.Signal do
   @invalid_uri_character_pattern ~r/[\x00-\x20\x7F]/
   @invalid_percent_encoding_pattern ~r/%(?![0-9A-Fa-f]{2})/
   @uri_reference_pattern ~r"\A(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=]|%[0-9A-Fa-f]{2})*\z"
+  @rfc3339_pattern ~r/\A([0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}:)([0-9]{2})(\.[0-9]+)?([Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\z/
 
   @definition_defaults %{
     datacontenttype: nil,
@@ -414,13 +415,17 @@ defmodule Jido.Signal do
 
   @doc false
   def validate_rfc3339(value, _opts) when is_binary(value) do
-    if String.valid?(value) do
-      case DateTime.from_iso8601(value) do
-        {:ok, _datetime, _offset} -> :ok
-        {:error, reason} -> {:error, "must be an RFC 3339 timestamp: #{inspect(reason)}"}
-      end
+    with true <- String.valid?(value),
+         [prefix, second, fraction, offset] <-
+           Regex.run(@rfc3339_pattern, value, capture: :all_but_first),
+         parse_second <- if(second == "60", do: "59", else: second),
+         {:ok, datetime, _offset} <-
+           DateTime.from_iso8601(String.upcase(prefix <> parse_second <> fraction <> offset)),
+         true <- second != "60" or leap_second_position?(datetime) do
+      :ok
     else
-      {:error, "must be an RFC 3339 timestamp"}
+      {:error, reason} -> {:error, "must be an RFC 3339 timestamp: #{inspect(reason)}"}
+      _invalid -> {:error, "must be an RFC 3339 timestamp"}
     end
   end
 
@@ -428,10 +433,35 @@ defmodule Jido.Signal do
 
   @doc false
   def validate_utf8_string(value, _opts) when is_binary(value) do
-    if String.valid?(value), do: :ok, else: {:error, "must be valid UTF-8"}
+    cond do
+      not String.valid?(value) ->
+        {:error, "must be valid UTF-8"}
+
+      not valid_context_characters?(value) ->
+        {:error, "must not contain controls or noncharacters"}
+
+      true ->
+        :ok
+    end
   end
 
   def validate_utf8_string(_value, _opts), do: {:error, "must be valid UTF-8"}
+
+  defp valid_context_characters?(<<>>), do: true
+
+  defp valid_context_characters?(<<codepoint::utf8, _rest::binary>>)
+       when codepoint in 0..31 or codepoint in 127..159 or codepoint in 0xFDD0..0xFDEF or
+              rem(codepoint, 0x10000) in [0xFFFE, 0xFFFF],
+       do: false
+
+  defp valid_context_characters?(<<_codepoint::utf8, rest::binary>>),
+    do: valid_context_characters?(rest)
+
+  # Validate UTC placement. The producer owns the announced leap-second date.
+  defp leap_second_position?(datetime) do
+    date = DateTime.to_date(datetime)
+    datetime.hour == 23 and datetime.minute == 59 and date.day == Date.days_in_month(date)
+  end
 
   @doc false
   def validate_media_type(value, _opts) when is_binary(value) do

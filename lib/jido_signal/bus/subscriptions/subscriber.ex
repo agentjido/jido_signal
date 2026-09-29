@@ -25,7 +25,7 @@ defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
           monitor_ref: reference() | nil,
           cursor: non_neg_integer(),
           in_flight: pos_integer() | nil,
-          created_at: DateTime.t()
+          created_at: String.t()
         }
 
   @doc false

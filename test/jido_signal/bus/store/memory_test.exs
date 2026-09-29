@@ -103,9 +103,16 @@ defmodule Jido.Signal.Bus.Store.MemoryTest do
     assert {:ok, unchanged} = Memory.append([], state)
     assert unchanged == state
     assert {:error, :invalid_records} = Memory.append(:invalid, state)
+    assert {:error, :invalid_records} = Memory.append([record(1, "one") | :tail], state)
+    assert {:ok, 0} = Memory.latest_cursor(state)
 
     invalid_record = Map.delete(record(1, "invalid"), "type")
     assert {:error, :invalid_records} = Memory.append([invalid_record], state)
+
+    for invalid <- [nil, :invalid, 12, {:invalid}, []] do
+      assert {:error, :invalid_records} = Memory.append([invalid], state)
+      assert {:ok, 0} = Memory.latest_cursor(state)
+    end
 
     assert {:ok, state} = Memory.append([record(1, "one")], state)
     assert {:ok, []} = Memory.read([after_cursor: 0, path: "audit.*"], state)

@@ -78,7 +78,7 @@ defmodule Jido.Signal.Dispatch do
     end
   end
 
-  def validate_opts(configs) when is_list(configs) do
+  def validate_opts(configs) when is_list(configs) and is_integer(length(configs)) do
     configs
     |> Enum.reduce_while({:ok, []}, fn config, {:ok, targets} ->
       case normalize_target(config) do
@@ -107,7 +107,7 @@ defmodule Jido.Signal.Dispatch do
     end
   end
 
-  def dispatch(signal, configs) when is_list(configs) do
+  def dispatch(signal, configs) when is_list(configs) and is_integer(length(configs)) do
     errors =
       Enum.reduce(configs, [], fn config, errors ->
         result =
@@ -243,7 +243,7 @@ defmodule Jido.Signal.Dispatch do
     }
   end
 
-  defp signal_type(%{type: type}) when is_binary(type), do: type
+  defp signal_type(%{type: type}) when is_binary(type), do: Sanitizer.sanitize(type, :telemetry)
   defp signal_type(_signal), do: :unknown
 
   defp get_target_from_opts(:pubsub, opts) do
@@ -269,6 +269,7 @@ defmodule Jido.Signal.Dispatch do
       when scheme in ["http", "https"] and is_binary(host) and host != "" ->
         %URI{scheme: uri.scheme, host: uri.host, port: uri.port}
         |> URI.to_string()
+        |> Sanitizer.sanitize(:telemetry)
 
       _ ->
         :invalid_url
@@ -359,8 +360,10 @@ defmodule Jido.Signal.Dispatch do
   defp dispatch_config_shape(value) when is_map(value),
     do: %{type: :map, size: map_size(value)}
 
-  defp dispatch_config_shape(value) when is_list(value),
+  defp dispatch_config_shape(value) when is_list(value) and is_integer(length(value)),
     do: %{type: :list, count: length(value)}
+
+  defp dispatch_config_shape(value) when is_list(value), do: %{type: :improper_list}
 
   defp dispatch_config_shape(value) when is_tuple(value),
     do: %{type: :tuple, size: tuple_size(value)}

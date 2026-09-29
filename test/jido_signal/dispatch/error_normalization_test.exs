@@ -277,6 +277,55 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     refute inspect(error) =~ "config-secret"
   end
 
+  test "bounds Signal targets in actual Dispatch metadata" do
+    handler_id = {__MODULE__, :signal_target, self()}
+
+    :telemetry.attach(
+      handler_id,
+      [:jido, :dispatch, :start],
+      &__MODULE__.handle_telemetry_event/4,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    signal = Signal.new!(type: "test.event", source: "/test")
+    target = Signal.new!(id: String.duplicate("i", 100_000), type: "target", source: "/target")
+
+    assert {:error, :not_sent} =
+             Dispatch.dispatch(signal, {TargetReportingAdapter, target: target})
+
+    assert_received {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
+    assert byte_size(metadata.target.id) <= 163
+    assert metadata.target.type == "target"
+  end
+
+  test "bounds Signal types and custom URL origins in actual metadata and errors" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+    handler_id = {__MODULE__, :bounded_fields, self()}
+
+    :telemetry.attach(
+      handler_id,
+      [:jido, :dispatch, :start],
+      &__MODULE__.handle_telemetry_event/4,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    signal = Signal.new!(type: String.duplicate("t", 100_000), source: "/test")
+    url = "https://" <> String.duplicate("h", 100_000) <> "/secret?token=hidden"
+
+    assert {:error, %Error.DispatchError{} = error} =
+             Dispatch.dispatch(signal, {URLReportingAdapter, url: url})
+
+    assert_received {:telemetry, [:jido, :dispatch, :start], %{}, metadata}
+    assert byte_size(metadata.signal_type) <= 163
+    assert byte_size(metadata.target) <= 163
+    refute metadata.target =~ "hidden"
+    assert byte_size(error.details.target.target) <= 163
+  end
+
   test "invalid dispatch configuration reports each input shape" do
     Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
 
@@ -299,6 +348,20 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     config = {:named, [target: {:name, :nonexistent_process}, delivery_mode: :async]}
 
     assert {:error, :process_not_found} = Dispatch.dispatch(signal, config)
+  end
+
+  test "reports improper list shapes without reading their values" do
+    Application.put_env(:jido_signal, :normalize_dispatch_errors, true)
+    signal = Signal.new!("dispatch.invalid", %{}, source: "/test")
+    invalid = [:invalid | "tail-secret"]
+
+    assert {:error, %Error.InvalidInputError{value: %{type: :improper_list}} = error} =
+             Dispatch.validate_opts(invalid)
+
+    refute inspect(error) =~ "tail-secret"
+    assert {:error, %Error.InvalidInputError{}} = Dispatch.dispatch(signal, invalid)
+    assert {:error, %Error.InvalidInputError{}} = Dispatch.validate_opts([invalid])
+    assert {:error, [%Error.InvalidInputError{}]} = Dispatch.dispatch(signal, [invalid])
   end
 
   test "dispatch still honors legacy normalization config during transition" do

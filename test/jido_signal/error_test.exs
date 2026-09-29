@@ -159,6 +159,20 @@ defmodule Jido.Signal.ErrorTest do
   end
 
   describe "retryable?/1" do
+    test "does not traverse improper grouped error lists" do
+      for head <- [Error.validation_error("bad"), Error.timeout_error("late")] do
+        errors = [head | :tail]
+        foreign = %{errors: errors}
+        grouped = struct(Error.Execution, errors: errors)
+        wrapped = Error.dispatch_error("outer", reason: foreign)
+
+        for error <- [foreign, grouped, wrapped] do
+          refute Error.retryable?(error)
+          refute Error.to_map(error).retryable?
+        end
+      end
+    end
+
     test "derives timeout retryability centrally" do
       assert Error.retryable?(Error.timeout_error("timed out", %{timeout: 1000}))
       refute Error.retryable?(Error.validation_error("bad input", %{field: :type}))

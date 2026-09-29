@@ -84,7 +84,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
 
   @doc false
   @spec load(term()) :: {:ok, map(), Router.t()} | {:error, term()}
-  def load(definitions) when is_list(definitions) do
+  def load(definitions) when is_list(definitions) and is_integer(length(definitions)) do
     Enum.reduce_while(definitions, {:ok, %{}, Router.new!()}, fn definition,
                                                                  {:ok, subscriptions, router} ->
       with {:ok, subscriber} <- subscriber_from_definition(definition),
@@ -109,7 +109,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
 
   defp create(state, id, path, target, opts) do
     with {:ok, cursor} <- initial_cursor(state, Keyword.get(opts, :start_from, :current)),
-         created_at <- DateTime.utc_now(),
+         created_at <- DateTime.utc_now() |> DateTime.to_iso8601(),
          definition <- definition(id, path, cursor, created_at),
          {:ok, state} <- Store.write(state, :put_subscription, [definition]) do
       {monitor_ref, state} = Subscriber.monitor_target(state, id, target)
@@ -201,8 +201,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
            Store.read(state, :read, [
              [after_cursor: subscriber.cursor, path: subscriber.path, limit: 1]
            ]),
-         true <- is_list(records),
-         record when not is_nil(record) <- List.first(records),
+         {:ok, record} when not is_nil(record) <- first_record(records),
          {:ok, public} <- RecordedSignal.from_record(record) do
       send(subscriber.target, {:signal, subscriber.id, public})
       subscriber = %{subscriber | in_flight: public.cursor}
@@ -210,11 +209,15 @@ defmodule Jido.Signal.Bus.DurableSubscription do
       Subscriber.emit_delivery(state, subscriber, public.signal, public.cursor)
       {:ok, state}
     else
-      nil -> {:ok, state}
-      false -> {:error, :invalid_store_records, state}
+      {:ok, nil} -> {:ok, state}
       {:error, reason} -> {:error, reason, state}
     end
   end
+
+  defp first_record(records) when is_list(records) and is_integer(length(records)),
+    do: {:ok, List.first(records)}
+
+  defp first_record(_records), do: {:error, :invalid_store_records}
 
   defp advance_cursor(state, subscriber, cursor) do
     case Store.write(state, :put_subscription, [definition(subscriber, cursor)]) do
@@ -257,7 +260,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
        when is_binary(id) and byte_size(id) > 0 and is_binary(path) and is_integer(cursor) and
               cursor >= 0 and is_binary(created_at) do
     with {:ok, _route} <- Router.normalize({path, :subscription}),
-         {:ok, datetime, _offset} <- DateTime.from_iso8601(created_at) do
+         {:ok, _datetime, _offset} <- DateTime.from_iso8601(created_at) do
       {:ok,
        %Subscriber{
          id: id,
@@ -267,7 +270,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
          monitor_ref: nil,
          cursor: cursor,
          in_flight: nil,
-         created_at: datetime
+         created_at: created_at
        }}
     else
       _invalid -> {:error, :invalid_store_subscription}
@@ -286,7 +289,7 @@ defmodule Jido.Signal.Bus.DurableSubscription do
       "id" => id,
       "path" => path,
       "cursor" => cursor,
-      "created_at" => DateTime.to_iso8601(created_at)
+      "created_at" => created_at
     }
   end
 

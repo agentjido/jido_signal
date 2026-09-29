@@ -56,19 +56,27 @@ defmodule Jido.Signal.Sanitizer do
     end
   end
 
-  defp sanitize(%Date{} = value, _profile, _opts, _depth), do: Date.to_iso8601(value)
-  defp sanitize(%DateTime{} = value, _profile, _opts, _depth), do: DateTime.to_iso8601(value)
+  defp sanitize(%Date{} = value, _profile, opts, _depth),
+    do: truncate(Date.to_iso8601(value), opts.max_binary)
 
-  defp sanitize(%NaiveDateTime{} = value, _profile, _opts, _depth),
-    do: NaiveDateTime.to_iso8601(value)
+  defp sanitize(%DateTime{} = value, _profile, opts, _depth),
+    do: truncate(DateTime.to_iso8601(value), opts.max_binary)
 
-  defp sanitize(%Time{} = value, _profile, _opts, _depth), do: Time.to_iso8601(value)
+  defp sanitize(%NaiveDateTime{} = value, _profile, opts, _depth),
+    do: truncate(NaiveDateTime.to_iso8601(value), opts.max_binary)
 
-  defp sanitize(%URI{} = value, _profile, _opts, _depth) do
+  defp sanitize(%Time{} = value, _profile, opts, _depth),
+    do: truncate(Time.to_iso8601(value), opts.max_binary)
+
+  defp sanitize(%URI{} = value, _profile, opts, _depth) do
     value
     |> Map.merge(%{userinfo: nil, query: nil, fragment: nil})
     |> URI.to_string()
+    |> truncate(opts.max_binary)
   end
+
+  defp sanitize(%Signal{} = value, profile, opts, depth) when depth >= opts.max_depth,
+    do: collection_summary(value, profile)
 
   defp sanitize(%Signal{} = value, profile, opts, depth) do
     extension_names =
@@ -76,7 +84,9 @@ defmodule Jido.Signal.Sanitizer do
         extensions when is_map(extensions) ->
           extensions
           |> Enum.take(opts.max_items)
-          |> Enum.map(fn {key, _value} -> bounded_key_token(key, opts.max_binary) end)
+          |> Enum.map(fn {key, _value} ->
+            bounded_key_token(key, opts.max_binary, opts, depth + 1)
+          end)
 
         _invalid ->
           []
@@ -95,19 +105,19 @@ defmodule Jido.Signal.Sanitizer do
 
     case profile do
       :telemetry ->
-        base
+        sanitize(base, profile, opts, depth)
 
       :transport ->
         base
-        |> Map.put(:data, sanitize(value.data, profile, opts, depth + 1))
-        |> string_keys()
+        |> Map.put(:data, value.data)
+        |> sanitize(profile, opts, depth)
         |> Map.put("__struct__", inspect(Signal))
     end
   end
 
   defp sanitize(value, profile, opts, depth) when is_exception(value) do
     fields = value |> Map.from_struct() |> Map.drop([:__exception__, :__struct__, :message])
-    base = boundary_map(profile, module: inspect(value.__struct__))
+    base = boundary_map(profile, module: truncate(inspect(value.__struct__), opts.max_binary))
 
     if map_size(fields) == 0 do
       base
@@ -132,14 +142,18 @@ defmodule Jido.Signal.Sanitizer do
 
     base
     |> sanitize(profile, opts, depth + 1)
-    |> Map.put(boundary_key(profile, :__struct__), inspect(module))
+    |> Map.put(boundary_key(profile, :__struct__), truncate(inspect(module), opts.max_binary))
   end
 
   defp sanitize(value, profile, opts, depth) when is_map(value) do
     if depth >= opts.max_depth do
       collection_summary(value, profile)
     else
-      entries = value |> Enum.take(opts.max_items + 1) |> Enum.sort_by(&entry_key_token/1)
+      entries =
+        value
+        |> Enum.take(opts.max_items + 1)
+        |> Enum.sort_by(fn {key, _value} -> bounded_key_token(key, 160, opts, depth + 1) end)
+
       {entries, truncated?} = bounded(entries, opts.max_items)
 
       sanitized =
@@ -147,7 +161,7 @@ defmodule Jido.Signal.Sanitizer do
           item =
             if sensitive_key?(key), do: @redacted, else: sanitize(item, profile, opts, depth + 1)
 
-          {bounded_boundary_key(profile, key, opts.max_binary), item}
+          {bounded_boundary_key(profile, key, opts, depth + 1), item}
         end)
 
       mark_map_truncation(sanitized, truncated?, map_size(value), profile)
@@ -205,17 +219,20 @@ defmodule Jido.Signal.Sanitizer do
     end
   end
 
-  defp sanitize(value, :telemetry, _opts, _depth)
+  defp sanitize(value, :telemetry, opts, _depth)
        when is_pid(value) or is_reference(value) or is_function(value) or is_port(value) or
               is_bitstring(value),
-       do: inspect(value)
+       do: truncate(inspect(value), opts.max_binary)
 
-  defp sanitize(value, :transport, _opts, _depth)
+  defp sanitize(value, :transport, opts, _depth)
        when is_pid(value) or is_reference(value) or is_function(value) or is_port(value) or
               is_bitstring(value),
-       do: %{"__type__" => value_type(value), "value" => inspect(value)}
+       do: %{
+         "__type__" => value_type(value),
+         "value" => truncate(inspect(value), opts.max_binary)
+       }
 
-  defp sanitize(value, _profile, _opts, _depth), do: inspect(value)
+  defp sanitize(value, _profile, opts, _depth), do: truncate(inspect(value), opts.max_binary)
 
   defp binary_summary(value, :telemetry, max_binary) do
     %{
@@ -288,14 +305,14 @@ defmodule Jido.Signal.Sanitizer do
     if String.valid?(key), do: key, else: "base64:" <> base64_prefix(key, 160)
   end
 
-  defp key_token(key), do: inspect(key, limit: 10, printable_limit: 160)
-
-  defp sensitive_key?(key) do
-    key = key |> bounded_key_token(160) |> String.downcase() |> String.replace("-", "_")
+  defp sensitive_key?(key) when is_atom(key) or is_binary(key) do
+    key = key |> key_token() |> truncate(160) |> String.downcase() |> String.replace("-", "_")
 
     MapSet.member?(@sensitive_keys, key) or
       MapSet.member?(@sensitive_keys, String.trim_leading(key, "x_"))
   end
+
+  defp sensitive_key?(_key), do: false
 
   defp key_value_list?(list) do
     Enum.all?(list, fn
@@ -316,16 +333,22 @@ defmodule Jido.Signal.Sanitizer do
   defp improper_list_summary(_value, :transport, _opts),
     do: %{"__type__" => "improper_list"}
 
-  defp bounded_boundary_key(:telemetry, key, _limit) when is_atom(key), do: key
+  defp bounded_boundary_key(:telemetry, key, _opts, _depth) when is_atom(key), do: key
 
-  defp bounded_boundary_key(profile, key, limit) do
-    key = bounded_key_token(key, limit)
+  defp bounded_boundary_key(profile, key, opts, depth) do
+    key = bounded_key_token(key, opts.max_binary, opts, depth)
     boundary_key(profile, key)
   end
 
-  defp bounded_key_token(key, limit), do: key |> key_token() |> truncate(limit)
+  defp bounded_key_token(key, limit, _opts, _depth) when is_atom(key) or is_binary(key),
+    do: key |> key_token() |> truncate(limit)
 
-  defp entry_key_token({key, _value}), do: bounded_key_token(key, 160)
+  defp bounded_key_token(key, limit, opts, depth) do
+    key
+    |> sanitize(:telemetry, opts, depth)
+    |> inspect(limit: opts.max_items, printable_limit: opts.max_binary)
+    |> truncate(limit)
+  end
 
   defp base64_prefix(value, max_encoded_bytes) do
     raw_bytes = min(byte_size(value), div(max_encoded_bytes * 3, 4) + 3)
@@ -353,8 +376,6 @@ defmodule Jido.Signal.Sanitizer do
       do: valid_prefix(value, size - 1),
       else: prefix
   end
-
-  defp string_keys(map), do: Map.new(map, fn {key, value} -> {key_token(key), value} end)
 
   defp scalar?(value)
        when is_nil(value) or is_boolean(value) or is_atom(value) or is_binary(value) or

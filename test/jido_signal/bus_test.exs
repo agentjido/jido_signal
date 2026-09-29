@@ -34,7 +34,7 @@ defmodule Jido.Signal.BusTest do
     def append(_records, state), do: {:ok, state}
 
     @impl true
-    def read(_opts, _state), do: {:ok, []}
+    def read(_opts, state), do: Map.get(state, :records, {:ok, []})
 
     @impl true
     def latest_cursor(state), do: Map.get(state, :latest_cursor, {:ok, 0})
@@ -109,6 +109,119 @@ defmodule Jido.Signal.BusTest do
 
     assert {:ok, [last]} = Bus.replay(bus, "order.**", after: 2, limit: 1)
     assert last.cursor == 3
+  end
+
+  test "rejects remote subscription targets without stopping the Bus" do
+    bus = start_bus()
+    target = remote_pid()
+    assert node(target) != node()
+
+    assert {:error, :invalid_target} = Bus.subscribe(bus, "**", target: target)
+    assert {:error, :invalid_target} = Bus.subscribe(bus, "**", target: target, durable: "remote")
+    assert {:error, :not_found} = Bus.whereis(target)
+    assert {:ok, [_]} = Bus.publish(bus, [signal("still.alive")])
+  end
+
+  test "rejects newline characters in subscription and replay paths" do
+    bus = start_bus()
+
+    for path <- ["event\n", "a\n.b", "a.b\n"] do
+      assert {:error, _} = Bus.subscribe(bus, path)
+      assert {:error, _} = Bus.subscribe(bus, path, durable: "invalid-path")
+      assert {:error, _} = Bus.replay(bus, path)
+    end
+
+    assert {:ok, [_]} = Bus.publish(bus, [signal("still.alive")])
+  end
+
+  test "rejects improper publication and Store record lists without stopping the Bus" do
+    bus = start_bus()
+    event = signal("valid.event")
+    assert {:ok, _} = Bus.subscribe(bus, "**")
+    assert {:error, :invalid_signals} = Bus.publish(bus, [event | :tail])
+    refute_received {:signal, ^event}
+    assert {:ok, [record]} = Bus.publish(bus, [event])
+    assert record.cursor == 1
+    assert_received {:signal, ^event}
+    assert {:ok, [^record]} = Bus.replay(bus)
+
+    stored = %{
+      "format_version" => 1,
+      "id" => record.id,
+      "cursor" => record.cursor,
+      "type" => record.type,
+      "created_at" => DateTime.to_iso8601(record.created_at),
+      "signal" => Signal.to_map(record.signal)
+    }
+
+    custom = start_bus(store: StartupStore, store_opts: [records: {:ok, [stored | :tail]}])
+    assert {:error, :invalid_store_records} = Bus.replay(custom)
+    assert {:ok, "malformed"} = Bus.subscribe(custom, "**", durable: "malformed")
+    # Subscribe completes after the malformed Store read. No head record is sent.
+    refute_received {:signal, "malformed", _}
+    assert Process.alive?(custom)
+  end
+
+  test "rejects improper startup options with the public error" do
+    assert {:error, {:invalid_options, message}} = Bus.start_link([{:name, "valid"} | :tail])
+    assert is_binary(message)
+    assert_raise ArgumentError, message, fn -> Bus.child_spec([{:name, "valid"} | :tail]) end
+
+    assert {:error, {:invalid_options, _}} =
+             Bus.start_link(name: "valid", store_opts: [{:max_records, 2} | :tail])
+
+    assert {:error, {:invalid_options, _}} =
+             Bus.start_link([
+               {:name, "valid"},
+               {:store_opts, []},
+               {:store_opts, [{:max_records, 2} | :tail]}
+             ])
+  end
+
+  test "keeps the Zoi default and last-value rule for startup Store options" do
+    for options <- [[store_opts: nil], [store_opts: :ignored, store_opts: []]] do
+      bus = start_bus(options)
+      assert {:ok, [_]} = Bus.publish(bus, [signal("default.options")])
+    end
+  end
+
+  test "rejects improper Store definitions before starting the Bus" do
+    Process.flag(:trap_exit, true)
+
+    definition = %{
+      "format_version" => 1,
+      "id" => "saved",
+      "path" => "**",
+      "cursor" => 0,
+      "created_at" => "2026-01-01T00:00:00Z"
+    }
+
+    assert {:error, :invalid_store_subscriptions} =
+             Bus.start_link(
+               name: unique_name("invalid_definitions"),
+               store: StartupStore,
+               store_opts: [subscriptions: {:ok, [definition | :tail]}]
+             )
+  end
+
+  test "keeps durable delivery and retention equal to live wildcard routing" do
+    bus = start_bus(max_log_size: 1)
+    assert {:ok, "ordinary"} = Bus.subscribe(bus, "**.a", subscription_id: "ordinary")
+    assert {:ok, "durable"} = Bus.subscribe(bus, "**.a", durable: "durable")
+    event = signal("**.x.a")
+
+    assert {:ok, [record]} = Bus.publish(bus, [event])
+    assert_received {:signal, ^event}
+    assert_received {:signal, "durable", ^record}
+    assert {:ok, [^record]} = Bus.replay(bus, "**.a")
+    assert {:ok, [_]} = Bus.publish(bus, [signal("other.event")])
+    assert {:ok, [^record]} = Bus.replay(bus)
+
+    assert {:error, {:store_error, :append, {:store_full, ["durable"]}}} =
+             Bus.publish(bus, [signal("**.other.a")])
+
+    assert :ok = Bus.ack(bus, "durable", record.cursor)
+    assert {:ok, [_]} = Bus.publish(bus, [signal("other.event")])
   end
 
   test "keeps publication and replay correct as the last subscriber is removed" do

@@ -356,7 +356,10 @@ defmodule Jido.Signal.Router.Index do
     _kind, _reason -> false
   end
 
-  defp targets(%{route: %Route{target: targets}}) when is_list(targets), do: targets
+  defp targets(%{route: %Route{target: targets}})
+       when is_list(targets) and is_integer(length(targets)),
+       do: targets
+
   defp targets(%{route: %Route{target: target}}), do: [target]
 
   defp match_segments?(type_segments, pattern_segments) do
@@ -378,12 +381,12 @@ defmodule Jido.Signal.Router.Index do
 
   defp do_match_segments(type, pattern, type_size, pattern_size, i, j, star_i, star_j) do
     cond do
+      j < pattern_size and elem(pattern, j) == "**" ->
+        do_match_segments(type, pattern, type_size, pattern_size, i, j + 1, i, j + 1)
+
       i < type_size and j < pattern_size and
           segment_matches?(elem(type, i), elem(pattern, j)) ->
         do_match_segments(type, pattern, type_size, pattern_size, i + 1, j + 1, star_i, star_j)
-
-      j < pattern_size and elem(pattern, j) == "**" ->
-        do_match_segments(type, pattern, type_size, pattern_size, i, j + 1, i, j + 1)
 
       i == type_size ->
         remaining_multi_wildcards?(pattern, j, pattern_size)

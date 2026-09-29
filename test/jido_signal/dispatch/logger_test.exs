@@ -73,6 +73,15 @@ defmodule Jido.Signal.Dispatch.LoggerAdapterTest do
     refute log =~ "with data="
   end
 
+  test "does not log secrets in compound map keys" do
+    signal = signal(%{{:password, "compound-log-secret"} => :safe})
+
+    log = capture_log(fn -> assert :ok = LoggerAdapter.deliver(signal, []) end)
+
+    assert log =~ "[REDACTED]"
+    refute log =~ "compound-log-secret"
+  end
+
   test "logs a structured and sanitized message" do
     signal = signal(%{token: "hidden", value: 42})
 

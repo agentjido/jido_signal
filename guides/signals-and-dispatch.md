@@ -99,6 +99,10 @@ config = {:pid, [
 
 ### Named Process Adapter
 
+PID and named-process targets must use a local PID or a local registered name.
+The timeout must be an integer from 1 to 4,294,967,295 milliseconds. This is the
+[OTP receive timeout limit](https://www.erlang.org/docs/27/system/expressions.html#receive).
+
 Delivery to registered processes uses the same local-process adapter as PID
 delivery:
 

@@ -107,6 +107,24 @@ defmodule Jido.Signal.CodecTest do
     assert Map.fetch(Signal.to_map(explicit_null), "data") == {:ok, nil}
   end
 
+  test "omits null wire context attributes but preserves null data" do
+    wire = %{
+      "specversion" => "1.0",
+      "id" => "null-context",
+      "source" => "/test",
+      "type" => "context.null",
+      "tenantid" => nil,
+      "data" => nil
+    }
+
+    assert {:ok, signal} = Signal.from_map(wire)
+    assert signal.extensions == %{}
+    assert Signal.to_map(signal) == Map.delete(wire, "tenantid")
+    assert {:ok, ^signal} = Signal.deserialize(Jason.encode!(wire))
+    assert {:error, _} = Signal.new(wire)
+    assert {:error, _} = Signal.put_context(signal, "tenantid", nil)
+  end
+
   test "rejects unsupported and colliding attribute keys" do
     assert {:error, error} = Signal.from_map(%{{:tuple, :key} => "value"})
     assert error =~ "attribute keys must be atoms or strings"

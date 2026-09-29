@@ -120,6 +120,20 @@ defmodule Jido.Signal.Router.DSLTest do
       assert Exception.message(error) =~ "Path cannot contain consecutive dots"
     end
 
+    test "rejects a newline at the end of a compiled path segment" do
+      module = unique_module("NewlinePath")
+
+      assert_raise CompileError, ~r/Path contains invalid characters/, fn ->
+        create_module(
+          module,
+          quote do
+            use Jido.Signal.Router
+            route("a\n.b", :target)
+          end
+        )
+      end
+    end
+
     test "rejects non-static targets at their declaration line" do
       module = unique_module("AnonymousTarget")
 
@@ -174,6 +188,9 @@ defmodule Jido.Signal.Router.DSLTest do
              ] = module.routes()
 
       assert is_function(remote_capture, 2)
+      signal = Signal.new!("improper.list", %{}, source: "/test")
+      assert {:ok, [[:head | :tail]]} = module.route(signal)
+      assert inspect(module.router()) =~ "→ [:head | :tail]"
     end
 
     test "rejects a loaded non-Signal module path at compile time" do

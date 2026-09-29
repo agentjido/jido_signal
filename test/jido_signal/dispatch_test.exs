@@ -128,6 +128,15 @@ defmodule Jido.Signal.DispatchTest do
     refute function_exported?(Dispatch, :dispatch_batch, 3)
   end
 
+  test "rejects an improper target list before delivery" do
+    signal = Signal.new!("dispatch.invalid", %{}, source: "/test")
+    configs = [{:pid, target: self()} | :invalid_tail]
+
+    assert {:error, :invalid_dispatch_config} = Dispatch.validate_opts(configs)
+    assert {:error, :invalid_dispatch_config} = Dispatch.dispatch(signal, configs)
+    refute_received {:signal, _signal}
+  end
+
   test "validates one target exactly once" do
     signal = Signal.new!("test.event", %{}, source: "/test")
 

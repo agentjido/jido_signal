@@ -296,6 +296,38 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
     assert Enum.all?(definitions, &(&1["path"] == UserCreated.type()))
   end
 
+  test "keeps the stored creation timestamp unchanged after restore and acknowledgement" do
+    for created_at <- [
+          "2026-01-01T01:00:00+01:00",
+          "2026-01-01T00:00:00+00:00",
+          "2026-01-01T00:00:00.1234567Z",
+          "2026-01-01T00:00:00Z"
+        ] do
+      definition = %{
+        "format_version" => 1,
+        "id" => "restored",
+        "path" => "restore.*",
+        "cursor" => 0,
+        "created_at" => created_at
+      }
+
+      {:ok, memory} = Jido.Signal.Bus.Store.Memory.init([])
+      {:ok, memory} = Jido.Signal.Bus.Store.Memory.put_subscription(definition, memory)
+      store = start_supervised!({Agent, fn -> memory end}, id: {:timestamp_store, created_at})
+      bus = start_bus(store: SharedStore, store_opts: [agent: store])
+      assert {:ok, "restored"} = Bus.subscribe(bus, "restore.*", durable: "restored")
+
+      for number <- 1..2 do
+        assert {:ok, [record]} = Bus.publish(bus, [signal("restore.event")])
+        assert_received {:signal, "restored", ^record}
+        assert :ok = Bus.ack(bus, "restored", record.cursor)
+        assert {:ok, [stored]} = SharedStore.list_subscriptions(store)
+        assert stored["created_at"] == created_at
+        assert stored["cursor"] == number
+      end
+    end
+  end
+
   test "reports a Store read failure while attaching and remains usable" do
     {bus, store} = start_controlled_bus()
     attach_delivery_error_handler()

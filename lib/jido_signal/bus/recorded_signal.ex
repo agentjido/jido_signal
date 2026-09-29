@@ -57,7 +57,7 @@ defmodule Jido.Signal.Bus.RecordedSignal do
 
   @doc false
   @spec decode([map()]) :: {:ok, [t()]} | {:error, term()}
-  def decode(records) do
+  def decode(records) when is_list(records) and is_integer(length(records)) do
     records
     |> Enum.reduce_while({:ok, []}, fn record, {:ok, decoded} ->
       case from_record(record) do
@@ -70,6 +70,8 @@ defmodule Jido.Signal.Bus.RecordedSignal do
       error -> error
     end
   end
+
+  def decode(_records), do: {:error, :invalid_store_records}
 
   @doc false
   @spec from_record(map()) :: {:ok, t()} | {:error, term()}

@@ -20,6 +20,20 @@ Jido schema version.
 The reader accepts the v2 `jido_schema_version` values `1` and `2`. It also
 normalizes the old `specversion` value `"1.0.2"` to `"1.0"`.
 
+Null optional wire attributes count as absent. Explicit null `data` remains a
+present payload. Constructors and `put_context/3` still reject null context
+values.
+
+Core String attributes (`id`, `type`, and `subject`) require valid UTF-8 and
+exclude CloudEvents control characters and Unicode noncharacters. Domain data
+does not use this character restriction.
+
+Event time uses RFC 3339 text. Upper-case and lower-case `T`/`Z` and the existing
+space separator are accepted. Valid input spelling and fractional precision
+are preserved. Leap-second text must identify the end of a UTC calendar month;
+the producer must use an announced leap-second date. Jido does not maintain a
+historical or future leap-second table.
+
 ## JSON
 
 JSON is the default format:

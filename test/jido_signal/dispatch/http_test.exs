@@ -45,6 +45,7 @@ defmodule Jido.Signal.Dispatch.HttpTest do
     end
 
     for header <- [
+          {"x-test\n", "value"},
           {"x-test", "bad\nvalue"},
           {"content-type", "application/json"},
           {"connection", "keep-alive"},

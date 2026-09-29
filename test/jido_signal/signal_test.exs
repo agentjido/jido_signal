@@ -99,6 +99,56 @@ defmodule Jido.SignalTest do
       assert error =~ "absolute URI"
     end
 
+    test "rejects forbidden CloudEvents String characters without restricting data" do
+      wire = %{"specversion" => "1.0", "id" => "one", "type" => "event", "source" => "/test"}
+
+      for codepoint <- [0, 10, 31, 127, 133, 159, 0xFDD0, 0xFDEF, 0xFFFF, 0x1FFFE, 0x10FFFF],
+          field <- ["id", "type", "subject"] do
+        invalid = Map.put(wire, field, "x" <> <<codepoint::utf8>>)
+        assert {:error, _} = Signal.new(invalid)
+        assert {:error, _} = Signal.from_map(invalid)
+        assert {:error, _} = Signal.deserialize(Jason.encode!(invalid))
+      end
+
+      valid = Map.merge(wire, %{"subject" => "café 😀", "data" => "domain\ntext"})
+      assert {:ok, signal} = Signal.new(valid)
+      assert {:ok, json} = Signal.serialize(signal)
+      assert {:ok, ^signal} = Signal.deserialize(json)
+    end
+
+    test "validates RFC 3339 text and preserves supported timestamp spelling" do
+      wire = %{"specversion" => "1.0", "id" => "one", "type" => "event", "source" => "/test"}
+
+      for time <- [
+            "2026-01-01t00:00:00z",
+            "2026-01-01T00:00:00.123456789Z",
+            "2026-01-01 00:00:00Z",
+            "1990-12-31T23:59:60Z",
+            "1990-12-31T15:59:60-08:00",
+            "1991-01-01T00:59:60+01:00"
+          ] do
+        attrs = Map.put(wire, "time", time)
+        assert {:ok, signal} = Signal.new(attrs)
+        assert {:ok, ^signal} = Signal.from_map(attrs)
+        assert Signal.to_map(signal)["time"] == time
+        assert {:ok, ^signal} = Signal.deserialize(Jason.encode!(attrs))
+      end
+
+      for time <- [
+            "-0001-01-01T00:00:00Z",
+            "2026-01-01T00:00:00,5Z",
+            "2026-02-30T00:00:00Z",
+            "2026-01-01T00:00:00+24:00",
+            "2026-01-01T24:00:00Z",
+            "1990-12-31T23:58:60Z",
+            "1990-12-30T23:59:60Z"
+          ] do
+        attrs = Map.put(wire, "time", time)
+        assert {:error, _} = Signal.new(attrs)
+        assert {:error, _} = Signal.from_map(attrs)
+      end
+    end
+
     test "rejects invalid text, URI, and media type values" do
       invalid_utf8 = <<255>>
       base = [type: "example.event", source: "/example"]

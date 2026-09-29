@@ -109,7 +109,7 @@ defmodule Jido.Signal.Router.Route do
 
   defp valid_segment?("*"), do: true
   defp valid_segment?("**"), do: true
-  defp valid_segment?(segment), do: String.match?(segment, ~r/^[a-zA-Z0-9_-]+$/)
+  defp valid_segment?(segment), do: String.match?(segment, ~r/\A[a-zA-Z0-9_-]+\z/)
 
   defp invalid_segment_error(segment) do
     cond do

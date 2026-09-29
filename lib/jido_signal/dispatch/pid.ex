@@ -19,7 +19,11 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
                     [
                       target: @target_schema |> Zoi.required(),
                       delivery_mode: Zoi.enum([:sync, :async]) |> Zoi.default(:async),
-                      timeout: Zoi.integer() |> Zoi.min(1) |> Zoi.default(5_000),
+                      timeout:
+                        Zoi.integer()
+                        |> Zoi.min(1)
+                        |> Zoi.max(4_294_967_295)
+                        |> Zoi.default(5_000),
                       message_format: Zoi.function(arity: 1) |> Zoi.optional()
                     ],
                     unrecognized_keys: :error
@@ -31,7 +35,7 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
   @type delivery_opts :: [
           target: delivery_target(),
           delivery_mode: delivery_mode(),
-          timeout: timeout(),
+          timeout: 1..4_294_967_295,
           message_format: message_format()
         ]
 
@@ -53,6 +57,10 @@ defmodule Jido.Signal.Dispatch.PidAdapter do
 
   @doc false
   def validate_target({:name, nil}, _opts), do: {:error, "registered name must not be nil"}
+
+  def validate_target(target, _opts) when is_pid(target) and node(target) != node(),
+    do: {:error, "target must be a local PID"}
+
   def validate_target(_target, _opts), do: :ok
 
   defp resolve_target(pid) when is_pid(pid) do

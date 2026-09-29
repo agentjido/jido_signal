@@ -85,6 +85,7 @@ defmodule Jido.Signal.Codec do
   defp extract_extensions(attrs, :wire) do
     attrs
     |> Map.drop(@core_names ++ [@legacy_wire_version_key])
+    |> Map.reject(fn {_name, value} -> is_nil(value) end)
     |> Context.normalize()
     |> case do
       {:ok, extensions} -> {:ok, extensions}

@@ -142,11 +142,9 @@ defmodule Jido.Signal.Bus.Server do
          :ok <- validate_replay_options(opts, after_cursor, limit),
          {:ok, records} <-
            Store.read(state, :read, [[after_cursor: after_cursor, path: path, limit: limit]]),
-         true <- is_list(records),
          {:ok, public} <- RecordedSignal.decode(records) do
       {:ok, public}
     else
-      false -> {:error, :invalid_store_records}
       error -> error
     end
   end

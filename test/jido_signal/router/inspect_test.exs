@@ -35,4 +35,17 @@ defmodule Jido.Signal.Router.InspectTest do
     assert inspect(router) == "#Router<routes: 0>\n"
     assert inspect(router, custom_options: [verbose: true]) =~ "entries: []"
   end
+
+  test "preserves improper list targets in lookup and inspection" do
+    target = [:head | :tail]
+
+    for path <- ["term.target", "term.*", "term.**"] do
+      router = Router.new!([{path, target}, {path, [:a, :b]}])
+      signal = Jido.Signal.new!("term.target", %{}, source: "/test")
+
+      assert {:ok, [^target, :a, :b]} = Router.route(router, signal)
+      assert inspect(router) =~ "→ [:head | :tail]"
+      assert inspect(router) =~ "→ [2 items]"
+    end
+  end
 end

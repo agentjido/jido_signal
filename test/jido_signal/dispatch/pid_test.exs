@@ -42,6 +42,12 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
     assert reason =~ "registered name"
   end
 
+  test "rejects remote PID targets at validation and dispatch boundaries" do
+    target = JidoSignalTest.Case.remote_pid()
+    assert {:error, _reason} = Dispatch.validate_opts({:pid, target: target})
+    assert {:error, _reason} = Dispatch.dispatch(signal(), {:pid, target: target})
+  end
+
   test "delivers async and sync messages to a PID" do
     receiver = start_supervised!({Receiver, owner: self()})
     signal = signal()
@@ -61,6 +67,28 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
 
     assert :ok = Dispatch.dispatch(signal, {:pid, target: receiver, delivery_mode: :sync})
     assert_received {:received_call, {:signal, ^signal}}
+  end
+
+  test "validates the OTP receive timeout boundary before delivery" do
+    receiver = start_supervised!({Receiver, owner: self()})
+    event = signal()
+
+    assert :ok =
+             Dispatch.dispatch(
+               event,
+               {:pid, target: receiver, delivery_mode: :sync, timeout: 4_294_967_295}
+             )
+
+    assert_received {:received_call, {:signal, ^event}}
+
+    for adapter <- [:pid, :named], timeout <- [4_294_967_296, 10_000_000_000_000] do
+      target = if adapter == :pid, do: receiver, else: {:name, :unused_signal_receiver}
+      config = {adapter, target: target, delivery_mode: :sync, timeout: timeout}
+      assert {:error, _} = Dispatch.validate_opts(config)
+      assert {:error, _} = Dispatch.dispatch(event, config)
+    end
+
+    refute_received {:received_call, {:signal, ^event}}
   end
 
   test "resolves a registered process for named delivery" do

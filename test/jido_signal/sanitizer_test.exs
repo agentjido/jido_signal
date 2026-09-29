@@ -16,7 +16,84 @@ defmodule Jido.Signal.SanitizerTest do
     defstruct payload: %{}
   end
 
+  defmodule SensitiveStruct do
+    defstruct [:token]
+  end
+
   describe "sanitize/2" do
+    test "bounds custom struct and exception module names" do
+      for value <- JidoSignalTest.Fixtures.Diagnostics.values(),
+          {profile, limit} <- [telemetry: 160, transport: 1024] do
+        key = if is_exception(value), do: :module, else: :__struct__
+        key = if profile == :transport, do: Atom.to_string(key), else: key
+        name = Sanitizer.sanitize(value, profile)[key]
+        assert byte_size(name) <= limit + 3
+        assert String.valid?(name)
+
+        if profile == :telemetry do
+          assert name == String.slice(inspect(value.__struct__), 0, 160) <> "..."
+        else
+          assert name == inspect(value.__struct__)
+        end
+      end
+    end
+
+    test "redacts secrets in compound map keys at all boundaries" do
+      secret = "compound-key-secret-83f2"
+
+      keys = [
+        {:password, secret},
+        %{password: secret},
+        [{:token, secret}],
+        %ScalarStruct{payload: :safe, id: %{secret: secret}},
+        %SensitiveStruct{token: secret},
+        DetailError.exception(message: secret, code: %{token: secret}),
+        [{:password, secret} | :tail],
+        %{%{token: secret} => :safe}
+      ]
+
+      for profile <- [:telemetry, :transport], key <- keys do
+        value = %{key => :safe}
+        refute inspect(Sanitizer.sanitize(value, profile)) =~ secret
+        refute Sanitizer.preview(value, profile, max_length: 10_000) =~ secret
+
+        refute inspect(
+                 Jido.Signal.Error.to_map(Jido.Signal.Error.validation_error("invalid", value))
+               ) =~ secret
+      end
+    end
+
+    test "bounds Signal fields and nested Signal data" do
+      large = String.duplicate("s", 100_000)
+
+      signal =
+        Signal.new!(%{
+          id: large,
+          type: large,
+          source: large,
+          subject: large,
+          datacontenttype: "text/" <> large
+        })
+
+      for {profile, limit} <- [telemetry: 160, transport: 1024] do
+        sanitized = Sanitizer.sanitize(signal, profile)
+
+        for field <- [:id, :type, :source, :subject, :datacontenttype] do
+          key = if profile == :telemetry, do: field, else: Atom.to_string(field)
+          assert byte_size(Map.fetch!(sanitized, key)) <= limit + 3
+        end
+      end
+
+      nested =
+        Enum.reduce(1..30, :leaf, fn _, data -> Signal.new!("nested", data, source: "/test") end)
+
+      sanitized = Sanitizer.sanitize(nested, :transport)
+      refute inspect(sanitized, limit: :infinity) =~ "leaf"
+      assert byte_size(:erlang.term_to_binary(sanitized)) < 3_000
+      error = Jido.Signal.Error.validation_error("invalid", %{signal: nested})
+      assert byte_size(Jason.encode!(Jido.Signal.Error.to_map(error))) < 3_000
+    end
+
     test "redacts sensitive keys for telemetry" do
       sanitized =
         Sanitizer.sanitize(
@@ -88,6 +165,27 @@ defmodule Jido.Signal.SanitizerTest do
       uri = URI.parse("https://user:pass@example.com/path?token=secret#private")
 
       assert Sanitizer.sanitize(uri, :telemetry) == "https://example.com/path"
+    end
+
+    test "bounds URI and runtime value text" do
+      uri = URI.parse("https://user:secret@example.com/" <> String.duplicate("p", 100_000))
+      bits = <<0::10_001>>
+      {:ok, date} = Date.new(Integer.pow(10, 2048), 1, 1)
+      {:ok, naive} = NaiveDateTime.new(date, ~T[00:00:00])
+      {:ok, datetime} = DateTime.new(date, ~T[00:00:00])
+
+      for {profile, limit} <- [telemetry: 160, transport: 1024] do
+        sanitized_uri = Sanitizer.sanitize(uri, profile)
+        assert byte_size(sanitized_uri) <= limit + 3
+        refute sanitized_uri =~ "secret"
+        sanitized_bits = Sanitizer.sanitize(bits, profile)
+        text = if profile == :telemetry, do: sanitized_bits, else: sanitized_bits["value"]
+        assert byte_size(text) <= limit + 3
+
+        for temporal <- [date, naive, datetime] do
+          assert byte_size(Sanitizer.sanitize(temporal, profile)) <= limit + 3
+        end
+      end
     end
 
     test "does not include exception messages" do

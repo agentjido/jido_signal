@@ -131,6 +131,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
 
   defp validate_target(target) when is_pid(target) do
     cond do
+      node(target) != node() -> {:error, :invalid_target}
       target == self() -> {:error, :target_is_bus}
       Process.alive?(target) -> {:ok, target}
       true -> {:error, :target_not_alive}
@@ -169,7 +170,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
         monitor_ref: monitor_ref,
         cursor: 0,
         in_flight: nil,
-        created_at: DateTime.utc_now()
+        created_at: DateTime.utc_now() |> DateTime.to_iso8601()
       }
 
       state = Subscriber.insert_subscriber(state, subscriber)

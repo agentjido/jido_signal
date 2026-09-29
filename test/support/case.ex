@@ -16,6 +16,12 @@ defmodule JidoSignalTest.Case do
     "#{prefix}_#{System.unique_integer([:positive])}"
   end
 
+  # An external PID value, without starting or connecting to a remote node.
+  def remote_pid do
+    <<131, node_term::binary>> = :erlang.term_to_binary(:signal_test_remote@host)
+    :erlang.binary_to_term(<<131, 103>> <> node_term <> <<1::32, 0::32, 0>>, [:safe])
+  end
+
   defmacro unique_module(prefix) do
     namespace = __CALLER__.module
 

@@ -168,7 +168,7 @@ defmodule Jido.Signal.Router do
     end
   end
 
-  def normalize(routes) when is_list(routes) do
+  def normalize(routes) when is_list(routes) and is_integer(length(routes)) do
     routes
     |> Enum.reduce_while({:ok, []}, fn input, {:ok, acc} ->
       with {:ok, route} <- normalize_route_spec(input),
@@ -223,7 +223,7 @@ defmodule Jido.Signal.Router do
 
   @doc "Removes all routes that have one of the specified paths."
   @spec remove(t(), path() | [path()]) :: {:ok, t()} | {:error, term()}
-  def remove(%Router{} = router, paths) when is_list(paths) do
+  def remove(%Router{} = router, paths) when is_list(paths) and is_integer(length(paths)) do
     with {:ok, paths} <- resolve_paths(paths) do
       {:ok, Index.remove(router, paths)}
     end
@@ -231,6 +231,8 @@ defmodule Jido.Signal.Router do
 
   def remove(%Router{} = router, path) when is_binary(path) or is_atom(path),
     do: remove(router, [path])
+
+  def remove(%Router{}, invalid), do: invalid_path(invalid)
 
   @doc "Appends routes or another Router to a Router."
   @spec merge(t(), t() | [Route.t()]) :: {:ok, t()} | {:error, term()}
@@ -263,7 +265,7 @@ defmodule Jido.Signal.Router do
     end
   end
 
-  def validate(routes) when is_list(routes) do
+  def validate(routes) when is_list(routes) and is_integer(length(routes)) do
     routes
     |> Enum.reduce_while({:ok, []}, fn
       %Route{} = route, {:ok, acc} ->
@@ -342,7 +344,7 @@ defmodule Jido.Signal.Router do
 
   @doc "Filters Signals whose types match a route path pattern."
   @spec filter([Signal.t()] | term(), String.t() | term()) :: [Signal.t()]
-  def filter(signals, pattern) when is_list(signals) do
+  def filter(signals, pattern) when is_list(signals) and is_integer(length(signals)) do
     case query_path(pattern) do
       {:ok, pattern} ->
         Enum.filter(signals, fn

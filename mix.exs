@@ -17,6 +17,7 @@ defmodule Jido.Signal.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
+      test_ignore_filters: [fn path -> String.contains?(path, "test/property/support/") end],
       deps: deps(),
 
       # Docs
@@ -46,6 +47,8 @@ defmodule Jido.Signal.MixProject do
   def cli do
     [
       preferred_envs: [
+        "test.property": :test,
+        "test.fuzz": :test,
         coveralls: :test,
         "coveralls.github": :test,
         "coveralls.lcov": :test,
@@ -88,6 +91,8 @@ defmodule Jido.Signal.MixProject do
         {"guides/event-bus.md", title: "Event Bus"},
         {"guides/advanced.md", title: "Advanced Usage"},
         {"guides/benchmarks.md", title: "Benchmarks"},
+        {"guides/public-contracts.md", title: "Public Contract Register"},
+        {"guides/property-testing.md", title: "Property and Fuzz Tests"},
         {"guides/v2-to-v3.md", title: "Migrate from v2 to v3"}
       ],
       groups_for_extras: [
@@ -109,7 +114,12 @@ defmodule Jido.Signal.MixProject do
           "guides/signal-router.md",
           "guides/event-bus.md"
         ],
-        "Advanced Use": ["guides/advanced.md", "guides/benchmarks.md"],
+        "Advanced Use": [
+          "guides/advanced.md",
+          "guides/benchmarks.md",
+          "guides/public-contracts.md",
+          "guides/property-testing.md"
+        ],
         Upgrade: ["guides/v2-to-v3.md"]
       ],
       extra_section: "Guides",
@@ -211,6 +221,8 @@ defmodule Jido.Signal.MixProject do
       # Helper to run tests with trace when needed
       # test: "test --trace --exclude flaky",
       test: "test --exclude flaky",
+      "test.property": "test test/property --only property --seed 0",
+      "test.fuzz": "test test/property --only fuzz --seed 0",
 
       # Run to check the quality of your code
       q: ["quality"],

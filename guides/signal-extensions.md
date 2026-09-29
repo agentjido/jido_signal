@@ -79,6 +79,11 @@ Values must be a CloudEvents context value. In Elixir, use a Boolean, signed
 32-bit Integer, or binary. URI, URI-reference, Timestamp, and String values use
 binaries.
 
+JSON requires valid UTF-8 context binaries. Use trusted Erlang Term Format for
+opaque context bytes. Context does not record a separate Binary/String type,
+so Jido does not infer or add a Base64 mapping for these attributes. Non-UTF-8
+Signal `data` uses the separate `data_base64` wire field.
+
 Do not put maps, lists, tuples, PIDs, or dispatch configurations in context
 attributes.
 

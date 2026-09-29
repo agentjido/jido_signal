@@ -41,7 +41,7 @@ defmodule Jido.Signal.Dispatch.Http do
   @max_header_name_bytes 128
   @max_header_value_bytes 8_192
   @max_headers_bytes 64_000
-  @header_name_pattern ~r/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+  @header_name_pattern ~r/\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z/
   @header_value_control_pattern ~r/[\x00-\x1F\x7F]/
   @url_unsafe_pattern ~r/[\x00-\x20\x7F]/
   @reserved_headers MapSet.new([

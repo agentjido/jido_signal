@@ -5,6 +5,29 @@ defmodule Jido.Signal.Router.PatternTest do
   alias Jido.Signal.Router
 
   describe "matches?/2" do
+    test "rejects newline characters at segment boundaries" do
+      for pattern <- ["event\n", "a\n.b", "a.b\n"] do
+        assert {:error, _} = Router.normalize({pattern, :target})
+        refute Router.matches?(pattern, pattern)
+        assert Router.filter([%Signal{type: pattern, id: "test", source: "/test"}], pattern) == []
+      end
+    end
+
+    test "treats multi-wildcards as patterns when type segments contain stars" do
+      for {type, pattern} <- [
+            {"**.x.a", "**.a"},
+            {"a.**.x", "a.**"},
+            {"**.x", "**"}
+          ] do
+        signal = Signal.new!(type: type, source: "/test")
+        router = Router.new!({pattern, :matched})
+
+        assert {:ok, [:matched]} = Router.route(router, signal)
+        assert Router.matches?(type, pattern)
+        assert Router.filter([signal], pattern) == [signal]
+      end
+    end
+
     test "matches exact paths" do
       assert Router.matches?("user.created", "user.created")
       refute Router.matches?("user.updated", "user.created")
