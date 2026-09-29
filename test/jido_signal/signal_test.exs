@@ -62,6 +62,21 @@ defmodule Jido.SignalTest do
       assert Signal.to_map(signal)["data_base64"] == "AQID"
     end
 
+    test "keeps nested constructor extensions and rejects duplicate flat values" do
+      base = %{
+        type: "example.event",
+        source: "/example",
+        extensions: %{tenantid: "tenant-123"}
+      }
+
+      assert {:ok, signal} = Signal.new(base)
+      assert signal.extensions == %{"tenantid" => "tenant-123"}
+
+      assert {:error, error} = Signal.new(Map.put(base, :tenantid, "other-tenant"))
+      assert error =~ "duplicate extension attribute"
+      assert error =~ "tenantid"
+    end
+
     test "validates event time and data schema" do
       assert {:ok, signal} =
                Signal.new(

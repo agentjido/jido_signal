@@ -2,6 +2,7 @@ defmodule Jido.Signal.ContextTest do
   use ExUnit.Case, async: true
 
   alias Jido.Signal
+  alias Jido.Signal.Context
 
   setup do
     %{signal: Signal.new!("test.event", %{}, source: "/test")}
@@ -29,6 +30,16 @@ defmodule Jido.Signal.ContextTest do
     assert decoded.extensions == %{"tenantid" => "tenant-123"}
   end
 
+  test "treats extensions as a legal CloudEvents extension name", %{signal: signal} do
+    assert {:ok, signal} = Signal.put_context(signal, "extensions", "enabled")
+    assert Signal.get_context(signal, "extensions") == "enabled"
+
+    wire = Signal.to_map(signal)
+    assert wire["extensions"] == "enabled"
+    assert {:ok, decoded} = Signal.from_map(wire)
+    assert decoded.extensions == %{"extensions" => "enabled"}
+  end
+
   test "rejects names outside the CloudEvents rules", %{signal: signal} do
     assert {:error, error} = Signal.put_context(signal, "trace_id", "abc")
     assert error =~ "extension name"
@@ -43,6 +54,14 @@ defmodule Jido.Signal.ContextTest do
   test "rejects compound values", %{signal: signal} do
     assert {:error, error} = Signal.put_context(signal, "routing", %{target: "worker"})
     assert error =~ "extension values"
+  end
+
+  test "rejects names that collide after normalization" do
+    assert {:error, error} =
+             Context.normalize(%{"tenantid" => "string", tenantid: "atom"})
+
+    assert error =~ "duplicate extension attribute"
+    assert error =~ "tenantid"
   end
 
   test "deletes a context attribute", %{signal: signal} do

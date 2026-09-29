@@ -38,6 +38,10 @@ defmodule Jido.Signal.DefinitionTest do
       default_source: "/messages"
   end
 
+  defmodule MarkerOnly do
+    def __signal_definition__, do: %{}
+  end
+
   describe "typed Signal construction" do
     test "uses configured envelope values and validates data" do
       assert {:ok, signal} =
@@ -115,6 +119,13 @@ defmodule Jido.Signal.DefinitionTest do
       refute Jido.Signal.defined?(String)
       refute Jido.Signal.defined?(:not_a_module)
       refute Jido.Signal.defined?("user.created")
+    end
+
+    test "does not identify an incomplete marker module as a Signal module" do
+      refute Jido.Signal.defined?(MarkerOnly)
+
+      assert {:error, %Jido.Signal.Error.InvalidInputError{}} =
+               Jido.Signal.Router.path(MarkerOnly)
     end
   end
 

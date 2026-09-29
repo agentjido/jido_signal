@@ -10,14 +10,15 @@ defmodule Jido.Signal.Context do
 
   @core_names ~w[
     specversion id source type subject time
-    datacontenttype dataschema data data_base64 extensions
+    datacontenttype dataschema data data_base64
   ]
   @name_pattern ~r/\A[a-z][a-z0-9]{0,19}\z/
   @min_integer -2_147_483_648
   @max_integer 2_147_483_647
 
   @type name :: String.t()
-  @type value :: boolean() | integer() | binary()
+  @type int32 :: -2_147_483_648..2_147_483_647
+  @type value :: boolean() | int32() | binary()
   @type t :: %{optional(name()) => value()}
 
   @doc "Validates and normalizes a context attribute map."
@@ -26,7 +27,11 @@ defmodule Jido.Signal.Context do
     Enum.reduce_while(attributes, {:ok, %{}}, fn {name, value}, {:ok, acc} ->
       with {:ok, name} <- normalize_name(name),
            :ok <- validate_value(value) do
-        {:cont, {:ok, Map.put(acc, name, value)}}
+        if Map.has_key?(acc, name) do
+          {:halt, {:error, "duplicate extension attribute #{inspect(name)}"}}
+        else
+          {:cont, {:ok, Map.put(acc, name, value)}}
+        end
       else
         {:error, reason} -> {:halt, {:error, reason}}
       end

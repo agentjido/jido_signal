@@ -49,6 +49,21 @@ defmodule Jido.Signal.SanitizerTest do
       assert sanitized["x-custom"] == "visible"
     end
 
+    test "redacts sensitive pairs inside mixed lists" do
+      value = [{:password, "mixed-secret"}, :tail]
+
+      assert [{:password, "[REDACTED]"}, :tail] =
+               Sanitizer.sanitize(value, :telemetry)
+
+      assert [
+               %{
+                 "__type__" => "tuple",
+                 "items" => ["password", "[REDACTED]"]
+               },
+               "tail"
+             ] = Sanitizer.sanitize(value, :transport)
+    end
+
     test "keeps empty lists as lists" do
       assert Sanitizer.sanitize([], :telemetry) == []
       assert Sanitizer.sanitize([], :transport) == []
@@ -208,13 +223,23 @@ defmodule Jido.Signal.SanitizerTest do
     test "handles improper lists without raising" do
       improper = [1, [2 | 3] | 4]
 
-      assert %{__type__: :improper_list, preview: preview} =
-               Sanitizer.sanitize(improper, :telemetry)
-
-      assert is_binary(preview)
+      assert %{__type__: :improper_list} = sanitized = Sanitizer.sanitize(improper, :telemetry)
+      refute Map.has_key?(sanitized, :preview)
 
       assert %{"__type__" => "improper_list"} =
+               sanitized =
                Sanitizer.sanitize(%{nested: improper}, :transport)["nested"]
+
+      refute Map.has_key?(sanitized, "preview")
+    end
+
+    test "does not expose sensitive values in improper lists" do
+      improper = [{:token, "improper-secret"} | :tail]
+
+      for profile <- [:telemetry, :transport] do
+        sanitized = Sanitizer.sanitize(improper, profile)
+        refute inspect(sanitized) =~ "improper-secret"
+      end
     end
 
     test "bounds large keys, invalid binaries, and maps" do

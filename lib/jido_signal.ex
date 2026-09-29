@@ -159,7 +159,9 @@ defmodule Jido.Signal do
   """
   @spec defined?(term()) :: boolean()
   def defined?(module) when is_atom(module) do
-    Code.ensure_loaded?(module) and function_exported?(module, :__signal_definition__, 0)
+    Code.ensure_loaded?(module) and
+      function_exported?(module, :__signal_definition__, 0) and
+      function_exported?(module, :type, 0)
   end
 
   def defined?(_module), do: false
@@ -366,9 +368,11 @@ defmodule Jido.Signal do
   defdelegate list_context(signal), to: Context, as: :names
 
   @doc "Serializes one Signal or a list of Signals as JSON or Erlang Term Format."
+  @spec serialize(t() | [t()], keyword()) :: {:ok, binary()} | {:error, term()}
   defdelegate serialize(signal_or_signals, opts \\ []), to: Serialization
 
   @doc "Serializes one Signal or a list of Signals, or raises."
+  @spec serialize!(t() | [t()], keyword()) :: binary() | no_return()
   def serialize!(signal_or_signals, opts \\ []) do
     case serialize(signal_or_signals, opts) do
       {:ok, binary} -> binary
@@ -377,6 +381,7 @@ defmodule Jido.Signal do
   end
 
   @doc "Deserializes one Signal or a list of Signals from JSON or Erlang Term Format."
+  @spec deserialize(binary(), keyword()) :: {:ok, t() | [t()]} | {:error, term()}
   defdelegate deserialize(binary, opts \\ []), to: Serialization
 
   @doc false

@@ -173,6 +173,23 @@ defmodule Jido.Signal.Sanitizer do
     end
   end
 
+  defp sanitize({key, item} = value, profile, opts, depth)
+       when is_atom(key) or is_binary(key) do
+    if depth >= opts.max_depth do
+      collection_summary(value, profile)
+    else
+      item =
+        if sensitive_key?(key), do: @redacted, else: sanitize(item, profile, opts, depth + 1)
+
+      items = [sanitize(key, profile, opts, depth + 1), item]
+
+      case profile do
+        :telemetry -> List.to_tuple(items)
+        :transport -> %{"__type__" => "tuple", "items" => items}
+      end
+    end
+  end
+
   defp sanitize(value, profile, opts, depth) when is_tuple(value) do
     if depth >= opts.max_depth do
       collection_summary(value, profile)
@@ -294,19 +311,10 @@ defmodule Jido.Signal.Sanitizer do
     ArgumentError -> false
   end
 
-  defp improper_list_summary(value, :telemetry, opts) do
-    %{
-      __type__: :improper_list,
-      preview: inspect(value, limit: opts.max_items, printable_limit: opts.max_binary)
-    }
-  end
+  defp improper_list_summary(_value, :telemetry, _opts), do: %{__type__: :improper_list}
 
-  defp improper_list_summary(value, :transport, opts) do
-    %{
-      "__type__" => "improper_list",
-      "preview" => inspect(value, limit: opts.max_items, printable_limit: opts.max_binary)
-    }
-  end
+  defp improper_list_summary(_value, :transport, _opts),
+    do: %{"__type__" => "improper_list"}
 
   defp bounded_boundary_key(:telemetry, key, _limit) when is_atom(key), do: key
 

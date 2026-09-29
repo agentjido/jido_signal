@@ -125,6 +125,37 @@ defmodule Jido.Signal.ErrorTest do
                "items" => ["retry", %{"attempt" => 2}]
              }
     end
+
+    test "redacts sensitive pairs in public error details" do
+      error =
+        Error.internal_error("failed", %{
+          mixed: [{:password, "mixed-secret"}, :tail],
+          improper: [{:token, "improper-secret"} | :tail]
+        })
+
+      public = Error.to_map(error)
+
+      assert inspect(public) =~ "[REDACTED]"
+      refute inspect(public) =~ "mixed-secret"
+      refute inspect(public) =~ "improper-secret"
+    end
+
+    test "preserves grouped package error classes" do
+      grouped = struct(Error.Execution, errors: [Error.timeout_error("late")])
+
+      assert %{
+               type: :execution,
+               message: "Signal processing failed",
+               retryable?: true
+             } = Error.to_map(grouped)
+
+      public = Error.to_map(grouped)
+      refute public.message =~ "splode"
+      refute public.message =~ "error_test.exs"
+
+      wrapped = Error.dispatch_error("dispatch failed", reason: grouped)
+      assert Error.retryable?(wrapped)
+    end
   end
 
   describe "retryable?/1" do

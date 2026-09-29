@@ -7,8 +7,9 @@ defmodule Jido.Signal.Codec do
 
   @core_names ~w[
     specversion id source type subject time
-    datacontenttype dataschema data data_base64 extensions
+    datacontenttype dataschema data data_base64
   ]
+  @constructor_names ["extensions" | @core_names]
   @legacy_wire_version_key "jido_schema_version"
   @legacy_wire_versions [1, 2]
 
@@ -19,14 +20,14 @@ defmodule Jido.Signal.Codec do
       attrs
       |> Map.put_new_lazy("id", &ID.generate!/0)
       |> Map.put_new("specversion", "1.0")
-      |> from_normalized_map()
+      |> from_normalized_map(:constructor)
     end
   end
 
   @doc false
   @spec from_map(map()) :: {:ok, Signal.t()} | {:error, String.t()}
   def from_map(map) when is_map(map) do
-    with {:ok, attrs} <- normalize_keys(map), do: from_normalized_map(attrs)
+    with {:ok, attrs} <- normalize_keys(map), do: from_normalized_map(attrs, :wire)
   end
 
   def from_map(_map), do: {:error, "parse error: expected a map"}
@@ -59,24 +60,42 @@ defmodule Jido.Signal.Codec do
     end)
   end
 
-  defp from_normalized_map(attrs) do
+  defp from_normalized_map(attrs, boundary) do
     with :ok <- validate_specversion(attrs),
          :ok <- validate_legacy_wire_version(attrs),
          {:ok, data, data_present?, data_base64?} <- extract_data(attrs),
-         {:ok, extensions} <- extract_extensions(attrs) do
+         {:ok, extensions} <- extract_extensions(attrs, boundary) do
       parse_signal(attrs, data, data_present?, data_base64?, extensions)
     end
   end
 
-  defp extract_extensions(attrs) do
+  defp extract_extensions(attrs, :constructor) do
     explicit = Map.get(attrs, "extensions", %{})
-    unknown = Map.drop(attrs, @core_names ++ [@legacy_wire_version_key])
+    unknown = Map.drop(attrs, @constructor_names ++ [@legacy_wire_version_key])
 
     with {:ok, explicit} <- Context.normalize(explicit),
-         {:ok, unknown} <- Context.normalize(unknown) do
+         {:ok, unknown} <- Context.normalize(unknown),
+         :ok <- reject_duplicate_extensions(explicit, unknown) do
       {:ok, Map.merge(unknown, explicit)}
     else
       {:error, reason} -> {:error, "parse error: #{reason}"}
+    end
+  end
+
+  defp extract_extensions(attrs, :wire) do
+    attrs
+    |> Map.drop(@core_names ++ [@legacy_wire_version_key])
+    |> Context.normalize()
+    |> case do
+      {:ok, extensions} -> {:ok, extensions}
+      {:error, reason} -> {:error, "parse error: #{reason}"}
+    end
+  end
+
+  defp reject_duplicate_extensions(explicit, unknown) do
+    case Enum.find(Map.keys(explicit), &Map.has_key?(unknown, &1)) do
+      nil -> :ok
+      name -> {:error, "duplicate extension attribute #{inspect(name)}"}
     end
   end
 

@@ -21,7 +21,7 @@ defmodule Jido.Signal.Error do
     filter_stacktraces: [Jido.Signal, "Jido.Signal."]
 
   @type detail_map :: map()
-  @type details_input :: map() | keyword()
+  @type details_input :: term()
 
   defmodule Invalid do
     @moduledoc "Splode error class for invalid inputs and validation failures."
@@ -247,7 +247,12 @@ defmodule Jido.Signal.Error do
              TimeoutError,
              DispatchError,
              InternalError,
-             Internal.UnknownError
+             Internal.UnknownError,
+             Invalid,
+             Execution,
+             Routing,
+             Timeout,
+             Internal
            ] do
     error
   end
@@ -331,11 +336,18 @@ defmodule Jido.Signal.Error do
 
     %{
       type: type(error),
-      message: Exception.message(error),
+      message: public_message(error),
       details: transport_details(Map.get(error, :details, %{})),
       retryable?: retryable?(error)
     }
   end
+
+  defp public_message(%Invalid{}), do: "Invalid input"
+  defp public_message(%Execution{}), do: "Signal processing failed"
+  defp public_message(%Routing{}), do: "Signal routing failed"
+  defp public_message(%Timeout{}), do: "Signal processing timed out"
+  defp public_message(%Internal{}), do: "Internal error"
+  defp public_message(error), do: Exception.message(error)
 
   defp retryable_from_details?(details) do
     details = normalize_details(details)
@@ -355,6 +367,9 @@ defmodule Jido.Signal.Error do
 
   defp retryable_reason?(%Internal.UnknownError{details: details}),
     do: retryable_from_details?(details)
+
+  defp retryable_reason?(%{errors: errors}) when is_list(errors),
+    do: Enum.any?(errors, &retryable?/1)
 
   defp retryable_reason?(:timeout), do: true
   defp retryable_reason?(:econnrefused), do: true

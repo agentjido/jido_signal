@@ -15,24 +15,14 @@ defmodule Jido.Signal.Dispatch do
   defmodule Target do
     @moduledoc false
 
-    @schema Zoi.struct(
-              __MODULE__,
-              %{
-                adapter: Zoi.atom(),
-                module: Zoi.any() |> Zoi.nullable(),
-                opts: Zoi.list()
-              }
-            )
+    @enforce_keys [:adapter, :module, :opts]
+    defstruct [:adapter, :module, :opts]
 
-    @type t :: unquote(Zoi.type_spec(@schema))
-    @enforce_keys Zoi.Struct.enforce_keys(@schema)
-    defstruct Zoi.Struct.struct_fields(@schema)
-
-    @doc false
-    @spec new(atom(), module() | nil, keyword()) :: {:ok, t()} | {:error, term()}
-    def new(adapter, module, opts) do
-      Zoi.parse(@schema, %__MODULE__{adapter: adapter, module: module, opts: opts})
-    end
+    @type t :: %__MODULE__{
+            adapter: Jido.Signal.Dispatch.adapter(),
+            module: module() | nil,
+            opts: keyword()
+          }
 
     @doc false
     @spec to_tuple(t()) :: {atom(), keyword()}
@@ -141,7 +131,7 @@ defmodule Jido.Signal.Dispatch do
 
   defp normalize_target({nil, opts}) when is_list(opts) do
     if Keyword.keyword?(opts),
-      do: Target.new(nil, nil, strip_internal_opts(opts)),
+      do: {:ok, %Target{adapter: nil, module: nil, opts: strip_internal_opts(opts)}},
       else: invalid_dispatch_config({nil, opts})
   end
 
@@ -150,9 +140,8 @@ defmodule Jido.Signal.Dispatch do
       opts = strip_internal_opts(opts)
 
       with {:ok, adapter_module} <- resolve_adapter(adapter),
-           {:ok, validated_opts} <- parse_adapter_options(adapter_module, opts),
-           {:ok, target} <- Target.new(adapter, adapter_module, validated_opts) do
-        {:ok, target}
+           {:ok, validated_opts} <- parse_adapter_options(adapter_module, opts) do
+        {:ok, %Target{adapter: adapter, module: adapter_module, opts: validated_opts}}
       else
         {:error, reason} -> normalize_validation_error(reason, adapter, config)
       end

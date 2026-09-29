@@ -44,6 +44,23 @@ defmodule Jido.Signal.Dispatch.LoggerAdapterTest do
     refute log =~ "hidden"
   end
 
+  test "does not log sensitive pairs in mixed or improper lists" do
+    signal =
+      signal(%{
+        mixed: [{:password, "mixed-secret"}, :tail],
+        improper: [{:token, "improper-secret"} | :tail]
+      })
+
+    log =
+      capture_log(fn ->
+        assert :ok = LoggerAdapter.deliver(signal, [])
+      end)
+
+    assert log =~ "[REDACTED]"
+    refute log =~ "mixed-secret"
+    refute log =~ "improper-secret"
+  end
+
   test "can omit data from plain text" do
     signal = signal(%{value: 42})
 
