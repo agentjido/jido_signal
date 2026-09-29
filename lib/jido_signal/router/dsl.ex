@@ -8,7 +8,8 @@ defmodule Jido.Signal.Router.DSL do
 
   Accepts the same path and target specifications as `Jido.Signal.Router.new/1`.
   The path may be a string or a `use Jido.Signal` module. Match predicates
-  must be `{module, function, args}` MFA values.
+  must be `{module, function, args}` MFA values. Compiled route values must be
+  static module data.
   """
   @spec route(term(), term()) :: Macro.t()
   defmacro route(path, target) do
@@ -30,14 +31,16 @@ defmodule Jido.Signal.Router.DSL do
   @doc "Compiles accumulated `route` declarations into Router accessors."
   @spec __before_compile__(Macro.Env.t()) :: Macro.t()
   defmacro __before_compile__(env) do
-    specs =
+    routes_with_lines =
       env.module
       |> Module.get_attribute(:__jido_signal_routes__)
       |> List.wrap()
       |> Enum.reverse()
 
+    specs = Enum.map(routes_with_lines, &elem(&1, 0))
+
     ensure_path_modules_compiled(specs)
-    validate_compiled_matches!(specs, env)
+    validate_compiled_routes!(routes_with_lines, env)
 
     case Router.new(specs) do
       {:ok, router} ->
@@ -67,20 +70,21 @@ defmodule Jido.Signal.Router.DSL do
 
   defp store_route(path, [target], caller) do
     quote line: caller.line do
-      @__jido_signal_routes__ {unquote(path), unquote(target)}
+      @__jido_signal_routes__ {{unquote(path), unquote(target)}, unquote(caller.line)}
     end
   end
 
   defp store_route(path, [match_or_target, target_or_priority], caller) do
     quote line: caller.line do
-      @__jido_signal_routes__ {unquote(path), unquote(match_or_target),
-                               unquote(target_or_priority)}
+      @__jido_signal_routes__ {{unquote(path), unquote(match_or_target),
+                                unquote(target_or_priority)}, unquote(caller.line)}
     end
   end
 
   defp store_route(path, [match, target, priority], caller) do
     quote line: caller.line do
-      @__jido_signal_routes__ {unquote(path), unquote(match), unquote(target), unquote(priority)}
+      @__jido_signal_routes__ {{unquote(path), unquote(match), unquote(target),
+                                unquote(priority)}, unquote(caller.line)}
     end
   end
 
@@ -96,31 +100,55 @@ defmodule Jido.Signal.Router.DSL do
   defp route_path(spec) when is_tuple(spec) and tuple_size(spec) >= 2, do: elem(spec, 0)
   defp route_path(_spec), do: nil
 
-  defp validate_compiled_matches!(specs, env) do
-    Enum.each(specs, fn
-      {_path, _target, priority} when is_integer(priority) ->
-        :ok
+  defp validate_compiled_routes!(routes_with_lines, env) do
+    Enum.each(routes_with_lines, fn {spec, line} ->
+      validate_compiled_match!(spec, env, line)
+      validate_static_route!(spec, env, line)
 
-      {_path, match, _target} ->
-        validate_mfa!(match, env)
-
-      {_path, match, _target, _priority} ->
-        validate_mfa!(match, env)
-
-      _spec ->
-        :ok
+      case Router.new(spec) do
+        {:ok, _router} -> :ok
+        {:error, error} -> compile_error!(env, line, Exception.message(error))
+      end
     end)
   end
 
-  defp validate_mfa!({module, function, args}, _env)
+  defp validate_compiled_match!({_path, _target, priority}, _env, _line)
+       when is_integer(priority),
+       do: :ok
+
+  defp validate_compiled_match!({_path, match, _target}, env, line),
+    do: validate_mfa!(match, env, line)
+
+  defp validate_compiled_match!({_path, match, _target, _priority}, env, line),
+    do: validate_mfa!(match, env, line)
+
+  defp validate_compiled_match!(_spec, _env, _line), do: :ok
+
+  defp validate_mfa!({module, function, args}, _env, _line)
        when is_atom(module) and is_atom(function) and is_list(args),
        do: :ok
 
-  defp validate_mfa!(_match, env) do
-    compile_error!(env, "route match must be a {Module, :function, args} MFA")
+  defp validate_mfa!(_match, env, line) do
+    compile_error!(env, line, "route match must be a {Module, :function, args} MFA")
   end
 
-  defp compile_error!(caller, description) do
-    raise CompileError, file: caller.file, line: caller.line, description: description
+  defp validate_static_route!(spec, env, line) do
+    {_escaped, runtime_process_value?} =
+      spec
+      |> Macro.escape()
+      |> Macro.prewalk(false, fn value, found? ->
+        {value, found? or is_pid(value) or is_port(value) or is_reference(value)}
+      end)
+
+    if runtime_process_value? do
+      compile_error!(env, line, "compiled route values must be static module data")
+    end
+  rescue
+    ArgumentError ->
+      compile_error!(env, line, "compiled route values must be static module data")
+  end
+
+  defp compile_error!(caller, line, description) do
+    raise CompileError, file: caller.file, line: line, description: description
   end
 end

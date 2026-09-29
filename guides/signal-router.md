@@ -62,8 +62,9 @@ values.
 `use Jido.Signal.Router` compiles the same specifications into a module. It
 does not use Spark. Each `route` is one `new/1` specification. Match
 predicates in this compiled form must be `{Module, :function, args}` MFA
-values so the Router can be stored in the module. Anonymous functions remain
-valid only for runtime `new/1` and `add/2`.
+values so the Router can be stored in the module. All compiled route values
+must be static module data. Anonymous functions remain valid only for runtime
+`new/1` and `add/2`.
 
 ```elixir
 defmodule MyApp.UserRouter do
@@ -82,8 +83,9 @@ MyApp.UserRouter.routes()
 
 An empty module is a valid empty Router. Invalid paths, non-Signal module
 paths, Signal module types with wildcards, and anonymous match functions fail
-compilation. Route declarations can use module attributes for paths,
-priorities, and MFA arguments.
+compilation at the route declaration. Route declarations can use module
+attributes for paths, priorities, targets, and MFA arguments when the values
+are static module data.
 
 ## Path Patterns
 

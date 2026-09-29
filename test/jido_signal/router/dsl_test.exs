@@ -101,6 +101,81 @@ defmodule Jido.Signal.Router.DSLTest do
       end
     end
 
+    test "reports the route declaration line for invalid paths" do
+      module = unique_module("InvalidPathLine")
+
+      error =
+        assert_raise CompileError, fn ->
+          Code.compile_string("""
+          defmodule #{inspect(module)} do
+            use Jido.Signal.Router
+
+            route("valid.path", :valid)
+            route("invalid..path", :invalid)
+          end
+          """)
+        end
+
+      assert error.line == 5
+      assert Exception.message(error) =~ "Path cannot contain consecutive dots"
+    end
+
+    test "rejects non-static targets at their declaration line" do
+      module = unique_module("AnonymousTarget")
+
+      error =
+        assert_raise CompileError, fn ->
+          Code.compile_string("""
+          defmodule #{inspect(module)} do
+            use Jido.Signal.Router
+
+            route("user.created", fn -> :created end)
+          end
+          """)
+        end
+
+      assert error.line == 4
+      assert Exception.message(error) =~ "compiled route values must be static module data"
+    end
+
+    test "rejects runtime process targets at their declaration line" do
+      module = unique_module("ProcessTarget")
+
+      error =
+        assert_raise CompileError, fn ->
+          Code.compile_string("""
+          defmodule #{inspect(module)} do
+            use Jido.Signal.Router
+
+            route("user.created", self())
+          end
+          """)
+        end
+
+      assert error.line == 4
+      assert Exception.message(error) =~ "compiled route values must be static module data"
+    end
+
+    test "keeps escapable static target forms" do
+      module = unique_module("StaticTargets")
+
+      Code.compile_string("""
+      defmodule #{inspect(module)} do
+        use Jido.Signal.Router
+
+        route("remote.capture", &Map.get/2)
+        route("improper.list", [:head | :tail])
+      end
+      """)
+
+      assert [
+               %Route{target: remote_capture},
+               %Route{target: [:head | :tail]}
+             ] = module.routes()
+
+      assert is_function(remote_capture, 2)
+    end
+
     test "rejects a loaded non-Signal module path at compile time" do
       module = unique_module("NotASignal")
 
