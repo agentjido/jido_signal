@@ -55,6 +55,43 @@ defmodule Jido.Signal.Dispatch.AdapterTest do
     def deliver(_signal, _opts), do: :ok
   end
 
+  defmodule OtherBehaviour do
+    @callback marker() :: :ok
+  end
+
+  defmodule AdapterDeclaredLast do
+    @behaviour OtherBehaviour
+    @behaviour Adapter
+
+    @impl OtherBehaviour
+    def marker, do: :ok
+
+    @impl Adapter
+    def options_schema, do: CustomAdapter.options_schema()
+
+    @impl Adapter
+    def deliver(signal, opts), do: CustomAdapter.deliver(signal, opts)
+  end
+
+  defmodule AdapterDeclaredFirst do
+    @behaviour Adapter
+    @behaviour OtherBehaviour
+
+    @impl OtherBehaviour
+    def marker, do: :ok
+
+    @impl Adapter
+    def options_schema, do: CustomAdapter.options_schema()
+
+    @impl Adapter
+    def deliver(signal, opts), do: CustomAdapter.deliver(signal, opts)
+  end
+
+  defmodule UndeclaredAdapter do
+    def options_schema, do: CustomAdapter.options_schema()
+    def deliver(signal, opts), do: CustomAdapter.deliver(signal, opts)
+  end
+
   test "requires the schema and delivery callbacks" do
     callbacks = Adapter.behaviour_info(:callbacks)
     assert {:options_schema, 0} in callbacks
@@ -86,8 +123,22 @@ defmodule Jido.Signal.Dispatch.AdapterTest do
              Dispatch.dispatch(signal, {CustomAdapter, target: self(), fail: true})
   end
 
+  test "accepts the adapter behaviour in either declaration order" do
+    signal = Signal.new!("custom.dispatch", %{}, source: "/test")
+
+    for adapter <- [AdapterDeclaredLast, AdapterDeclaredFirst] do
+      assert {:ok, {^adapter, opts}} = Dispatch.validate_opts({adapter, target: self()})
+      assert opts == [target: self(), label: "default", fail: false]
+      assert :ok = Dispatch.dispatch(signal, {adapter, target: self(), label: "accepted"})
+      assert_received {:custom_delivery, "accepted"}
+    end
+  end
+
   test "rejects invalid adapter modules and schemas" do
     assert {:error, reason} = Dispatch.validate_opts({IncompleteAdapter, []})
+    assert reason =~ "not a valid adapter"
+
+    assert {:error, reason} = Dispatch.validate_opts({UndeclaredAdapter, target: self()})
     assert reason =~ "not a valid adapter"
 
     assert {:error, {:invalid_options_schema, InvalidSchemaAdapter}} =

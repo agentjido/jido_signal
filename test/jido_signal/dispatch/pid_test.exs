@@ -144,6 +144,8 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
         end
       end)
 
+    on_exit(fn -> if Process.alive?(crashing), do: Process.exit(crashing, :kill) end)
+
     assert {:error, {:receiver_failed, {GenServer, :call, _details}}} =
              Dispatch.dispatch(signal, {:pid, target: crashing, delivery_mode: :sync})
   end
@@ -172,10 +174,13 @@ defmodule Jido.Signal.Dispatch.PidAdapterTest do
   defp signal, do: Signal.new!("dispatch.process", %{}, source: "/test")
 
   defp reply_once(reply) do
-    spawn(fn ->
-      receive do
-        {:"$gen_call", from, _message} -> GenServer.reply(from, reply)
-      end
-    end)
+    start_supervised!(
+      {Task,
+       fn ->
+         receive do
+           {:"$gen_call", from, _message} -> GenServer.reply(from, reply)
+         end
+       end}
+    )
   end
 end

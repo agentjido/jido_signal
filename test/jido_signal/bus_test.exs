@@ -336,7 +336,7 @@ defmodule Jido.Signal.BusTest do
 
   test "removes a normal subscription after its target exits" do
     bus = start_bus()
-    client = spawn(fn -> receive do: (:stop -> :ok) end)
+    client = start_supervised!({Task, fn -> receive do: (:stop -> :ok) end})
 
     assert {:ok, "short-lived"} =
              Bus.subscribe(bus, "short.*", subscription_id: "short-lived", target: client)
@@ -365,7 +365,7 @@ defmodule Jido.Signal.BusTest do
     assert :ok = Bus.unsubscribe(bus, "normal")
     assert_receive {:subscription_event, _event, %{subscription_id: "normal", durable: false}}
 
-    target = spawn(fn -> receive do: (:stop -> :ok) end)
+    target = start_supervised!({Task, fn -> receive do: (:stop -> :ok) end})
     assert {:ok, "down"} = Bus.subscribe(bus, "down.*", subscription_id: "down", target: target)
     terminate_and_wait(bus, target)
     assert_receive {:subscription_event, _event, %{subscription_id: "down", durable: false}}

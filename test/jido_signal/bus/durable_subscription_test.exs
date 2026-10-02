@@ -151,7 +151,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
   test "sends an unacknowledged record again after a target exits" do
     bus = start_bus()
     parent = self()
-    client = spawn(fn -> relay_durable(parent) end)
+    client = start_supervised!({Task, fn -> relay_durable(parent) end})
 
     assert {:ok, "offline-agent"} =
              Bus.subscribe(bus, "offline.*", durable: "offline-agent", target: client)
@@ -193,7 +193,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
   test "rejects acknowledgement from a process that does not own the subscription" do
     bus = start_bus()
     parent = self()
-    client = spawn(fn -> relay_durable(parent) end)
+    client = start_supervised!({Task, fn -> relay_durable(parent) end})
 
     assert {:ok, "owned-agent"} =
              Bus.subscribe(bus, "owned.*", durable: "owned-agent", target: client)
@@ -406,7 +406,7 @@ defmodule Jido.Signal.Bus.DurableSubscriptionTest do
 
   test "allows only one active target for a durable subscription" do
     bus = start_bus()
-    other = spawn(fn -> receive do: (:stop -> :ok) end)
+    other = start_supervised!({Task, fn -> receive do: (:stop -> :ok) end})
 
     assert {:ok, "single-owner"} = Bus.subscribe(bus, "owner.*", durable: "single-owner")
 

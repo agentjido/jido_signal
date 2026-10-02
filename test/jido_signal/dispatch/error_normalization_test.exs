@@ -110,7 +110,7 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
 
     # Set up telemetry handler
     test_pid = self()
-    handler_id = :dispatch_test_handler
+    handler_id = {__MODULE__, test_pid, make_ref()}
 
     # Store the test pid in process dictionary for the handler to access
     Process.put(:test_pid, test_pid)
@@ -125,6 +125,8 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
       &__MODULE__.handle_telemetry_event/4,
       nil
     )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
 
     {:ok, signal} = Signal.new(%{type: "test.event", source: "test", data: %{value: 42}})
     trace = Trace.new(trace_flags: "01")
@@ -165,8 +167,6 @@ defmodule Jido.Signal.Dispatch.ErrorNormalizationTest do
     assert metadata.outcome == :error
     assert metadata.error_type == :dispatch_error
     assert metadata.retryable? == false
-
-    :telemetry.detach(handler_id)
   end
 
   test "dispatch start telemetry redacts URL credentials and query strings" do

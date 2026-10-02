@@ -310,7 +310,9 @@ defmodule Jido.Signal.Dispatch do
     Code.ensure_loaded?(adapter) and
       function_exported?(adapter, :options_schema, 0) and
       function_exported?(adapter, :deliver, 2) and
-      Jido.Signal.Dispatch.Adapter in (adapter.module_info(:attributes)[:behaviour] || [])
+      Enum.any?(adapter.module_info(:attributes), fn {key, values} ->
+        key == :behaviour and Jido.Signal.Dispatch.Adapter in values
+      end)
   rescue
     _ -> false
   end
