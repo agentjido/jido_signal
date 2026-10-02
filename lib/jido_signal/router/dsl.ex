@@ -2,6 +2,7 @@ defmodule Jido.Signal.Router.DSL do
   @moduledoc false
 
   alias Jido.Signal.Router
+  alias Jido.Signal.Router.Index
 
   @doc """
   Declares one route.
@@ -40,31 +41,21 @@ defmodule Jido.Signal.Router.DSL do
     specs = Enum.map(routes_with_lines, &elem(&1, 0))
 
     ensure_path_modules_compiled(specs)
-    validate_compiled_routes!(routes_with_lines, env)
+    routes = normalize_compiled_routes!(routes_with_lines, env)
+    router = Index.new(routes)
 
-    case Router.new(specs) do
-      {:ok, router} ->
-        {:ok, routes} = Router.list(router)
+    quote do
+      @doc "Returns the compiled Router value."
+      @spec router() :: Jido.Signal.Router.t()
+      def router, do: unquote(Macro.escape(router))
 
-        quote do
-          @doc "Returns the compiled Router value."
-          @spec router() :: Jido.Signal.Router.t()
-          def router, do: unquote(Macro.escape(router))
+      @doc "Returns Routes in declaration order."
+      @spec routes() :: [Jido.Signal.Router.Route.t()]
+      def routes, do: unquote(Macro.escape(routes))
 
-          @doc "Returns Routes in declaration order."
-          @spec routes() :: [Jido.Signal.Router.Route.t()]
-          def routes, do: unquote(Macro.escape(routes))
-
-          @doc "Returns targets for a Signal from this Router."
-          @spec route(Jido.Signal.t()) :: {:ok, [term()]} | {:error, term()}
-          def route(signal), do: Jido.Signal.Router.route(router(), signal)
-        end
-
-      {:error, error} ->
-        raise CompileError,
-          file: env.file,
-          line: env.line,
-          description: Exception.message(error)
+      @doc "Returns targets for a Signal from this Router."
+      @spec route(Jido.Signal.t()) :: {:ok, [term()]} | {:error, term()}
+      def route(signal), do: Jido.Signal.Router.route(router(), signal)
     end
   end
 
@@ -100,13 +91,13 @@ defmodule Jido.Signal.Router.DSL do
   defp route_path(spec) when is_tuple(spec) and tuple_size(spec) >= 2, do: elem(spec, 0)
   defp route_path(_spec), do: nil
 
-  defp validate_compiled_routes!(routes_with_lines, env) do
-    Enum.each(routes_with_lines, fn {spec, line} ->
+  defp normalize_compiled_routes!(routes_with_lines, env) do
+    Enum.map(routes_with_lines, fn {spec, line} ->
       validate_compiled_match!(spec, env, line)
       validate_static_route!(spec, env, line)
 
-      case Router.new(spec) do
-        {:ok, _router} -> :ok
+      case Router.normalize(spec) do
+        {:ok, [route]} -> route
         {:error, error} -> compile_error!(env, line, Exception.message(error))
       end
     end)

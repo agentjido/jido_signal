@@ -12,7 +12,6 @@ defmodule Jido.Signal.Trace do
   """
 
   alias Jido.Signal
-  alias Jido.Signal.Context, as: SignalContext
 
   @trace_id_bytes 16
   @span_id_bytes 8
@@ -142,10 +141,8 @@ defmodule Jido.Signal.Trace do
           }
           |> Map.reject(fn {_name, value} -> is_nil(value) end)
 
-        with {:ok, attributes} <- SignalContext.normalize(attributes) do
-          signal = delete(signal)
-          {:ok, %{signal | extensions: Map.merge(signal.extensions, attributes)}}
-        end
+        signal = delete(signal)
+        {:ok, %{signal | extensions: Map.merge(signal.extensions, attributes)}}
 
       {:error, errors} ->
         {:error, "invalid Trace: #{Zoi.prettify_errors(errors)}"}

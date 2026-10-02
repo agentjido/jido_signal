@@ -98,10 +98,8 @@ defmodule Jido.Signal.Dispatch.Bus do
     bus_name = Keyword.fetch!(opts, :target)
     jido = Keyword.get(opts, :jido)
 
-    lookup_opts = if jido, do: [jido: jido], else: []
-
     try do
-      case Bus.whereis(bus_name, lookup_opts) do
+      case Bus.whereis(bus_name, jido: jido) do
         {:ok, pid} ->
           case Bus.publish(pid, [signal]) do
             {:ok, _recorded} -> :ok

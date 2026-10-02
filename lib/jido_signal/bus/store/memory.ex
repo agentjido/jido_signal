@@ -25,7 +25,6 @@ defmodule Jido.Signal.Bus.Store.Memory do
       {:ok,
        %{
          records: :gb_trees.empty(),
-         record_count: 0,
          subscriptions: %{},
          subscription_order: [],
          latest_cursor: 0,
@@ -40,9 +39,7 @@ defmodule Jido.Signal.Bus.Store.Memory do
   def append(records, state) when is_list(records) and is_integer(length(records)) do
     with :ok <- validate_records(records, state.latest_cursor),
          records_tree <- insert_records(state.records, records),
-         record_count <- state.record_count + length(records),
-         {:ok, records_tree, record_count} <-
-           retain_within_bound(records_tree, record_count, state) do
+         {:ok, records_tree} <- retain_within_bound(records_tree, state) do
       latest_cursor =
         case List.last(records) do
           nil -> state.latest_cursor
@@ -53,7 +50,6 @@ defmodule Jido.Signal.Bus.Store.Memory do
        %{
          state
          | records: records_tree,
-           record_count: record_count,
            latest_cursor: latest_cursor
        }}
     end
@@ -229,19 +225,19 @@ defmodule Jido.Signal.Bus.Store.Memory do
     end
   end
 
-  defp retain_within_bound(records, record_count, %{subscriptions: subscriptions} = state)
+  defp retain_within_bound(records, %{subscriptions: subscriptions} = state)
        when map_size(subscriptions) == 0 do
-    remove_count = max(record_count - state.max_records, 0)
-    {:ok, remove_oldest(records, remove_count), record_count - remove_count}
+    remove_count = max(:gb_trees.size(records) - state.max_records, 0)
+    {:ok, remove_oldest(records, remove_count)}
   end
 
-  defp retain_within_bound(records, record_count, state) do
-    remove_count = max(record_count - state.max_records, 0)
+  defp retain_within_bound(records, state) do
+    remove_count = max(:gb_trees.size(records) - state.max_records, 0)
 
     case releasable_cursors(records, state.subscriptions, remove_count) do
       {:ok, cursors} ->
         retained = Enum.reduce(cursors, records, &:gb_trees.delete_any/2)
-        {:ok, retained, record_count - length(cursors)}
+        {:ok, retained}
 
       :full ->
         {:error, {:store_full, blocking_subscription_ids(records, state.subscriptions)}}

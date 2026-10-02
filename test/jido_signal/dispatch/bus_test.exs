@@ -122,6 +122,24 @@ defmodule Jido.Signal.Dispatch.BusTest do
       assert received_signal.type == "test.signal"
     end
 
+    test "keeps nil, false, and module scopes separate for same-name Buses" do
+      bus_name = Module.concat(__MODULE__, "ScopedBus#{System.unique_integer([:positive])}")
+
+      buses =
+        Enum.map([nil, false, __MODULE__.Scope], fn scope ->
+          pid = start_supervised!({Bus, name: bus_name, jido: scope})
+          {scope, pid, make_signal()}
+        end)
+
+      for {scope, _pid, signal} <- buses do
+        assert :ok = Dispatch.dispatch(signal, {:bus, target: bus_name, jido: scope})
+      end
+
+      for {_scope, pid, signal} <- buses do
+        assert {:ok, [%{signal: ^signal}]} = Bus.replay(pid)
+      end
+    end
+
     @tag :capture_log
     test "returns an error when the Bus is not in the scope" do
       signal = make_signal()

@@ -219,8 +219,9 @@ defmodule JidoSignalBench.CandidateCases do
             expect!(Memory.read([], state), {:ok, initial})
           else
             {:ok, retained} = result
-            expect!(Memory.read([], retained), {:ok, expected})
-            expect!(retained.record_count, capacity)
+            {:ok, records} = Memory.read([], retained)
+            expect!(records, expected)
+            expect!(length(records), capacity)
           end
         end,
         %{records: capacity, batch: batch, durable_subscriptions: subscriptions}

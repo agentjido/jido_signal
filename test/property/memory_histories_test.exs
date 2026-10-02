@@ -92,7 +92,8 @@ defmodule JidoSignalTest.Property.MemoryHistoriesTest do
         next
       end)
 
-    assert final.state.record_count == length(final.records)
+    assert {:ok, retained} = Memory.read([], final.state)
+    assert length(retained) == length(final.records)
     ["commands-#{length(commands)}", "bound-#{bound}"]
   end
 

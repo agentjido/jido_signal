@@ -60,8 +60,6 @@ defmodule Jido.Signal do
   @default_data_schema Zoi.any()
 
   @media_type_pattern ~r{\A[!#$%&'*+.^_`|~0-9A-Za-z-]+/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:[ \t]*;[ \t]*[!#$%&'*+.^_`|~0-9A-Za-z-]+[ \t]*=[ \t]*(?:[!#$%&'*+.^_`|~0-9A-Za-z-]+|"(?:[\x20-\x21\x23-\x5B\x5D-\x7E]|\\[\x20-\x7E])*"))*\z}
-  @invalid_uri_character_pattern ~r/[\x00-\x20\x7F]/
-  @invalid_percent_encoding_pattern ~r/%(?![0-9A-Fa-f]{2})/
   @uri_reference_pattern ~r"\A(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=]|%[0-9A-Fa-f]{2})*\z"
   @rfc3339_pattern ~r/\A([0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}:)([0-9]{2})(\.[0-9]+)?([Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\z/
 
@@ -475,10 +473,7 @@ defmodule Jido.Signal do
   def validate_media_type(_value, _opts), do: {:error, "must be a valid media type"}
 
   defp valid_uri_text?(value) do
-    String.valid?(value) and
-      not Regex.match?(@invalid_uri_character_pattern, value) and
-      not Regex.match?(@invalid_percent_encoding_pattern, value) and
-      Regex.match?(@uri_reference_pattern, value)
+    String.valid?(value) and Regex.match?(@uri_reference_pattern, value)
   end
 
   defp ensure_static_schema!(schema, env) do

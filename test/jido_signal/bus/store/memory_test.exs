@@ -203,9 +203,9 @@ defmodule Jido.Signal.Bus.Store.MemoryTest do
     assert {:ok, state} = Memory.delete_subscription("pin", state)
     burst = for cursor <- 4..12, do: record(cursor, "r#{cursor}")
     assert {:ok, state} = Memory.append(burst, state)
-    assert state.record_count == 3
     assert {:ok, 12} = Memory.latest_cursor(state)
     assert {:ok, retained} = Memory.read([], state)
+    assert length(retained) == 3
     assert Enum.map(retained, & &1["cursor"]) == [10, 11, 12]
     assert {:ok, ^state} = Memory.append([], state)
     assert {:ok, state} = Memory.append([record(13, "r13")], state)
