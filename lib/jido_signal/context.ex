@@ -24,7 +24,7 @@ defmodule Jido.Signal.Context do
   @doc "Validates and normalizes a context attribute map."
   @spec normalize(map()) :: {:ok, t()} | {:error, String.t()}
   def normalize(attributes) when is_map(attributes) do
-    Enum.reduce_while(attributes, {:ok, %{}}, fn {name, value}, {:ok, acc} ->
+    Enum.reduce_while(Map.to_list(attributes), {:ok, %{}}, fn {name, value}, {:ok, acc} ->
       with {:ok, name} <- normalize_name(name),
            :ok <- validate_value(value) do
         if Map.has_key?(acc, name) do

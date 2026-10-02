@@ -21,6 +21,33 @@ defmodule Jido.Signal.SanitizerTest do
   end
 
   describe "sanitize/2" do
+    test "uses map fields for malformed struct-valued Signal extensions" do
+      secret = "extension-struct-secret-47ca"
+      original = Signal.new!("test.event", %{}, source: "/test")
+
+      for extensions <- [%URI{query: secret}, MapSet.new([{:token, secret}])] do
+        signal = %{original | extensions: extensions}
+
+        for profile <- [:telemetry, :transport] do
+          sanitized = Sanitizer.sanitize(signal, profile)
+          id_key = if profile == :telemetry, do: :id, else: "id"
+          names_key = if profile == :telemetry, do: :extensions, else: "extensions"
+          assert sanitized[id_key] == original.id
+          assert "__struct__" in sanitized[names_key]
+          refute inspect(sanitized) =~ secret
+          refute Sanitizer.preview(signal, profile) =~ secret
+        end
+
+        public =
+          Jido.Signal.Error.validation_error("invalid", %{signal: signal})
+          |> Jido.Signal.Error.to_map()
+
+        assert public.type == :invalid_input_error
+        assert public.details["signal"]["id"] == original.id
+        refute Jason.encode!(public) =~ secret
+      end
+    end
+
     test "bounds custom struct and exception module names" do
       for value <- JidoSignalTest.Fixtures.Diagnostics.values(),
           {profile, limit} <- [telemetry: 160, transport: 1024] do

@@ -81,7 +81,7 @@ Structured callers can serialize the public contract through `Error.to_map/1`:
     "reason" => "timeout",
     "target" => %{
       "adapter" => "http",
-      "target" => "https://api.example.com/events",
+      "target" => "https://api.example.com",
       "target_kind" => "url"
     }
   },

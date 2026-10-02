@@ -83,6 +83,7 @@ defmodule Jido.Signal.Sanitizer do
       case value.extensions do
         extensions when is_map(extensions) ->
           extensions
+          |> Map.to_list()
           |> Enum.take(opts.max_items)
           |> Enum.map(fn {key, _value} ->
             bounded_key_token(key, opts.max_binary, opts, depth + 1)

@@ -8,6 +8,27 @@ defmodule Jido.Signal.PublicBoundaryErrorsTest do
   alias Jido.Signal.Trace
 
   describe "Signal error boundaries" do
+    test "returns validation errors for struct attribute maps" do
+      for attrs <- [%URI{}, MapSet.new([:item])] do
+        for result <- [
+              Signal.new(attrs),
+              Signal.new("event", %{}, attrs),
+              Signal.from_map(attrs),
+              Signal.new(type: "event", source: "/test", extensions: attrs),
+              Context.normalize(attrs),
+              JidoSignalTest.Fixtures.Signals.UserCreated.new(%{}, attrs),
+              Signal.deserialize(:erlang.term_to_binary(attrs), format: :erlang_term)
+            ] do
+          assert {:error, _reason} = result
+        end
+      end
+
+      data = %URI{path: "/domain"}
+      assert {:ok, signal} = Signal.new("event", data, source: "/test", tenantid: "one")
+      assert signal.data == data
+      assert signal.extensions == %{"tenantid" => "one"}
+    end
+
     test "reject invalid constructor and definition inputs" do
       invalid = Process.get({__MODULE__, :invalid_definition}, :invalid)
 

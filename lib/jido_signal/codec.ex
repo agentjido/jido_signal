@@ -49,7 +49,7 @@ defmodule Jido.Signal.Codec do
   @doc false
   @spec normalize_keys(map()) :: {:ok, map()} | {:error, String.t()}
   def normalize_keys(map) when is_map(map) do
-    Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, normalized} ->
+    Enum.reduce_while(Map.to_list(map), {:ok, %{}}, fn {key, value}, {:ok, normalized} ->
       with {:ok, key} <- normalize_key(key),
            false <- Map.has_key?(normalized, key) do
         {:cont, {:ok, Map.put(normalized, key, value)}}
