@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- changelog -->
 
+## [v2.3.1](https://github.com/agentjido/jido_signal/compare/v2.3.0...v2.3.1) (2026-10-02)
+
+
+
+
+### Bug Fixes:
+
+* schema: support zoi metadata defaults by mikehostetler
+
+* deps: update mint for security advisory by mikehostetler
+
 ## [v2.3.0](https://github.com/agentjido/jido_signal/compare/v2.2.2...v2.3.0) (2026-09-09)
 
 
