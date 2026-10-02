@@ -69,7 +69,8 @@ defmodule Jido.Signal.Schema do
   defp map_schema?(%Zoi.Types.Lazy{}), do: true
 
   defp map_schema?(%Zoi.Types.Literal{value: value}), do: is_map(value)
-  defp map_schema?(%Zoi.Types.Default{inner: inner}), do: map_schema?(inner)
+  # Zoi 0.18.11 stores defaults in metadata and removes the Default module.
+  defp map_schema?(%{__struct__: Zoi.Types.Default, inner: inner}), do: map_schema?(inner)
 
   defp map_schema?(%Zoi.Types.Union{schemas: schemas}),
     do: Enum.any?(schemas, &map_schema?/1)
