@@ -271,6 +271,7 @@ defmodule Jido.Signal.Bus do
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, {:shutdown, _} -> {:error, :not_found}
     :exit, {:normal, _} -> {:error, :not_found}
+    :exit, {{:shutdown, _reason}, _call} -> {:error, :not_found}
     :exit, :noproc -> {:error, :not_found}
     :exit, :shutdown -> {:error, :not_found}
     :exit, :normal -> {:error, :not_found}

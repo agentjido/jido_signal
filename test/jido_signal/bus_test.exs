@@ -594,6 +594,17 @@ defmodule Jido.Signal.BusTest do
     assert_receive {:DOWN, ^monitor, :process, ^server, :shutdown}
   end
 
+  test "reports a server shutdown tuple during a call as not found" do
+    reason = {:shutdown, :maintenance}
+    server = spawn(fn -> receive do: ({:"$gen_call", _from, _message} -> exit(reason)) end)
+    monitor = Process.monitor(server)
+    on_exit(fn -> if Process.alive?(server), do: Process.exit(server, :kill) end)
+
+    assert {:error, :not_found} = Bus.replay(server)
+
+    assert_receive {:DOWN, ^monitor, :process, ^server, ^reason}
+  end
+
   test "reports a normal server exit during a call as not found" do
     server = spawn(fn -> receive do: ({:"$gen_call", _from, _message} -> exit(:normal)) end)
     monitor = Process.monitor(server)

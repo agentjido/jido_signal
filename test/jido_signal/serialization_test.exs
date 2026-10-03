@@ -69,6 +69,19 @@ defmodule Jido.Signal.SerializationTest do
 
       assert list_message =~ "expected a map"
     end
+
+    test "validates a large batch without recursive stack growth" do
+      wire = Signal.to_map(Signal.new!(type: "test.large-batch", source: "/test"))
+      encoded = :erlang.term_to_binary(List.duplicate(wire, 20_000))
+
+      assert {:ok, signals} =
+               Signal.deserialize(encoded,
+                 format: :erlang_term,
+                 max_payload_bytes: byte_size(encoded)
+               )
+
+      assert length(signals) == 20_000
+    end
   end
 
   describe "binary and Erlang-only Signal data" do
