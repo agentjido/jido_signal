@@ -50,6 +50,7 @@ defmodule JidoSignalTest.Case do
       :ok
     after
       :erlang.trace(server, false, [:receive])
+      Process.demonitor(monitor, [:flush])
     end
   end
 end

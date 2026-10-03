@@ -584,15 +584,24 @@ defmodule Jido.Signal.BusTest do
     assert {:error, :not_found} = Bus.ack(:not_started, "missing", 1)
   end
 
-  test "lets unexpected server exits reach the caller" do
+  test "reports a server shutdown during a call as not found" do
     server = spawn(fn -> receive do: ({:"$gen_call", _from, _message} -> exit(:shutdown)) end)
     monitor = Process.monitor(server)
     on_exit(fn -> if Process.alive?(server), do: Process.exit(server, :kill) end)
 
-    assert {:shutdown, {GenServer, :call, [^server, {:replay, "**", []}, :infinity]}} =
-             catch_exit(Bus.replay(server))
+    assert {:error, :not_found} = Bus.replay(server)
 
     assert_receive {:DOWN, ^monitor, :process, ^server, :shutdown}
+  end
+
+  test "reports a normal server exit during a call as not found" do
+    server = spawn(fn -> receive do: ({:"$gen_call", _from, _message} -> exit(:normal)) end)
+    monitor = Process.monitor(server)
+    on_exit(fn -> if Process.alive?(server), do: Process.exit(server, :kill) end)
+
+    assert {:error, :not_found} = Bus.replay(server)
+
+    assert_receive {:DOWN, ^monitor, :process, ^server, :normal}
   end
 
   test "does not report a server timeout exit as a call timeout" do
