@@ -52,6 +52,36 @@ defmodule Jido.Signal.SerializationTest do
 
       assert is_binary(message)
     end
+
+    test "rejects a decoded value that is not a Signal envelope" do
+      encoded_function = :erlang.term_to_binary(&System.cmd/3)
+
+      assert {:error, {:invalid_wire_data, message}} =
+               Signal.deserialize(encoded_function, format: :erlang_term)
+
+      assert message =~ "expected a map"
+
+      valid_wire = Signal.to_map(Signal.new!(type: "test.valid", source: "/test"))
+      invalid_list = :erlang.term_to_binary([valid_wire, &System.cmd/3])
+
+      assert {:error, {:invalid_wire_data, list_message}} =
+               Signal.deserialize(invalid_list, format: :erlang_term)
+
+      assert list_message =~ "expected a map"
+    end
+
+    test "validates a large batch without recursive stack growth" do
+      wire = Signal.to_map(Signal.new!(type: "test.large-batch", source: "/test"))
+      encoded = :erlang.term_to_binary(List.duplicate(wire, 20_000))
+
+      assert {:ok, signals} =
+               Signal.deserialize(encoded,
+                 format: :erlang_term,
+                 max_payload_bytes: byte_size(encoded)
+               )
+
+      assert length(signals) == 20_000
+    end
   end
 
   describe "binary and Erlang-only Signal data" do

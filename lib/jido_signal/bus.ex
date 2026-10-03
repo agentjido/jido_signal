@@ -269,7 +269,12 @@ defmodule Jido.Signal.Bus do
     GenServer.call(bus_call_target(bus), message, :infinity)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, {:shutdown, _} -> {:error, :not_found}
+    :exit, {:normal, _} -> {:error, :not_found}
+    :exit, {{:shutdown, _reason}, _call} -> {:error, :not_found}
     :exit, :noproc -> {:error, :not_found}
+    :exit, :shutdown -> {:error, :not_found}
+    :exit, :normal -> {:error, :not_found}
   end
 
   defp bus_call_target(pid) when is_pid(pid), do: pid

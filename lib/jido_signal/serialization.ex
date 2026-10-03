@@ -143,11 +143,30 @@ defmodule Jido.Signal.Serialization do
         {:error, {:erlang_term_decode_failed, "compressed Erlang terms are not accepted"}}
 
       _uncompressed ->
-        {:ok, :erlang.binary_to_term(binary, [:safe])}
+        binary
+        |> :erlang.binary_to_term([:safe])
+        |> validate_wire_shape()
     end
   rescue
     error in ArgumentError -> {:error, {:erlang_term_decode_failed, Exception.message(error)}}
   end
+
+  defp validate_wire_shape(data) when is_map(data), do: {:ok, data}
+
+  defp validate_wire_shape(data) when is_list(data) do
+    case Enum.reduce_while(data, :ok, fn
+           item, :ok when is_map(item) -> {:cont, :ok}
+           item, :ok -> {:halt, {:error, item}}
+         end) do
+      :ok -> {:ok, data}
+      {:error, item} -> invalid_wire_shape(item)
+    end
+  end
+
+  defp validate_wire_shape(data), do: invalid_wire_shape(data)
+
+  defp invalid_wire_shape(data),
+    do: {:error, {:invalid_wire_data, "expected a map, got: #{inspect(data)}"}}
 
   defp check_payload_size(binary, opts), do: check_size(byte_size(binary), opts)
 
