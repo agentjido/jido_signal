@@ -595,6 +595,10 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - Submitting pull requests
 - Code style guidelines
 
+## Local Documentation
+
+Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
+
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
