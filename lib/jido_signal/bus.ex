@@ -130,8 +130,8 @@ defmodule Jido.Signal.Bus do
 
   The path selects the Signal type, using exact or wildcard Router matching.
   Set `:selector` to a non-empty keyword list with `:source`, `:subject`, or
-  both. Each key can appear once. All supplied fields must match the Signal
-  envelope with exact, case-sensitive equality. For example:
+  both. The option and each field key can appear once. All fields must match
+  the Signal envelope with exact, case-sensitive equality. For example:
 
       subscribe(bus, "inventory.stock.changed",
         selector: [source: "/warehouses/east", subject: "sku-42"]

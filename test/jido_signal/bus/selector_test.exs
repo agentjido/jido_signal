@@ -177,6 +177,28 @@ defmodule Jido.Signal.Bus.SelectorTest do
     refute_received {:signal, _}
   end
 
+  test "rejects repeated outer selector options without ignoring a condition or invalid value" do
+    bus = start_bus()
+    before = :sys.get_state(bus)
+
+    for values <- [
+          [[source: "/east"], [subject: "sku-42"]],
+          [[subject: "sku-42"], [source: "/east"]],
+          [[source: "/east"], [source: "/east"]],
+          [[source: "/east"], nil],
+          [nil, [source: "/east"]]
+        ] do
+      opts = Enum.map(values, &{:selector, &1})
+      assert {:error, {:invalid_selector, message}} = Bus.subscribe(bus, "inventory.*", opts)
+      assert message =~ "once"
+      assert :sys.get_state(bus) == before
+    end
+
+    unwanted = event("inventory.changed", "/east", "unwanted")
+    assert {:ok, _} = Bus.publish(bus, [unwanted])
+    refute_received {:signal, _}
+  end
+
   test "rejects selectors for new and reattached durable subscriptions and replay" do
     bus = start_bus()
     selector = [source: "/east", subject: "sku-42"]

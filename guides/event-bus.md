@@ -109,7 +109,8 @@ or message contents. Those conditions belong in the consumer.
 ### Validation and Delivery
 
 - `:selector` is a non-empty keyword list. It accepts `:source`, `:subject`,
-  or both, once each. The type is selected by the path argument.
+  or both, once each. The `:selector` option can occur once in the subscription
+  options. The type is selected by the path argument.
 - Each value is a non-empty string with at most 4,096 bytes. A source must be
   a valid URI-reference. A subject must be valid CloudEvents context text.
 - Values are not normalized. There is no prefix, suffix, or wildcard matching
@@ -117,13 +118,16 @@ or message contents. Those conditions belong in the consumer.
 - IDs, time, content type, data schema, data, and extensions do not affect
   selection. Selection preserves the complete original Signal and its ID.
 - An invalid selector returns `{:error, {:invalid_selector, message}}` and
-  adds no subscription. This includes `nil`, an empty list, duplicate keys,
-  unsupported fields, functions, MFAs, and invalid values. Omit `:selector`
+  adds no subscription. This includes `nil`, an empty list, repeated selector
+  options, duplicate field keys, unsupported fields, functions, MFAs, and
+  invalid values. Omit `:selector`
   for the existing subscription that selects by type path only.
 
 The Bus validates and compiles the selector once when it adds a subscription.
 Router type indexing finds the candidate routes. A package-created predicate
 then uses direct Signal pattern matching for the selected source and subject.
+The route owns that compiled predicate. A normal miss returns an empty target
+list without constructing a routing error.
 Delivery does not parse the selector, traverse payload maps, or run application
 callbacks. The default subscription keeps its existing Router path.
 

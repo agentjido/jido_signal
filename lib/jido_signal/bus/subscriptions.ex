@@ -6,6 +6,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
   alias Jido.Signal.Bus.Subscriptions.Subscriber
   alias Jido.Signal.ID
   alias Jido.Signal.Router
+  alias Jido.Signal.Router.Index
 
   @subscription_options [:target, :subscription_id, :durable, :start_from, :selector]
 
@@ -86,13 +87,11 @@ defmodule Jido.Signal.Bus.Subscriptions do
       do: state
 
   def deliver_published(state, signal) do
-    case Router.route(state.router, signal) do
-      {:ok, subscription_ids} ->
-        Enum.reduce(subscription_ids, state, &deliver_to_subscription(&1, signal, &2))
-
-      {:error, _no_match} ->
-        state
-    end
+    # Publication validates Signals before delivery. An empty target list is
+    # a normal observation result and needs no routing error.
+    state.router
+    |> Index.lookup(signal.type, signal)
+    |> Enum.reduce(state, &deliver_to_subscription(&1, signal, &2))
   end
 
   @doc false
@@ -146,9 +145,10 @@ defmodule Jido.Signal.Bus.Subscriptions do
   defp validate_target(_target), do: {:error, :invalid_target}
 
   defp compile_selector(opts) do
-    case Keyword.fetch(opts, :selector) do
-      {:ok, selector} -> Selector.compile(selector)
-      :error -> {:ok, nil}
+    case Keyword.get_values(opts, :selector) do
+      [] -> {:ok, nil}
+      [selector] -> Selector.compile(selector)
+      _repeated -> {:error, {:invalid_selector, ":selector must appear once"}}
     end
   end
 
@@ -177,7 +177,6 @@ defmodule Jido.Signal.Bus.Subscriptions do
       subscriber = %Subscriber{
         id: id,
         path: path,
-        selector: selector,
         durable?: false,
         target: target,
         monitor_ref: monitor_ref,
@@ -186,7 +185,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
         created_at: DateTime.utc_now() |> DateTime.to_iso8601()
       }
 
-      state = Subscriber.insert_subscriber(state, subscriber)
+      state = Subscriber.insert_subscriber(state, subscriber, selector)
       Subscriber.emit_subscription(:attached, state, subscriber)
       {:ok, id, state}
     end

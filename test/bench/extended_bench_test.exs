@@ -22,7 +22,11 @@ defmodule JidoSignalTest.ExtendedBenchTest do
                    bus/fanout_processes bus/concurrent_publish bus/sustained_publish
                    bus/backlog_publish bus/backlog_drain bus/large_replay
                    bus/large_replay_filtered bus/durable_reconnect
-                   bus/invalid_signal bus/store_full bus/store_failure) do
+                   bus/invalid_signal bus/store_full bus/store_failure
+                   router/selector_source_hit router/selector_source_miss
+                   router/selector_subject_hit router/selector_subject_miss
+                   router/selector_source_subject_hit router/selector_source_subject_miss
+                   bus/selector_hit bus/selector_miss bus/selector_churn) do
       assert name in names, "missing benchmark: #{name}"
     end
 
@@ -43,6 +47,10 @@ defmodule JidoSignalTest.ExtendedBenchTest do
 
       if workload.name == "bus/backlog_publish" do
         assert resources.observed_peak.mailbox_messages >= workload.dimensions.records
+      end
+
+      if String.starts_with?(workload.name, "bus/selector_") do
+        assert resources.owned_process_starts >= 2
       end
     end
   end
@@ -71,6 +79,38 @@ defmodule JidoSignalTest.ExtendedBenchTest do
     assert length(checks) == 2
     assert Enum.all?(checks, &(&1.ratio <= &1.limit))
     assert_raise ArgumentError, fn -> Suite.extra_workloads(1) end
+  end
+
+  test "selector workloads scale candidates and reject incorrect lookup and delivery results" do
+    for size <- [2, 8, 32] do
+      cases = Suite.extra_workloads(size)
+      lookup = Enum.find(cases, &(&1.name == "router/selector_source_subject_hit"))
+      assert lookup.dimensions.type_candidates == size * 128
+      assert lookup.dimensions.matching_subscriptions == 1
+      publication = Enum.find(cases, &(&1.name == "bus/selector_miss"))
+      assert publication.dimensions.subscriptions == size * 16
+      assert publication.dimensions.matching_subscriptions == 0
+    end
+
+    cases = Suite.extra_workloads(2)
+    lookup = Enum.find(cases, &(&1.name == "router/selector_source_subject_hit"))
+    assert_raise RuntimeError, ~r/incorrect result/, fn -> lookup.check.([], nil) end
+    miss = Enum.find(cases, &(&1.name == "router/selector_source_subject_miss"))
+    assert_raise RuntimeError, ~r/incorrect result/, fn -> miss.check.(["extra"], nil) end
+
+    publication = Enum.find(cases, &(&1.name == "bus/selector_miss"))
+    state = publication.setup.(%{})
+
+    try do
+      records = publication.run.(state)
+      send(self(), {:signal, publication.retained})
+
+      assert_raise RuntimeError, ~r/unexpected Signal/, fn ->
+        publication.check.(records, state)
+      end
+    after
+      publication.cleanup.(state)
+    end
   end
 
   test "optional comparison budgets reject a slower or larger candidate" do

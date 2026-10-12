@@ -1,7 +1,6 @@
 defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   @moduledoc false
 
-  alias Jido.Signal.Bus.Selector
   alias Jido.Signal.Router
   alias Jido.Signal.Router.Index
   alias Jido.Signal.Telemetry
@@ -10,7 +9,6 @@ defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   defstruct [
     :id,
     :path,
-    :selector,
     :target,
     :monitor_ref,
     :in_flight,
@@ -22,7 +20,6 @@ defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   @type t :: %__MODULE__{
           id: String.t(),
           path: String.t(),
-          selector: Selector.match() | nil,
           durable?: boolean(),
           target: pid() | nil,
           monitor_ref: reference() | nil,
@@ -48,10 +45,10 @@ defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   end
 
   @doc false
-  @spec insert_subscriber(map(), t()) :: map()
-  def insert_subscriber(state, subscriber) do
+  @spec insert_subscriber(map(), t(), Router.match() | nil) :: map()
+  def insert_subscriber(state, subscriber, match \\ nil) do
     route =
-      case subscriber.selector do
+      case match do
         nil -> {subscriber.path, subscriber.id}
         match -> {subscriber.path, match, subscriber.id}
       end

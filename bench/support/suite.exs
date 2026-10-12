@@ -3,6 +3,7 @@ Code.require_file("helpers.exs", __DIR__)
 Code.require_file("signal_cases.exs", __DIR__)
 Code.require_file("router_cases.exs", __DIR__)
 Code.require_file("bus_cases.exs", __DIR__)
+Code.require_file("selector_cases.exs", __DIR__)
 Code.require_file("candidate_cases.exs", __DIR__)
 Code.require_file("measure.exs", __DIR__)
 Code.require_file("report.exs", __DIR__)
@@ -74,7 +75,9 @@ defmodule JidoSignalBench.Suite do
 
   def extra_workloads(size) when size in 2..32 do
     (JidoSignalBench.SignalCases.workloads(size) ++
-       JidoSignalBench.RouterCases.workloads(size) ++ JidoSignalBench.BusCases.workloads(size))
+       JidoSignalBench.RouterCases.workloads(size) ++
+       JidoSignalBench.BusCases.workloads(size) ++
+       JidoSignalBench.SelectorCases.workloads(size))
     |> Enum.map(&Map.put(&1, :id, "#{&1.name}/extended/#{size}"))
   end
 
