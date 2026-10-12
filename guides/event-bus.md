@@ -54,15 +54,94 @@ Use `target: pid` when another process must receive the message:
 The Bus monitors the target. It removes a normal subscription when the target
 exits.
 
-Subscriptions select by Signal type only. Use an exact type or a wildcard type
-path, such as `"message.added"`, `"message.*"`, or `"sensor.**"`. The Bus does
-not use the Signal ID, source, subject, time, data, or extensions to select a
-subscriber. It sends the original Signal after its type matches the path.
-There is no `:selector` subscription option.
+Subscriptions select by Signal type by default. Use an exact type or a wildcard
+type path, such as `"message.added"`, `"message.*"`, or `"sensor.**"`. Add an
+optional `:selector` to match the source, subject, or both. The Bus sends the
+original Signal after all selected fields match.
 
 The Bus keeps Router precedence: exact paths, `*`, `**`, pattern complexity,
 priority, and registration order. It sends each matching message from the Bus
 process in that order.
+
+## Select by Source and Subject
+
+CloudEvents separates the event kind (`type`), occurrence context (`source`),
+and the subject within that context (`subject`). The specification describes
+subject filtering as useful for subscriptions that do not inspect domain data.
+See the [CloudEvents context attributes](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md#context-attributes).
+
+For example, a warehouse observer can select stock changes for one item:
+
+```elixir
+{:ok, subscription_id} =
+  Bus.subscribe(:my_bus, "inventory.stock.changed",
+    selector: [source: "/warehouses/east", subject: "sku-42"]
+  )
+```
+
+The type path uses the existing Router exact and wildcard rules. Source and
+subject use exact, case-sensitive equality. All supplied conditions must match.
+The same subject string can occur at different sources, so include `:source`
+when the source is part of the required scope.
+
+Either field can be used alone:
+
+```elixir
+Bus.subscribe(:my_bus, "inventory.**", selector: [source: "/warehouses/east"])
+Bus.subscribe(:my_bus, "sensor.*", selector: [subject: "sensor-42"])
+```
+
+A messaging application can use the same interface if its Signal contract
+identifies a room as the subject:
+
+```elixir
+Bus.subscribe(:my_bus, "message.added",
+  target: room_observer_pid,
+  selector: [source: "/messages", subject: "room-42"]
+)
+```
+
+The application defines the meaning of its source and subject. The Bus has no
+warehouse, sensor, room, or thread rules. Keep the meaning of each event type
+stable across subjects. Use domain data for conditions such as stock thresholds
+or message contents. Those conditions belong in the consumer.
+
+### Validation and Delivery
+
+- `:selector` is a non-empty keyword list. It accepts `:source`, `:subject`,
+  or both, once each. The type is selected by the path argument.
+- Each value is a non-empty string with at most 4,096 bytes. A source must be
+  a valid URI-reference. A subject must be valid CloudEvents context text.
+- Values are not normalized. There is no prefix, suffix, or wildcard matching
+  for source and subject. A missing subject does not match a selected subject.
+- IDs, time, content type, data schema, data, and extensions do not affect
+  selection. Selection preserves the complete original Signal and its ID.
+- An invalid selector returns `{:error, {:invalid_selector, message}}` and
+  adds no subscription. This includes `nil`, an empty list, duplicate keys,
+  unsupported fields, functions, MFAs, and invalid values. Omit `:selector`
+  for the existing subscription that selects by type path only.
+
+The Bus validates and compiles the selector once when it adds a subscription.
+Router type indexing finds the candidate routes. A package-created predicate
+then uses direct Signal pattern matching for the selected source and subject.
+Delivery does not parse the selector, traverse payload maps, or run application
+callbacks. The default subscription keeps its existing Router path.
+
+Selected observations keep Router precedence and publication order. Unsubscribe,
+deletion, and target exit remove the compiled predicate with its route. Selection
+is trusted subscription configuration; it is not authorization. A Bus-published
+command remains an observation.
+
+### Durable and Replay Limits
+
+Selectors apply to ordinary live subscriptions. `:selector` with `:durable`
+returns `{:error, {:conflicting_options, [:selector, :durable]}}`, including
+when a target attaches again. This does not change the stored durable definition
+or cursor.
+
+Replay selects only by type path and rejects `:selector` as an unsupported
+option. Filtered durable delivery needs explicit stored selector identity,
+version, cursor advancement, replay, reconnect, and restart rules.
 
 ## Durable Subscriptions
 

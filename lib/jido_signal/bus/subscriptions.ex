@@ -2,11 +2,12 @@ defmodule Jido.Signal.Bus.Subscriptions do
   @moduledoc false
 
   alias Jido.Signal.Bus.DurableSubscription
+  alias Jido.Signal.Bus.Selector
   alias Jido.Signal.Bus.Subscriptions.Subscriber
   alias Jido.Signal.ID
   alias Jido.Signal.Router
 
-  @subscription_options [:target, :subscription_id, :durable, :start_from]
+  @subscription_options [:target, :subscription_id, :durable, :start_from, :selector]
 
   @doc false
   @spec subscribe(map(), Router.path(), keyword()) ::
@@ -15,9 +16,10 @@ defmodule Jido.Signal.Bus.Subscriptions do
     with :ok <- validate_options(opts),
          {:ok, path} <- normalize_path(path),
          {:ok, target} <- validate_target(Keyword.get(opts, :target)),
+         {:ok, selector} <- compile_selector(opts),
          {:ok, kind, id} <- subscription_identity(opts) do
       case kind do
-        :ephemeral -> add_ephemeral(state, id, path, target)
+        :ephemeral -> add_ephemeral(state, id, path, target, selector)
         :durable -> DurableSubscription.attach(state, id, path, target, opts)
       end
     else
@@ -111,6 +113,9 @@ defmodule Jido.Signal.Bus.Subscriptions do
           Keyword.has_key?(opts, :start_from) and not Keyword.has_key?(opts, :durable) ->
             {:error, {:requires_option, :start_from, :durable}}
 
+          Keyword.has_key?(opts, :selector) and Keyword.has_key?(opts, :durable) ->
+            {:error, {:conflicting_options, [:selector, :durable]}}
+
           true ->
             :ok
         end
@@ -140,6 +145,13 @@ defmodule Jido.Signal.Bus.Subscriptions do
 
   defp validate_target(_target), do: {:error, :invalid_target}
 
+  defp compile_selector(opts) do
+    case Keyword.fetch(opts, :selector) do
+      {:ok, selector} -> Selector.compile(selector)
+      :error -> {:ok, nil}
+    end
+  end
+
   defp subscription_identity(opts) do
     case Keyword.fetch(opts, :durable) do
       {:ok, id} when is_binary(id) and byte_size(id) > 0 ->
@@ -156,7 +168,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
     end
   end
 
-  defp add_ephemeral(state, id, path, target) do
+  defp add_ephemeral(state, id, path, target, selector) do
     if Map.has_key?(state.subscriptions, id) do
       {:error, :subscription_already_exists, state}
     else
@@ -165,6 +177,7 @@ defmodule Jido.Signal.Bus.Subscriptions do
       subscriber = %Subscriber{
         id: id,
         path: path,
+        selector: selector,
         durable?: false,
         target: target,
         monitor_ref: monitor_ref,

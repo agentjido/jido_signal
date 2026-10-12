@@ -4,7 +4,7 @@ defmodule Jido.Signal.Bus.TypeSelectionTest do
   alias Jido.Signal
   alias Jido.Signal.Bus
 
-  test "observation selection uses the type path and ignores other Signal fields" do
+  test "default observation selection uses the type path and ignores other Signal fields" do
     events = [
       Signal.new!("sensor.reading", nil, source: "/first"),
       Signal.new!("sensor.reading", false,
@@ -38,20 +38,5 @@ defmodule Jido.Signal.Bus.TypeSelectionTest do
 
       refute_received {:signal, _}
     end
-  end
-
-  test "subscriptions reject selector options without adding state" do
-    bus = start_supervised!({Bus, name: unique_name("unsupported_selector")})
-    selector = [{[:subject], "sensor-1"}]
-    before = :sys.get_state(bus)
-
-    for opts <- [[selector: selector], [durable: "sensor-observer", selector: selector]] do
-      assert {:error, {:unsupported_option, :selector}} = Bus.subscribe(bus, "sensor.*", opts)
-      assert :sys.get_state(bus) == before
-    end
-
-    event = signal("sensor.reading")
-    assert {:ok, _} = Bus.publish(bus, [event])
-    refute_received {:signal, _}
   end
 end
