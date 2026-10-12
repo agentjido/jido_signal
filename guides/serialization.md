@@ -102,15 +102,18 @@ does not transform the data.
 Deserialization returns `%Jido.Signal{}`. It does not load an application module
 from the Signal `type` value.
 
-Use the known custom Signal module to validate data after routing:
+Use an explicit catalog to select the exact type and schema identity and
+validate domain data during decode:
 
 ```elixir
-{:ok, signal} = Jido.Signal.deserialize(json)
-{:ok, data} = MyApp.UserCreated.validate_data(signal.data)
+catalog = Jido.Signal.Catalog.new!([MyApp.UserCreated])
+{:ok, signal} = Jido.Signal.Catalog.decode(catalog, json)
 ```
 
-This keeps module selection explicit. It also keeps Zoi as the only custom data
-validation path.
+The catalog preserves Signal identity and uses the definition's existing Zoi
+schema. Generic deserialization keeps its existing envelope-only behavior.
+See [Typed Signal Catalog](catalog.md) for schema identity, data-key rules,
+and structured errors.
 
 ## Payload Size
 

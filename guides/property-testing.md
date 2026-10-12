@@ -27,6 +27,7 @@ would add `:property` to a fuzz test.
 | Case | Property runs | Fuzz runs | Property / fuzz input bounds |
 | --- | --- | --- | --- |
 | envelope_wire | 40 | 500 | Text length 6 / 20; all data forms and context limits |
+| catalog_boundaries | 40 | 500 | Text length 16 / 128; three type families and four schema identities |
 | wire_mutations | 40 | 500 | Text length 32 / 512; known-invalid wire changes |
 | routing_model | 40 | 500 | 6 / 16 routes; 1–5 type segments |
 | memory_histories | 40 | 500 | 12 / 40 commands; retained bound 1–5; batch size 0–3 |
