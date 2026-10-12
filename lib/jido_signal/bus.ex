@@ -3,7 +3,8 @@ defmodule Jido.Signal.Bus do
   Provides ordered local publish and subscribe delivery for Signals.
 
   A normal subscription receives `{:signal, signal}` messages while its target
-  process is alive.
+  process is alive. Its optional `:selector` adds bounded equality tests on the
+  Signal envelope or data after the type path matches. See `subscribe/3`.
 
   A durable subscription has a stable string ID. It receives one
   `{:signal, durable_id, recorded_signal}` message at a time. The target must
@@ -30,6 +31,13 @@ defmodule Jido.Signal.Bus do
   @type path :: Router.path()
   @type subscription_id :: String.t()
   @type durable_id :: String.t()
+
+  @typedoc "A map path that starts at an envelope field, `:data`, or `:extensions`."
+  @type selector_path :: [atom() | binary()]
+  @typedoc "An equality value: a binary, signed 64-bit integer, float, boolean, or nil."
+  @type selector_value :: binary() | integer() | float() | boolean() | nil
+  @typedoc "One to 16 map-path equality tests. All tests must match."
+  @type selector :: [{selector_path(), selector_value()}]
 
   @start_options_schema Zoi.keyword(
                           [
@@ -124,9 +132,34 @@ defmodule Jido.Signal.Bus do
 
   The calling process is the default `:target`.
 
+  Set `:selector` to a non-empty list of `{map_path, expected_value}` pairs.
+  All pairs must match with strict equality (`===`). For example:
+
+      subscribe(bus, "sensor.*", selector: [{[:data, "status"], "critical"}])
+      subscribe(bus, "message.*", selector: [{[:subject], "room-42"}])
+
+  An envelope path is one of `[:id]`, `[:source]`, `[:type]`, `[:specversion]`,
+  `[:subject]`, `[:time]`, `[:datacontenttype]`, or `[:dataschema]`. Data paths
+  start with `:data`. Extension paths start with `:extensions` and include at
+  least one key. Further keys are atoms or binaries, matched exactly without
+  conversion. Paths traverse maps only, with at most eight keys. Selectors
+  have at most 16 pairs. Binary keys have at most 256 bytes; binary values
+  have at most 1,024 bytes. Other values are signed 64-bit integers, floats,
+  booleans, or `nil`.
+
+  A missing key, a non-map intermediate value, or a failed comparison selects
+  nothing. An explicit `nil` matches a present `nil` value. Invalid selectors,
+  including functions, MFAs, `nil`, and empty lists, return
+  `{:error, {:invalid_selector, message}}` without adding a subscription.
+  Omit `:selector` for the default path-only behavior. Selection does not
+  change the Signal, delivery order, or subscription lifecycle.
+
   Set `durable: "stable-id"` to keep a cursor when the target exits. A new
   durable subscription starts at the current cursor by default. Set
   `start_from: :origin` or a retained cursor to read older records.
+  `:selector` with `:durable` returns
+  `{:error, {:conflicting_options, [:selector, :durable]}}`. Replay selects
+  only by type path and does not accept `:selector`.
   """
   @spec subscribe(server(), path(), keyword()) ::
           {:ok, subscription_id()} | {:error, term()}

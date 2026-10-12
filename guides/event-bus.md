@@ -58,6 +58,102 @@ The Bus keeps Router precedence: exact paths, `*`, `**`, pattern complexity,
 priority, and registration order. It sends each matching message from the Bus
 process in that order.
 
+## Filter Observations
+
+Add `:selector` to a normal subscription when the type path is too broad. A
+selector is a non-empty list of `{map_path, expected_value}` pairs. The Signal
+must match the type path and every pair. The Bus sends the original Signal
+without changing its ID, envelope, or data.
+
+For example, two message observers can select different subjects:
+
+```elixir
+{:ok, room_a_subscription} =
+  Bus.subscribe(:my_bus, "message.*",
+    target: room_a_pid,
+    selector: [{[:subject], "room-a"}]
+  )
+
+{:ok, room_b_subscription} =
+  Bus.subscribe(:my_bus, "message.*",
+    target: room_b_pid,
+    selector: [{[:subject], "room-b"}]
+  )
+```
+
+The same interface can select sensor observations by source and domain data:
+
+```elixir
+{:ok, sensor_subscription} =
+  Bus.subscribe(:my_bus, "sensor.*",
+    selector: [
+      {[:source], "/plant/line-1"},
+      {[:data, "reading", "status"], "critical"},
+      {[:data, "reading", "active"], true}
+    ]
+  )
+```
+
+The domain owner supplies field names and values. The Bus has no room, thread,
+or sensor rules. Selection is trusted subscription configuration. It is not
+authorization. A published command is an observation; selection does not
+execute it.
+
+### Paths, Equality, and Limits
+
+- Envelope paths are `[:id]`, `[:source]`, `[:type]`, `[:specversion]`,
+  `[:subject]`, `[:time]`, `[:datacontenttype]`, and `[:dataschema]`.
+- Domain paths start with `:data`. `[:data]` can select a scalar data value.
+- Extension paths start with `:extensions` and have at least one further key,
+  such as `[:extensions, "region"]`.
+- Further keys are atoms or binaries. Keys match exactly. `"status"` and
+  `:status` are different keys. The Bus does not convert keys or create atoms.
+- Paths traverse maps only. They do not index lists, call the Access protocol,
+  or execute application functions.
+- All comparisons use strict equality (`===`). An integer `42` does not match
+  a float `42.0`.
+- A missing key or a non-map intermediate value does not match. A present
+  `nil` can match `nil`; a missing key cannot. `false` is a valid equality value.
+- A selector has one to 16 pairs. A path has one to eight keys, including its
+  root. Binary keys have at most 256 bytes. Binary equality values have at most
+  1,024 bytes. Other equality values are signed 64-bit integers, floats,
+  booleans, or `nil`. Maps, lists, and other values are rejected.
+
+An invalid selector returns `{:error, {:invalid_selector, message}}` and adds
+no subscription. This includes an empty list, explicit `nil`, a function, or
+an MFA. Omit `:selector` to keep the default type-path-only subscription.
+Missing values, failed comparisons, and selection failures never broaden a
+subscription.
+
+Selection runs after Router type matching and before delivery. Selected
+messages keep Router precedence and publication order. The Bus removes the
+selector with the subscription on unsubscribe, deletion, or target exit.
+
+### Why Declarative Selection
+
+A Router predicate can inspect a Signal with a function or MFA. Such a callback
+can also wait, perform I/O, or run without a bound. The Bus sends from one
+process, so an application callback could block all subscribers. Safe callback
+execution would need a separate worker and timeout contract.
+
+The first Bus selector uses bounded map lookups and scalar equality instead.
+It uses Router predicate matching through a package-owned MFA and keeps the
+existing Router order and failure handling. It adds no middleware pipeline,
+worker pool, or callback tuning options. Put more complex selection and work
+in an application process.
+
+### Durable and Replay Limits
+
+Selectors apply only to normal live subscriptions. `:selector` with `:durable`
+returns `{:error, {:conflicting_options, [:selector, :durable]}}`, including
+when a target attaches again. The request does not change the stored durable
+definition or cursor.
+
+`Bus.replay/3` selects only by type path. It rejects `:selector` as an unsupported
+option. Filtered durable delivery needs a separate contract for stored selector
+identity and version, skipped cursors, replay, reconnect, and restart behavior.
+These guarantees are not part of the live selector interface.
+
 ## Durable Subscriptions
 
 A durable subscription prevents an agent restart from losing an accepted
