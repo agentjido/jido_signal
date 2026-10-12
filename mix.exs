@@ -87,6 +87,7 @@ defmodule Jido.Signal.MixProject do
         {"guides/signals-and-dispatch.md", title: "Signals and Dispatch"},
         {"guides/signal-extensions.md", title: "CloudEvents Context Attributes"},
         {"guides/serialization.md", title: "Serialization"},
+        {"guides/catalog.md", title: "Typed Signal Catalog"},
         {"guides/signal-router.md", title: "Signal Router"},
         {"guides/event-bus.md", title: "Event Bus"},
         {"guides/advanced.md", title: "Advanced Usage"},
@@ -108,7 +109,8 @@ defmodule Jido.Signal.MixProject do
         ],
         "Signal Format": [
           "guides/signal-extensions.md",
-          "guides/serialization.md"
+          "guides/serialization.md",
+          "guides/catalog.md"
         ],
         "Routing and Delivery": [
           "guides/signal-router.md",
@@ -152,7 +154,8 @@ defmodule Jido.Signal.MixProject do
           Jido.Signal.Dispatch.PubSub
         ],
         Serialization: [
-          Jido.Signal.Serialization
+          Jido.Signal.Serialization,
+          Jido.Signal.Catalog
         ],
         "Errors & Exceptions": [
           Jido.Signal.Error.DispatchError,

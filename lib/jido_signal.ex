@@ -51,6 +51,12 @@ defmodule Jido.Signal do
 
   `Jido.Signal.defined?/1` recognizes these modules. `Jido.Signal.Router`
   accepts them as route paths and uses `type/0` as the exact path.
+
+  The definition owns `type`, `dataschema`, and validated `data`. Constructor
+  options cannot change these values, including an absent `dataschema`.
+  Use a separate definition for each schema identity. Other envelope options
+  can override configured defaults. `Jido.Signal.Catalog` selects definitions
+  by exact type and schema identity when it decodes or validates a Signal.
   """
 
   alias Jido.Signal.Context
@@ -198,7 +204,12 @@ defmodule Jido.Signal do
       @spec validate_data(term()) :: Zoi.result()
       def validate_data(data), do: Zoi.parse(schema(), data)
 
-      @doc "Creates a Signal with the configured type and validated data."
+      @doc """
+      Creates a Signal with the definition's type, dataschema, and validated data.
+
+      Options cannot override these values. A definition without dataschema
+      keeps it absent. Other envelope attributes can be supplied in options.
+      """
       @spec new(term(), keyword() | map()) ::
               {:ok, Jido.Signal.t()} | {:error, [Zoi.Error.t()] | String.t()}
       def new(data \\ %{}, opts \\ []) do
@@ -214,6 +225,7 @@ defmodule Jido.Signal do
              {:ok, attrs} <- Jido.Signal.__normalize_definition_attrs__(opts, defaults) do
           attrs
           |> Map.put("type", type())
+          |> Map.put("dataschema", dataschema())
           |> Map.put("data", validated_data)
           |> Jido.Signal.new()
         end

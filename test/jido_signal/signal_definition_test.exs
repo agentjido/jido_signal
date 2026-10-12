@@ -121,6 +121,19 @@ defmodule Jido.Signal.DefinitionTest do
       refute Jido.Signal.defined?("user.created")
     end
 
+    test "keeps dataschema fixed by the definition for all option key forms" do
+      for opts <- [
+            [dataschema: "https://example.com/other"],
+            %{dataschema: nil},
+            %{"dataschema" => "https://example.com/other"}
+          ] do
+        assert {:ok, signal} = UserCreated.new(%{user_id: "123", email: "user@example.com"}, opts)
+        assert signal.dataschema == UserCreated.dataschema()
+        assert {:ok, signal} = TextMessage.new("hello", opts)
+        assert signal.dataschema == nil
+      end
+    end
+
     test "does not identify an incomplete marker module as a Signal module" do
       refute Jido.Signal.defined?(MarkerOnly)
 

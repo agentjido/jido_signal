@@ -78,6 +78,12 @@ Typed Signal modules expose `type/0`, `default_source/0`,
 `datacontenttype/0`, `dataschema/0`, and `schema/0`. The old `metadata/0` and
 generated `to_json/0` functions are removed.
 
+Custom constructors keep the definition's `dataschema`, including `nil`.
+Earlier v3 betas permitted an option override. Use a separate definition for
+each schema identity. Generic constructors keep their existing behavior.
+Use [Typed Signal Catalog](catalog.md) for exact definition lookup and domain
+validation when you decode a Signal.
+
 ## Make Envelope Semantics Explicit
 
 Jido generates a UUID7 only when it creates a new Signal ID. It accepts any

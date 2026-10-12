@@ -70,6 +70,7 @@ Jido.Signal transforms Elixir's message passing into a sophisticated communicati
 - UUID7 IDs for Signals created by Jido
 - Explicit event source, time, and content type semantics
 - Custom signal types with data validation
+- Immutable typed catalogs for exact type/schema lookup and validated decoding
 - Rich metadata and context tracking
 - Signal-only serialization in JSON or Erlang Term Format
 
@@ -538,6 +539,7 @@ you convert stored Signals or Bus subscriptions.
 
 - **[CloudEvents Context Attributes](guides/signal-extensions.md)** - Add small transport metadata
 - **[Serialization](guides/serialization.md)** - Use canonical maps, JSON, and Erlang Term Format
+- **[Typed Signal Catalog](guides/catalog.md)** - Decode and revalidate explicit domain definitions
 
 **Routing and delivery**
 

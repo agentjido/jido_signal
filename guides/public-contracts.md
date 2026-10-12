@@ -28,6 +28,13 @@ schedules. Fixed-test cases in the last column are not generated evidence.
 | ID-001 | IDs are UUID7 values with readable timestamps and complete-value comparison. | Generated IDs, byte fixtures, version/variant/shape rejection, case forms, timestamp extremes, equality and tie order. Independent byte assembly/comparison. | Further invalid inputs and generation shape checks. |
 | OBS-001 | Dispatch events pair each start with a terminal event. Bus events carry scoped identity and follow transitions. | Success/error/fault events; Bus publish/attach/deliver/ack/detach/delete/death/live-owner conflict; repeated detach. Ordered owned events and multiplicity checks. | Automatic dead-target replacement and Store delivery-error events. |
 
+Fixed catalog tests also check exact type/schema lookup, domain validation,
+preserved identity, and definition-owned constructor schema identity. See
+`catalog_test.exs` and `signal_definition_test.exs` for message/sensor families,
+schema versions and nil identity, duplicate registrations, envelope/context/data
+errors, JSON identity, Base64, key policy, runtime atom safety, options, and
+callback faults. These fixed tests are not part of the generated report.
+
 Case groups: envelope_wire, wire_mutations, routing_model, dispatch_sequences,
 pid_lifecycles, bus_histories, durable_store_faults, memory_histories, diagnostics,
 trace_ids, and bus_observations. Each has a short property test and a larger fuzz
