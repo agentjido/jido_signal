@@ -14,9 +14,9 @@ No additional dependency is required.
 
 | Profile | Cases | Sizes | Warm-up calls | Timing samples per case |
 | --- | ---: | --- | ---: | ---: |
-| `short` (default) | 114 | 8 | 3 | 15 |
-| `scale` | 342 | 2, 8, 32 | 5 | 30 |
-| `smoke` | 132 | 2, 6 | 1 | 2 |
+| `short` (default) | 123 | 8 | 3 | 15 |
+| `scale` | 369 | 2, 8, 32 | 5 | 30 |
+| `smoke` | 150 | 2, 6 | 1 | 2 |
 
 Select a profile with `--profile scale` or `--profile smoke`. Short and scale
 use a small map, a 1,000-entry map, and a 1 MiB ASCII binary for the original
@@ -26,8 +26,8 @@ sample. Profiles use sizes 2–32.
 
 ## Cases and timing boundaries
 
-There are 66 operation types. The original 24 run for each size and payload.
-The 42 extended operations run once per size with their own inputs. Case IDs
+There are 75 operation types. The original 24 run for each size and payload.
+The 51 extended operations run once per size with their own inputs. Case IDs
 include the operation, payload or `extended` group, and size. Each JSON row
 also records dimensions such as route count, batch size, or consumer count.
 Each result is checked before the sample is accepted.
@@ -67,6 +67,7 @@ The extended operations cover the following cases:
 | `router/wildcard_build`, `wildcard_many` | Build or query 32–512 distinct wildcard paths. All paths match an 11-segment Signal. Check the complete target set. |
 | `router/deep` | Match a `**` path at depths 4–18 with up to 512 unrelated wildcard branches. |
 | `router/add`, `remove`, `merge` | Update or merge the populated wildcard index. Check target membership and exact-route precedence. |
+| `router/selector_source_hit`, `selector_source_miss`, `selector_subject_hit`, `selector_subject_miss`, `selector_source_subject_hit`, `selector_source_subject_miss` | Use the Bus's Router index lookup with source, subject, or combined predicates. Each type matches `128 × size` routes, split between exact and wildcard paths. A hit accepts one target; a miss accepts none. Router construction and selector compilation are outside timing. |
 | `dispatch/dead_pid`, `timeout` | Reject a confirmed dead PID or return a 2 ms timeout from a live receiver that does not reply. The timeout is part of the measured operation. |
 | `bus/fanout_processes` | Publish `size` Signals to `size` separate consumer processes and wait for all consumers to receive them. |
 | `bus/concurrent_publish` | Release up to eight ready publishers. Each publishes four batches of `size` Signals. Two consumers receive all records. Check global cursor order and each publisher's order. |
@@ -75,6 +76,8 @@ The extended operations cover the following cases:
 | `bus/large_replay`, `large_replay_filtered`, `large_replay_cursor` | Replay 512–8,192 retained records, scan for the final match, or read the final page by cursor. Log setup is outside timing. |
 | `bus/durable_reconnect` | Attach after the old consumer stops with an unacknowledged record. Receive and acknowledge that record again, then drain retained and offline records. Setup stops the old consumer outside timing. |
 | `bus/invalid_signal`, `store_full`, `store_failure` | Reject an invalid Signal, a full Store pinned by a durable cursor, or an adapter append failure. Check that retained state is unchanged and no new Signal is delivered. |
+| `bus/selector_hit`, `selector_miss` | Publish one Signal through `16 × size` subscriptions that select by source and subject. A hit delivers once; a miss sends nothing. Timing includes Signal validation, Store append, routing, and send. Subscription setup and mailbox checks are outside timing. |
+| `bus/selector_churn` | Create and unsubscribe `16 × size` selected subscriptions. Timing includes validation, predicate compilation, Router insertion, and removal. Check that subscriptions, monitors, and routes are empty afterward. |
 
 Concurrent cases make each worker announce readiness before the timed release.
 No assertion depends on publisher completion order. Consumer checkpoints come

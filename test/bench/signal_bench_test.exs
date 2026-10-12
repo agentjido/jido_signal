@@ -115,7 +115,7 @@ defmodule JidoSignalTest.SignalBenchTest do
     Suite.write!(report, directory)
 
     assert report.suite == "jido_signal"
-    assert length(report.cases) == 132
+    assert length(report.cases) == 150
     assert report.schema_version == 2
     assert length(report.growth_checks) == 2
     assert Enum.all?(report.cases, &is_map(&1.dimensions))

@@ -45,9 +45,15 @@ defmodule Jido.Signal.Bus.Subscriptions.Subscriber do
   end
 
   @doc false
-  @spec insert_subscriber(map(), t()) :: map()
-  def insert_subscriber(state, subscriber) do
-    {:ok, router} = Router.add(state.router, {subscriber.path, subscriber.id})
+  @spec insert_subscriber(map(), t(), Router.match() | nil) :: map()
+  def insert_subscriber(state, subscriber, match \\ nil) do
+    route =
+      case match do
+        nil -> {subscriber.path, subscriber.id}
+        match -> {subscriber.path, match, subscriber.id}
+      end
+
+    {:ok, router} = Router.add(state.router, route)
 
     %{
       state

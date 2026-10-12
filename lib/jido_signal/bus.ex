@@ -3,7 +3,8 @@ defmodule Jido.Signal.Bus do
   Provides ordered local publish and subscribe delivery for Signals.
 
   A normal subscription receives `{:signal, signal}` messages while its target
-  process is alive.
+  process is alive. It selects by type path and can add exact `source` and
+  `subject` matching with the `:selector` option. See `subscribe/3`.
 
   A durable subscription has a stable string ID. It receives one
   `{:signal, durable_id, recorded_signal}` message at a time. The target must
@@ -30,6 +31,9 @@ defmodule Jido.Signal.Bus do
   @type path :: Router.path()
   @type subscription_id :: String.t()
   @type durable_id :: String.t()
+
+  @typedoc "Exact source and/or subject equality tests for an ordinary subscription."
+  @type selector :: [source: String.t(), subject: String.t()]
 
   @start_options_schema Zoi.keyword(
                           [
@@ -124,9 +128,34 @@ defmodule Jido.Signal.Bus do
 
   The calling process is the default `:target`.
 
+  The path selects the Signal type, using exact or wildcard Router matching.
+  Set `:selector` to a non-empty keyword list with `:source`, `:subject`, or
+  both. The option and each field key can appear once. All fields must match
+  the Signal envelope with exact, case-sensitive equality. For example:
+
+      subscribe(bus, "inventory.stock.changed",
+        selector: [source: "/warehouses/east", subject: "sku-42"]
+      )
+
+  Values must be non-empty strings with at most 4,096 bytes. A source must be
+  a valid URI-reference. A subject must be valid CloudEvents context text.
+  A missing subject does not match a selected subject. Other envelope fields,
+  data, and extensions do not affect selection. The Bus sends the original
+  Signal in Router order.
+
+  Omit `:selector` for the default type-path-only subscription. Empty lists,
+  `nil`, duplicate keys, unsupported fields, invalid values, functions, and
+  MFAs return `{:error, {:invalid_selector, message}}` without adding a
+  subscription. The Bus compiles a fixed pattern-matching predicate once at
+  subscription time. It does not execute application selector callbacks.
+
   Set `durable: "stable-id"` to keep a cursor when the target exits. A new
   durable subscription starts at the current cursor by default. Set
   `start_from: :origin` or a retained cursor to read older records.
+  `:selector` with `:durable` returns
+  `{:error, {:conflicting_options, [:selector, :durable]}}` without changing
+  the stored definition or cursor. Replay selects only by type path and does
+  not accept `:selector`.
   """
   @spec subscribe(server(), path(), keyword()) ::
           {:ok, subscription_id()} | {:error, term()}
