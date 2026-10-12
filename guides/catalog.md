@@ -43,10 +43,18 @@ true = decoded.id == signal.id
 {:ok, decoded} = Catalog.validate(catalog, decoded)
 ```
 
-The catalog captures each definition's existing type, `dataschema`, and Zoi
-schema. It does not add another schema format or discover modules.
+The catalog validates and captures one snapshot of each definition's existing
+metadata. It uses the Signal envelope's type and schema URI validation rules.
+Use `new/1` or `new!/1` to create a catalog. Its internal representation is
+opaque. Replacing a definition module does not change an existing catalog's
+captured metadata. Build a new catalog to use the replacement definition.
 
 ## Exact Schema Identity
+
+`dataschema` is the optional schema URI attribute from the
+[CloudEvents 1.0 specification](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md#dataschema).
+It can be an HTTP URI or a URN. Use a different URI for an incompatible data
+schema. The exact pair lookup below is the catalog's local selection rule.
 
 The lookup key is the exact `{type, dataschema}` pair. There is no wildcard
 matching, URI normalization, remote schema fetch, or version fallback.
@@ -100,6 +108,10 @@ constructor or generate an ID. ID, time spelling and precision, source,
 subject, content type, and valid context values remain intact. Context names
 are normalized to strings. Definition data defaults and transforms can change
 the data value. Schema callbacks must be suitable for repeated validation.
+When data changes, the codec normalizes its presence and Base64 flags. Absent
+data and explicit null data keep their separate meanings when validation
+leaves the data unchanged. Invalid context on an existing Signal returns an
+error before envelope defaults can replace it.
 
 Binary decode options go to the existing serializer:
 
@@ -120,11 +132,11 @@ Use `error.details.code` for classification:
 
 | Code | Meaning | Further details |
 | --- | --- | --- |
-| `:invalid_definitions` | Registration input failed validation. | `reason`: Zoi errors |
+| `:invalid_definitions` | Registration input or metadata is invalid, or a metadata callback failed. | `reason`: Zoi errors or `{kind, value}`; metadata errors also include `definition` |
 | `:duplicate_definition` | An exact pair was registered twice. | `type`, `dataschema`, `definitions` in registration order |
 | `:invalid_input` | The catalog or input shape is invalid. | `field` |
 | `:invalid_options` | Options were supplied for a map. | `field: :options` |
-| `:decode_failed` | Wire format/envelope is invalid, or input is a batch. | `reason`: original codec/serialization error or batch error |
+| `:decode_failed` | Wire format/envelope is invalid, input is a batch, or the codec failed. | `reason`: original codec/serialization error, batch error, or `{kind, value}` |
 | `:invalid_envelope` | Existing Signal or context is invalid. | `reason`: Zoi errors or context error |
 | `:unknown_type` | No definition has this type. | `type`, `dataschema` |
 | `:unknown_dataschema` | The type is known but the schema identity is not. | `type`, `dataschema` |

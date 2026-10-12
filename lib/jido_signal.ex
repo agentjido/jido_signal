@@ -216,8 +216,7 @@ defmodule Jido.Signal do
         defaults =
           %{
             "source" => default_source(),
-            "datacontenttype" => datacontenttype(),
-            "dataschema" => dataschema()
+            "datacontenttype" => datacontenttype()
           }
           |> Map.reject(fn {_key, value} -> is_nil(value) end)
 

@@ -8,11 +8,17 @@ defmodule Jido.Signal.Catalog do
   only Signals without `dataschema`. Duplicate pairs are errors, even when
   the same module appears twice. Different schema versions can share a type.
 
+  Create catalogs with `new/1` or `new!/1`. Their internal representation is
+  opaque. Registration validates one snapshot of each module's existing
+  definition metadata using the Signal envelope's type and schema URI rules.
+
   `decode/3` uses the existing Signal codec and serialization boundary.
   `validate/2` checks an existing Signal envelope, its flat context, and its
   selected data schema. Neither function calls a constructor or generates an
   ID. The supplied ID, time, source, subject, and valid context are preserved.
   Zoi can apply data defaults and transforms declared by the definition.
+  When data changes, the existing codec keeps its presence and Base64 flags
+  consistent with the returned value.
 
   Data keys follow the definition's Zoi schema. The catalog does not enable
   coercion, convert arbitrary keys to atoms, or select modules from input.
@@ -29,7 +35,7 @@ defmodule Jido.Signal.Catalog do
   All failures return `{:error, %Jido.Signal.Error.InvalidInputError{}}`.
   The `details.code` field is one of:
 
-  * `:invalid_definitions` — registration input failed Zoi validation.
+  * `:invalid_definitions` — registration input or metadata is invalid, or a metadata callback failed.
   * `:duplicate_definition` — two registrations have the same exact pair.
   * `:invalid_input` — expected a catalog, Signal, map, or binary.
   * `:invalid_options` — options were supplied for a map.
@@ -44,6 +50,8 @@ defmodule Jido.Signal.Catalog do
   applicable. Lookup and data errors include `type` and `dataschema`.
   Data errors also include the selected `definition` module. Duplicate errors
   include both modules in registration order under `definitions`.
+  Metadata errors include the supplied `definition` module. Callback and
+  codec faults retain `{kind, value}` under `reason`.
 
   A catalog does not migrate data, fetch schemas, authorize operations, or
   execute commands. Registered schemas and their callbacks are trusted code.
@@ -56,16 +64,24 @@ defmodule Jido.Signal.Catalog do
   alias Jido.Signal.Serialization
 
   @definitions_schema Zoi.list(Zoi.atom() |> Zoi.refine({__MODULE__, :validate_definition, []}))
+  @type_schema Keyword.fetch!(Signal.schema().fields, :type)
+  @dataschema_schema Keyword.fetch!(Signal.schema().fields, :dataschema)
+  @data_schema Zoi.any() |> Zoi.refine({Signal, :validate_definition_schema, []})
+  @definition_schema Zoi.object(%{
+                       type: @type_schema,
+                       dataschema: @dataschema_schema,
+                       schema: @data_schema
+                     })
   @catalog_schema Zoi.struct(__MODULE__, %{
                     definitions:
                       Zoi.map(
-                        Zoi.tuple({Zoi.string(), Zoi.string() |> Zoi.nullable()}),
-                        Zoi.tuple({Zoi.atom(), Zoi.any()})
+                        @type_schema,
+                        Zoi.map(@dataschema_schema, Zoi.tuple({Zoi.atom(), @data_schema}))
                       )
                   })
 
   @typedoc "An immutable index of exact Signal type and schema identities."
-  @type t :: unquote(Zoi.type_spec(@catalog_schema))
+  @opaque t :: unquote(Zoi.type_spec(@catalog_schema))
   @enforce_keys Zoi.Struct.enforce_keys(@catalog_schema)
   defstruct Zoi.Struct.struct_fields(@catalog_schema)
 
@@ -121,32 +137,12 @@ defmodule Jido.Signal.Catalog do
           {:ok, Signal.t()} | {:error, %InvalidInputError{}}
   def decode(catalog, wire_value, opts \\ [])
 
-  def decode(%__MODULE__{} = catalog, binary, opts) when is_binary(binary) do
-    case Serialization.deserialize(binary, opts) do
-      {:ok, %Signal{} = signal} ->
-        validate(catalog, signal)
-
-      {:ok, _batch} ->
-        error(:decode_failed, %{reason: {:invalid_wire_data, "expected one Signal"}})
-
-      {:error, reason} ->
-        error(:decode_failed, %{reason: reason})
+  def decode(%__MODULE__{definitions: definitions} = catalog, wire_value, opts)
+      when is_map(definitions) do
+    with {:ok, signal} <- decode_wire(wire_value, opts) do
+      validate_definition_data(catalog, signal)
     end
   end
-
-  def decode(%__MODULE__{} = catalog, map, opts) when is_map(map) and not is_struct(map) do
-    if opts == [] do
-      case Signal.from_map(map) do
-        {:ok, signal} -> validate(catalog, signal)
-        {:error, reason} -> error(:decode_failed, %{reason: reason})
-      end
-    else
-      error(:invalid_options, %{field: :options})
-    end
-  end
-
-  def decode(%__MODULE__{}, _wire_value, _opts),
-    do: error(:invalid_input, %{field: :wire_value})
 
   def decode(_catalog, _wire_value, _opts), do: error(:invalid_input, %{field: :catalog})
 
@@ -158,22 +154,22 @@ defmodule Jido.Signal.Catalog do
   Data defaults and transforms can change the returned data value.
   """
   @spec validate(t(), Signal.t()) :: {:ok, Signal.t()} | {:error, %InvalidInputError{}}
-  def validate(%__MODULE__{} = catalog, %Signal{} = signal) do
-    with {:ok, signal} <- validate_envelope(signal),
-         {:ok, {module, schema}} <- lookup(catalog, signal),
-         {:ok, data} <- validate_data(schema, signal, module) do
-      {:ok, %{signal | data: data}}
+  def validate(%__MODULE__{definitions: definitions} = catalog, %Signal{} = signal)
+      when is_map(definitions) do
+    with {:ok, signal} <- validate_envelope(signal) do
+      validate_definition_data(catalog, signal)
     end
   end
 
-  def validate(%__MODULE__{}, _signal), do: error(:invalid_input, %{field: :signal})
+  def validate(%__MODULE__{definitions: definitions}, _signal) when is_map(definitions),
+    do: error(:invalid_input, %{field: :signal})
+
   def validate(_catalog, _signal), do: error(:invalid_input, %{field: :catalog})
 
   @doc false
   @spec validate_definition(term(), keyword()) :: :ok | {:error, String.t()}
   def validate_definition(module, _opts) do
-    if Signal.defined?(module) and function_exported?(module, :dataschema, 0) and
-         function_exported?(module, :schema, 0) do
+    if Signal.defined?(module) do
       :ok
     else
       {:error, "must be a module defined with use Jido.Signal"}
@@ -182,46 +178,119 @@ defmodule Jido.Signal.Catalog do
 
   defp build(modules) do
     Enum.reduce_while(modules, {:ok, %__MODULE__{definitions: %{}}}, fn module, {:ok, catalog} ->
-      key = {module.type(), module.dataschema()}
-
-      case Map.fetch(catalog.definitions, key) do
-        {:ok, {existing, _schema}} ->
-          {type, dataschema} = key
-
-          {:halt,
-           error(:duplicate_definition, %{
-             type: type,
-             dataschema: dataschema,
-             definitions: [existing, module]
-           })}
-
-        :error ->
-          definitions = Map.put(catalog.definitions, key, {module, module.schema()})
-          {:cont, {:ok, %{catalog | definitions: definitions}}}
+      with {:ok, definition} <- read_definition(module),
+           {:ok, catalog} <- register(catalog, module, definition) do
+        {:cont, {:ok, catalog}}
+      else
+        {:error, _error} = error -> {:halt, error}
       end
     end)
   end
 
+  defp read_definition(module) do
+    case Zoi.parse(@definition_schema, module.__signal_definition__()) do
+      {:ok, definition} -> {:ok, definition}
+      {:error, reason} -> registration_error(module, reason)
+    end
+  rescue
+    exception -> registration_error(module, {:exception, exception})
+  catch
+    kind, reason -> registration_error(module, {kind, reason})
+  end
+
+  defp registration_error(module, reason),
+    do: error(:invalid_definitions, %{definition: module, reason: reason})
+
+  defp register(catalog, module, definition) do
+    type = definition.type
+    dataschema = Map.get(definition, :dataschema)
+    versions = Map.get(catalog.definitions, type, %{})
+
+    case Map.fetch(versions, dataschema) do
+      {:ok, {existing, _schema}} ->
+        error(:duplicate_definition, %{
+          type: type,
+          dataschema: dataschema,
+          definitions: [existing, module]
+        })
+
+      :error ->
+        versions = Map.put(versions, dataschema, {module, definition.schema})
+        {:ok, %{catalog | definitions: Map.put(catalog.definitions, type, versions)}}
+    end
+  end
+
+  defp decode_wire(binary, opts) when is_binary(binary) do
+    binary |> Serialization.deserialize(opts) |> decode_result()
+  end
+
+  defp decode_wire(map, []) when is_map(map) and not is_struct(map) do
+    map |> Signal.from_map() |> decode_result()
+  rescue
+    exception -> error(:decode_failed, %{reason: {:exception, exception}})
+  catch
+    kind, reason -> error(:decode_failed, %{reason: {kind, reason}})
+  end
+
+  defp decode_wire(map, _opts) when is_map(map) and not is_struct(map),
+    do: error(:invalid_options, %{field: :options})
+
+  defp decode_wire(_wire_value, _opts), do: error(:invalid_input, %{field: :wire_value})
+
+  defp decode_result({:ok, %Signal{} = signal}), do: {:ok, signal}
+
+  defp decode_result({:ok, _batch}),
+    do: error(:decode_failed, %{reason: {:invalid_wire_data, "expected one Signal"}})
+
+  defp decode_result({:error, reason}), do: error(:decode_failed, %{reason: reason})
+
+  defp validate_definition_data(catalog, signal) do
+    with {:ok, {module, schema}} <- lookup(catalog, signal),
+         {:ok, data} <- validate_data(schema, signal, module) do
+      normalize_data(signal, data)
+    end
+  end
+
+  defp normalize_data(%Signal{data: data} = signal, data), do: {:ok, signal}
+
+  defp normalize_data(signal, data) do
+    # The codec owns data presence and Base64 flags. Reuse it after a Zoi
+    # default or transform changes data, without generating a new fact ID.
+    case signal |> Map.put(:data, data) |> Signal.to_map() |> Signal.from_map() do
+      {:ok, signal} -> {:ok, signal}
+      {:error, reason} -> error(:invalid_envelope, %{reason: reason})
+    end
+  end
+
   defp validate_envelope(signal) do
-    with {:ok, signal} <- Zoi.parse(Signal.schema(), signal),
-         {:ok, context} <- Context.normalize(signal.extensions) do
-      {:ok, %{signal | extensions: context}}
+    with {:ok, context} <- Context.normalize(signal.extensions),
+         {:ok, signal} <- Zoi.parse(Signal.schema(), %{signal | extensions: context}) do
+      {:ok, signal}
     else
       {:error, reason} -> error(:invalid_envelope, %{reason: reason})
     end
   end
 
   defp lookup(catalog, signal) do
-    case Map.fetch(catalog.definitions, {signal.type, signal.dataschema}) do
-      {:ok, definition} ->
-        {:ok, definition}
+    case Map.fetch(catalog.definitions, signal.type) do
+      {:ok, versions} when is_map(versions) -> lookup_version(versions, signal)
+      :error -> error(:unknown_type, identity(signal))
+      _invalid -> error(:invalid_input, %{field: :catalog})
+    end
+  end
+
+  defp lookup_version(versions, signal) do
+    case Map.fetch(versions, signal.dataschema) do
+      {:ok, {module, schema} = definition} when is_atom(module) ->
+        if Signal.validate_definition_schema(schema, []) == :ok,
+          do: {:ok, definition},
+          else: error(:invalid_input, %{field: :catalog})
 
       :error ->
-        known_type? =
-          Enum.any?(catalog.definitions, fn {{type, _schema}, _value} -> type == signal.type end)
+        error(:unknown_dataschema, identity(signal))
 
-        code = if known_type?, do: :unknown_dataschema, else: :unknown_type
-        error(code, identity(signal))
+      _invalid ->
+        error(:invalid_input, %{field: :catalog})
     end
   end
 

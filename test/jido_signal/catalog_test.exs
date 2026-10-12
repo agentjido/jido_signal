@@ -39,6 +39,14 @@ defmodule Jido.Signal.CatalogTest do
         })
   end
 
+  defmodule TemperatureMeasuredV2 do
+    use Jido.Signal,
+      type: "example.sensor.temperature",
+      default_source: "/sensors",
+      dataschema: "urn:example:temperature:v2",
+      schema: Zoi.object(%{"kelvin" => Zoi.number()}, unrecognized_keys: :error)
+  end
+
   defmodule StrictAtomKeys do
     use Jido.Signal,
       type: "example.atom.strict",
@@ -61,9 +69,66 @@ defmodule Jido.Signal.CatalogTest do
       schema: Zoi.string()
   end
 
+  defmodule DefaultedData do
+    use Jido.Signal,
+      type: "example.defaulted",
+      schema: Zoi.string() |> Zoi.default("fallback")
+  end
+
+  defmodule NullableData do
+    use Jido.Signal,
+      type: "example.nullable",
+      schema: Zoi.string() |> Zoi.nullable()
+  end
+
+  defmodule NumberData do
+    use Jido.Signal,
+      type: "example.number",
+      schema: Zoi.number() |> Zoi.transform({Jido.Signal.CatalogTest, :float_value, []})
+  end
+
+  defmodule NormalizedData do
+    use Jido.Signal,
+      type: "example.normalized",
+      schema:
+        Zoi.union([Zoi.string(), Zoi.object(%{"text" => Zoi.string()})])
+        |> Zoi.transform({Jido.Signal.CatalogTest, :normalize_text, []})
+  end
+
   defmodule IncompleteDefinition do
     def __signal_definition__, do: %{}
     def type, do: "incomplete.definition"
+  end
+
+  defmodule InvalidMetadata do
+    def __signal_definition__, do: %{type: "", dataschema: "/relative", schema: :invalid}
+    def type, do: ""
+    def dataschema, do: "/relative"
+    def schema, do: :invalid
+  end
+
+  defmodule NonMapMetadata do
+    def __signal_definition__, do: :invalid
+    def type, do: "invalid.metadata"
+    def dataschema, do: nil
+    def schema, do: Zoi.any()
+  end
+
+  defmodule RaisingMetadata do
+    def __signal_definition__, do: raise(ArgumentError, "invalid definition metadata")
+    def type, do: "raising.metadata"
+    def dataschema, do: nil
+    def schema, do: Zoi.any()
+  end
+
+  defmodule ThrowingMetadata do
+    def __signal_definition__, do: throw(:invalid_definition)
+    def type, do: "throwing.metadata"
+  end
+
+  defmodule ExitingMetadata do
+    def __signal_definition__, do: exit(:invalid_definition)
+    def type, do: "exiting.metadata"
   end
 
   defmodule FaultyValidator do
@@ -79,6 +144,64 @@ defmodule Jido.Signal.CatalogTest do
   end
 
   describe "new/1" do
+    test "rejects invalid definition metadata before it builds the index" do
+      for module <- [
+            InvalidMetadata,
+            NonMapMetadata,
+            RaisingMetadata,
+            ThrowingMetadata,
+            ExitingMetadata
+          ] do
+        error = assert_error(Catalog.new([module]), :invalid_definitions)
+        assert error.details.definition == module
+        assert error.details.reason != nil
+      end
+    end
+
+    test "retains a metadata snapshot when a registered module is replaced" do
+      module = unique_module("CatalogSnapshot")
+
+      on_exit(fn ->
+        :code.delete(module)
+        :code.purge(module)
+      end)
+
+      create_module(
+        module,
+        quote do
+          use Jido.Signal,
+            type: "snapshot.event",
+            default_source: "/test",
+            dataschema: "urn:example:snapshot:v1",
+            schema: Zoi.string()
+        end
+      )
+
+      first = Catalog.new!([module])
+      original = module.new!("original", id: "original-id")
+      :code.delete(module)
+      :code.purge(module)
+
+      create_module(
+        module,
+        quote do
+          use Jido.Signal,
+            type: "snapshot.event",
+            default_source: "/test",
+            dataschema: "urn:example:snapshot:v2",
+            schema: Zoi.integer()
+        end
+      )
+
+      second = Catalog.new!([module])
+      replacement = module.new!(2)
+      assert {:ok, ^original} = Catalog.validate(first, original)
+      assert {:ok, ^replacement} = Catalog.validate(second, replacement)
+      assert_error(Catalog.validate(first, replacement), :unknown_dataschema)
+      assert_error(Catalog.validate(second, original), :unknown_dataschema)
+      assert_error(Catalog.validate(first, %{original | data: 2}), :invalid_data)
+    end
+
     test "builds an empty catalog and rejects unknown types" do
       assert {:ok, catalog} = Catalog.new([])
       assert_error(Catalog.validate(catalog, message()), :unknown_type)
@@ -117,6 +240,26 @@ defmodule Jido.Signal.CatalogTest do
   end
 
   describe "validate/2" do
+    test "rejects malformed catalog values without raising", %{catalog: catalog} do
+      for definitions <- [
+            nil,
+            [],
+            %{MessageReceived.type() => nil},
+            %{MessageReceived.type() => %{MessageReceived.dataschema() => :invalid}},
+            %{
+              MessageReceived.type() => %{
+                MessageReceived.dataschema() => {MessageReceived, :invalid}
+              }
+            },
+            %{MessageReceived.type() => %{MessageReceived.dataschema() => {"module", Zoi.any()}}}
+          ] do
+        invalid = %{catalog | definitions: definitions}
+        error = assert_error(Catalog.validate(invalid, message()), :invalid_input)
+        assert error.field == :catalog
+        assert_error(Catalog.decode(invalid, Signal.to_map(message())), :invalid_input)
+      end
+    end
+
     test "keeps identity and context during domain revalidation", %{catalog: catalog} do
       signal = message()
       assert {:ok, ^signal} = Catalog.validate(catalog, signal)
@@ -165,6 +308,34 @@ defmodule Jido.Signal.CatalogTest do
       )
     end
 
+    test "compares URI text exactly and permits a URN schema identity", %{catalog: catalog} do
+      for schema <- [
+            "https://EXAMPLE.com/message/v1",
+            "https://example.com/message/v1/",
+            "https://example.com/message/v1#schema",
+            "https://example.com/message/%76%31",
+            "http://example.com/message/v1"
+          ] do
+        assert_error(
+          Catalog.validate(catalog, %{message() | dataschema: schema}),
+          :unknown_dataschema
+        )
+      end
+
+      catalog = Catalog.new!([TemperatureMeasured, TemperatureMeasuredV2])
+
+      for module <- [TemperatureMeasured, TemperatureMeasuredV2] do
+        data =
+          if module == TemperatureMeasured, do: %{"celsius" => 1}, else: %{"kelvin" => 274.15}
+
+        signal = module.new!(data)
+        assert {:ok, ^signal} = Catalog.validate(catalog, signal)
+      end
+
+      signal = TemperatureMeasuredV2.new!(%{"kelvin" => 274.15})
+      assert_error(Catalog.validate(catalog, %{signal | dataschema: nil}), :invalid_data)
+    end
+
     test "does not treat a type path as a wildcard" do
       catalog = Catalog.new!([TemperatureMeasured])
       signal = Signal.new!("example.sensor.*", %{"celsius" => 1}, source: "/test")
@@ -202,6 +373,7 @@ defmodule Jido.Signal.CatalogTest do
       assert validated.extensions == %{"traceparent" => "valid opaque text", "attempt" => 2}
 
       for context <- [
+            nil,
             %{"invalid" => %{}},
             %{"badName" => "x"},
             %{"attempt" => nil},
@@ -256,7 +428,96 @@ defmodule Jido.Signal.CatalogTest do
     end
   end
 
+  test "catalog failures can use the package public error adapter", %{catalog: catalog} do
+    malformed_time = %{DateTime.utc_now() | year: nil}
+
+    results = [
+      Catalog.new([InvalidMetadata]),
+      Catalog.new([RaisingMetadata]),
+      Catalog.validate(catalog, %{message() | dataschema: "urn:unknown"}),
+      Catalog.validate(catalog, %{message() | data: false}),
+      Catalog.decode(catalog, message() |> Signal.to_map() |> Map.put("time", malformed_time))
+    ]
+
+    for result <- results do
+      assert {:error, error} = result
+      public = Jido.Signal.Error.to_map(error)
+      assert public.type == :invalid_input_error
+      refute public.retryable?
+      assert public.details["code"] == Atom.to_string(error.details.code)
+      assert {:ok, _json} = Jason.encode(public)
+    end
+  end
+
   describe "decode/3" do
+    test "keeps normalized data and its wire representation consistent" do
+      catalog = Catalog.new!([DefaultedData, NormalizedData, NumberData])
+
+      base = %{
+        "specversion" => "1.0",
+        "id" => "original",
+        "source" => "/wire",
+        "time" => "2026-10-12T01:02:03Z",
+        "subject" => "original"
+      }
+
+      cases = [
+        {Map.put(base, "type", DefaultedData.type()), "fallback"},
+        {base
+         |> Map.put("type", NormalizedData.type())
+         |> Map.put("data_base64", Base.encode64("hello")), %{"text" => "hello"}},
+        {base |> Map.put("type", NumberData.type()) |> Map.put("data", 1), 1.0}
+      ]
+
+      for {wire, expected_data} <- cases do
+        expected = wire |> Map.delete("data_base64") |> Map.put("data", expected_data)
+        assert {:ok, signal} = Catalog.decode(catalog, Jason.encode!(wire))
+        assert signal.data === expected_data
+        assert signal.data_present?
+        refute signal.data_base64?
+        assert Signal.to_map(signal) == expected
+        assert {:ok, json} = Signal.serialize(signal)
+        assert Jason.decode!(json) == expected
+        assert {:ok, ^signal} = Signal.deserialize(json)
+        assert {:ok, ^signal} = Catalog.validate(catalog, signal)
+      end
+    end
+
+    test "preserves the difference between absent data and explicit null data" do
+      catalog = Catalog.new!([NullableData])
+
+      base = %{
+        "specversion" => "1.0",
+        "id" => "nullable",
+        "source" => "/test",
+        "type" => NullableData.type()
+      }
+
+      for {wire, present?} <- [{base, false}, {Map.put(base, "data", nil), true}] do
+        assert {:ok, signal} = Catalog.decode(catalog, Jason.encode!(wire))
+        assert signal.data == nil
+        assert signal.data_present? == present?
+        assert Signal.to_map(signal) == wire
+        assert {:ok, ^signal} = Catalog.validate(catalog, signal)
+      end
+    end
+
+    test "treats an absent and a null schema as the same nil identity", %{catalog: catalog} do
+      signal = TemperatureMeasured.new!(%{"celsius" => 10})
+      wire = Signal.to_map(signal)
+
+      for map <- [wire, Map.put(wire, "dataschema", nil)] do
+        assert {:ok, ^signal} = Catalog.decode(catalog, map)
+        assert {:ok, ^signal} = Catalog.decode(catalog, Jason.encode!(map))
+      end
+    end
+
+    test "contains codec faults from invalid map values", %{catalog: catalog} do
+      malformed_time = %{DateTime.utc_now() | year: nil}
+      wire = message() |> Signal.to_map() |> Map.put("time", malformed_time)
+      assert_error(Catalog.decode(catalog, wire), :decode_failed)
+    end
+
     test "round trips JSON and preserves all supplied metadata", %{catalog: catalog} do
       signal = message()
       assert {:ok, json} = Signal.serialize(signal)
@@ -405,6 +666,10 @@ defmodule Jido.Signal.CatalogTest do
   def faulty_validator(:raise, _opts), do: raise(ArgumentError, "schema failed")
   def faulty_validator(:throw, _opts), do: throw(:schema_failed)
   def faulty_validator(:exit, _opts), do: exit(:schema_failed)
+
+  def normalize_text(text, _opts) when is_binary(text), do: %{"text" => text}
+  def normalize_text(data, _opts), do: data
+  def float_value(value, _opts), do: value / 1
 
   defp message do
     MessageReceived.new!(%{"text" => "hello", "room" => "one"},
