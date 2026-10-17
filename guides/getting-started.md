@@ -10,7 +10,7 @@ Add to your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:jido_signal, "~> 3.0.0-beta.4"}
+    {:jido_signal, "~> 3.0.0-beta.5"}
   ]
 end
 ```
