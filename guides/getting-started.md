@@ -1,11 +1,13 @@
 # Getting Started
 <!-- covers: jido_signal.guides.getting_started -->
 
-Quick setup and first signal dispatch for the Jido Signal library.
+This guide introduces three steps: define an event, create a Signal, and
+deliver it. Then use a Bus when publishers must not name individual receivers.
+Run the examples in order in an IEx session for your application.
 
-## Installation
+## Install The Package
 
-Add to your `mix.exs`:
+Add the dependency to `mix.exs`:
 
 ```elixir
 def deps do
@@ -15,148 +17,111 @@ def deps do
 end
 ```
 
-## Application Setup
+Run `mix deps.get`, then start `iex -S mix`. The package starts its internal
+supervisor automatically. Direct dispatch needs no Bus setup.
 
-Add the Signal Bus to your application's supervision tree:
+## Define An Event
+
+A typed Signal module declares the event type, its default source, and a Zoi
+schema for its data:
 
 ```elixir
-# In your application.ex
-defmodule MyApp.Application do
-  use Application
-
-  def start(_type, _args) do
-    children = [
-      # Jido.Signal's internal supervisor starts automatically
-      # Add your Signal Bus(es) here
-      {Jido.Signal.Bus, name: :my_bus}
-    ]
-
-    opts = [strategy: :one_for_one, name: MyApp.Supervisor]
-    Supervisor.start_link(children, opts)
-  end
+defmodule GettingStarted.UserCreated do
+  use Jido.Signal,
+    type: "user.created",
+    default_source: "/accounts",
+    schema: Zoi.object(%{"user_id" => Zoi.string()})
 end
 ```
 
-For applications with multiple Buses or different replay bounds:
+The type says what happened. The source identifies where it happened. The data
+contains the event facts. String keys let this data travel as JSON.
+
+## Create A Signal
+
+```elixir
+{:ok, signal} = GettingStarted.UserCreated.new(%{"user_id" => "user-123"})
+```
+
+The constructor validates the data and adds a generated ID. Invalid data
+returns an error before delivery:
+
+```elixir
+{:error, _errors} = GettingStarted.UserCreated.new(%{"user_id" => 123})
+```
+
+Creating a Signal does not send it. Use `Jido.Signal.new/1` or `new/3` when you
+need a generic envelope without a typed domain schema. See
+[Signals and Dispatch](signals-and-dispatch.md#signal-structure).
+
+## Deliver To A Process
+
+The PID adapter can send to the current process, so this example needs no
+separate receiver:
+
+```elixir
+:ok =
+  Jido.Signal.Dispatch.dispatch(
+    signal,
+    {:pid, target: self(), delivery_mode: :async}
+  )
+
+receive do
+  {:signal, ^signal} -> :received
+end
+```
+
+`:ok` confirms the send operation. The `receive` confirms that the message
+arrived. A different receiver must run its own handler.
+
+Use `delivery_mode: :sync` when a local GenServer must reply before Dispatch
+returns. It must handle `handle_call({:signal, signal}, from, state)`. See
+[PID Adapter](signals-and-dispatch.md#pid-adapter).
+
+## Publish Through A Bus
+
+A Bus lets receivers subscribe by type. Start this example Bus, subscribe the
+current process, then publish the Signal:
+
+```elixir
+{:ok, bus} = Jido.Signal.Bus.start_link(name: :getting_started_bus)
+{:ok, subscription_id} = Jido.Signal.Bus.subscribe(bus, "user.*")
+{:ok, [recorded]} = Jido.Signal.Bus.publish(bus, [signal])
+
+receive do
+  {:signal, ^signal} -> :received
+end
+```
+
+`"user.*"` matches one segment after `"user"`, including `"user.created"`.
+`recorded` holds the Signal and its Bus cursor. The Bus stores the accepted
+batch before sending messages. A normal subscription does not acknowledge
+processing or retry delivery.
+
+Clean up the example:
+
+```elixir
+:ok = Jido.Signal.Bus.unsubscribe(bus, subscription_id)
+GenServer.stop(bus)
+```
+
+In an application, put the Bus under your supervisor instead of starting it
+from a caller:
 
 ```elixir
 children = [
-  {Jido.Signal.Bus, name: :events_bus},
-  {Jido.Signal.Bus,
-    name: :audit_bus,
-    max_log_size: 20_000
-  }
+  {Jido.Signal.Bus, name: :events_bus}
 ]
+
+Supervisor.start_link(children, strategy: :one_for_one)
 ```
 
-## Create a Signal
-
-Basic signal creation (preferred):
-
-```elixir
-# Preferred: positional constructor (type, data, attrs)
-{:ok, signal} = Jido.Signal.new("user.created", %{user_id: "123", email: "user@example.com"},
-  source: "/auth/registration"
-)
-```
-
-Also available:
-
-```elixir
-# Map/keyword constructor (backwards compatible)
-{:ok, signal} = Jido.Signal.new(%{
-  type: "user.created",
-  source: "/auth/registration",
-  data: %{user_id: "123", email: "user@example.com"}
-})
-```
-
-## Dispatch to a Process
-
-Synchronous dispatch to PID:
-
-```elixir
-config = {:pid, [target: pid, delivery_mode: :sync]}
-:ok = Jido.Signal.Dispatch.dispatch(signal, config)
-```
-
-Asynchronous dispatch:
-
-```elixir
-config = {:pid, [target: pid, delivery_mode: :async]}
-:ok = Jido.Signal.Dispatch.dispatch(signal, config)
-# Process receives: {:signal, signal}
-```
-
-Named process dispatch uses the same local-process adapter as PID dispatch:
-
-```elixir
-config = {:pid, [target: {:name, :my_process}, delivery_mode: :async]}
-:ok = Jido.Signal.Dispatch.dispatch(signal, config)
-```
-
-The v2 `:named` adapter name is still accepted as a compatibility alias. Use
-`:pid` for new code.
-
-Multiple destinations:
-
-```elixir
-configs = [
-  {:pid, [target: pid1, delivery_mode: :async]},
-  {:logger, [level: :info]}
-]
-:ok = Jido.Signal.Dispatch.dispatch(signal, configs)
-```
-
-## Basic Error Handling
-
-Dispatch returns raw error atoms by default:
-
-```elixir
-case Jido.Signal.Dispatch.dispatch(signal, config) do
-  :ok -> 
-    :success
-  {:error, reason} ->
-    Logger.error("Dispatch failed: #{inspect(reason)}")
-    {:error, :dispatch_failed}
-end
-```
-
-Signal creation errors:
-
-```elixir
-case Jido.Signal.new(%{type: "", source: "/test"}) do
-  {:ok, signal} -> 
-    signal
-  {:error, reason} ->
-    Logger.error("Invalid signal: #{reason}")
-    {:error, :invalid_signal}
-end
-```
-
-Process not alive:
-
-```elixir
-config = {:pid, [target: dead_pid, delivery_mode: :async]}
-{:error, :process_not_alive} = Jido.Signal.Dispatch.dispatch(signal, config)
-```
-
-## Scoped Buses
-
-Use `jido:` to isolate a Bus name for an application domain or test:
-
-```elixir
-{:ok, _} = Jido.Signal.Bus.start_link(name: :my_bus, jido: MyApp.Jido)
-{:ok, bus} = Jido.Signal.Bus.whereis(:my_bus, jido: MyApp.Jido)
-```
-
-The package Registry uses `{MyApp.Jido, "my_bus"}` as the key. No separate
-instance supervisor or Registry is necessary.
-
-See [Event Bus](event-bus.md#scoped-buses) for complete examples.
+The default Store is bounded and in memory. Read [Event Bus](event-bus.md)
+for replay, durable subscriptions, scoped names, and restart limits.
 
 ## Next Steps
 
-- [Signals and Dispatch](signals-and-dispatch.md) - Signal structure, dispatch adapters, and custom signal types
-- [Event Bus](event-bus.md) - Pub/sub, durable subscriptions, replay, Store, and scoped Buses
-- [Serialization](serialization.md) - Canonical maps and binary formats for application-owned storage
+- [Core Concepts](concepts.md) explains how the public parts fit together.
+- [Signals and Dispatch](signals-and-dispatch.md) covers envelopes, typed definitions, and adapters.
+- [Event Bus](event-bus.md) covers subscriptions and recovery rules.
+- [Serialization](serialization.md) covers canonical maps, JSON, and Erlang terms.

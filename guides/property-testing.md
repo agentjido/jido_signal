@@ -1,11 +1,9 @@
 # Property and Fuzz Tests
 
 The [public contract register](public-contracts.md) gives stable contract IDs.
-The test support follows the design in `jido_action` commit
-`5e348a296d6059998cc1edacd6e266d90c914d28`. StreamData generates inputs and
-shrinks failures. The package already has this dependency.
-
-Run each suite from this package:
+StreamData generates inputs and shrinks failures. Test support and saved
+regression inputs are included in the source checkout, not the Hex package.
+Run each suite from the package root in a source checkout:
 
 ```sh
 mix test.property --warnings-as-errors

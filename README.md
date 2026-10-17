@@ -533,6 +533,7 @@ you convert stored Signals or Bus subscriptions.
 **Start here**
 
 - **[Getting Started](guides/getting-started.md)** - Install, configure, and send a first Signal
+- **[Core Concepts](guides/concepts.md)** - Understand Signals, routing, delivery, and ownership
 - **[Signals and Dispatch](guides/signals-and-dispatch.md)** - Create typed Signals and deliver them
 
 **Signal format**

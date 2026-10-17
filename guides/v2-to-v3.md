@@ -54,17 +54,19 @@ defmodule MyApp.UserCreated do
   use Jido.Signal,
     type: "user.created",
     default_source: "/users",
-    schema: Zoi.object(%{
-      user_id: Zoi.string(),
-      email: Zoi.string()
-    })
+    schema:
+      Zoi.object(%{
+        "user_id" => Zoi.string(),
+        "email" => Zoi.string()
+      })
 end
 ```
 
 Remove NimbleOptions schema declarations and error conversion from your Signal
-modules. Typed Signal `validate_data/1` and `new/2` calls return the Zoi parse
-result directly. `new!/2` raises the Zoi parse exception when data validation
-fails.
+modules. `validate_data/1` returns the Zoi parse result. `new/2` returns
+`{:ok, signal}` on success, a Zoi error list for invalid domain data, or an
+error string for invalid envelope attributes. `new!/2` raises a Zoi parse
+exception for data errors and `ArgumentError` for envelope errors.
 
 Custom Signal schemas can accept any data value. They do not have an
 Action-style map requirement.
@@ -86,8 +88,9 @@ validation when you decode a Signal.
 
 ## Make Envelope Semantics Explicit
 
-Jido generates a UUID7 only when it creates a new Signal ID. It accepts any
-non-empty external ID when it reads a Signal.
+Jido generates a UUID7 only when it creates a new Signal ID. It accepts
+external IDs that meet the non-empty UTF-8 and CloudEvents character rules;
+they need not be UUID7.
 
 `Jido.Signal.ID` now contains only `generate/0`, `generate!/0`,
 `extract_timestamp/1`, `compare/2`, and `valid?/1`. Remove calls to the old
@@ -172,7 +175,7 @@ defmodule MyApp.PaymentCaptured do
   use Jido.Signal,
     type: "payment.captured",
     default_source: "/billing",
-    schema: Zoi.object(%{payment_id: Zoi.string()})
+    schema: Zoi.object(%{"payment_id" => Zoi.string()})
 end
 ```
 
@@ -224,8 +227,8 @@ Dispatch keeps target tuples and ordered synchronous delivery:
 
 These APIs and options are removed:
 
-- `dispatch_async/2`;
-- `dispatch_batch/2`;
+- `dispatch_async/2` and `dispatch_async/3`;
+- `dispatch_batch/2` and `dispatch_batch/3`;
 - `batch_size`;
 - Dispatch concurrency limits;
 - retry loops;
@@ -351,9 +354,7 @@ Replace `persistent?` with a stable durable string ID:
 
 ```elixir
 {:ok, "payments-agent"} =
-  Jido.Signal.Bus.subscribe(:events, "payment.*",
-    durable: "payments-agent"
-  )
+  Jido.Signal.Bus.subscribe(:events, "payment.*", durable: "payments-agent")
 
 {:ok, [_published]} = Jido.Signal.Bus.publish(:events, [payment_signal])
 

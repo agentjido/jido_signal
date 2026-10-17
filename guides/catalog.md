@@ -5,6 +5,13 @@ Use `Jido.Signal.Catalog` to decode a Signal and validate its domain data in
 one call. Supply the definition modules explicitly. A catalog is an immutable
 value. It needs no process or global registration.
 
+## When To Use A Catalog
+
+Use a Catalog at an input boundary when an incoming event must match one of
+your known domain definitions. Ordinary deserialization validates the envelope;
+a Catalog also selects a definition and validates its data schema. It does not
+route or deliver the result.
+
 ## Define and Register Signals
 
 Each domain owns its definitions. These message and sensor examples use the
@@ -143,8 +150,8 @@ Use `error.details.code` for classification:
 | `:invalid_data` | The selected schema rejected data. | `type`, `dataschema`, `definition`, `reason`: Zoi errors |
 | `:validation_failed` | A trusted schema callback raised, threw, or exited. | `type`, `dataschema`, `definition`, `reason`: `{kind, value}` |
 
-`Catalog.new!/1` raises the same error for invalid registration. Use the
-package error adapter when you need a public transport error map:
+`Catalog.new!/1` raises the same error for invalid registration. Use
+`Jido.Signal.Error.to_map/1` when you need a sanitized public error map:
 
 ```elixir
 {:error, error} = Catalog.validate(catalog, invalid_signal)

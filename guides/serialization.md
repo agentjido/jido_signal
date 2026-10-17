@@ -2,7 +2,12 @@
 <!-- covers: jido_signal.guides.serialization -->
 
 Jido Signal serializes Signals, not general Elixir values. It supports JSON and
-Erlang Term Format.
+Erlang Term Format. Use JSON at a language-neutral boundary. Use Erlang terms
+only between trusted Erlang or Elixir systems.
+
+Envelope decoding and domain validation are separate steps. Use a
+[Typed Signal Catalog](catalog.md) when decoded data must satisfy one of your
+registered event schemas.
 
 ## Canonical Map
 
@@ -40,9 +45,7 @@ JSON is the default format:
 
 ```elixir
 signal =
-  Jido.Signal.new!("user.created", %{"user_id" => "123"},
-    source: "/accounts"
-  )
+  Jido.Signal.new!("user.created", %{"user_id" => "123"}, source: "/accounts")
 
 {:ok, json} = Jido.Signal.serialize(signal)
 {:ok, decoded} = Jido.Signal.deserialize(json)
@@ -67,7 +70,9 @@ opts = [format: :erlang_term]
 ```
 
 Jido writes the canonical map with `:erlang.term_to_binary/1`. It reads the map
-with `:erlang.binary_to_term/2` and the `:safe` option.
+with `:erlang.binary_to_term/2` and the `:safe` option. Compressed Erlang term
+input is rejected. The safe option does not make arbitrary external producers
+trusted.
 
 ## Signal Data
 
@@ -131,7 +136,11 @@ Or configure the application limit:
 config :jido_signal, max_payload_bytes: 1_000_000
 ```
 
-The limit applies after encoding and before decoding.
+The limit applies after encoding and before decoding. Erlang Term Format also
+checks the decoded term's encoded size. The limit is a byte-size check, not a
+bound on allocation during encoding or decoding. Batch input uses one limit for
+the complete binary. Invalid items fail the whole batch; no partial result is
+returned.
 
 ## Errors
 

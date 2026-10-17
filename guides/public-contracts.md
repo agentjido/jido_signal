@@ -1,6 +1,7 @@
 # Public Contract Test Register
 
-This register states the tested promises of Jido Signal V3. Each ID is stable.
+This register states the tested promises of Jido Signal V3. It records test
+evidence; use the API guides for call syntax and options. Each ID is stable.
 The generated cases and fixed tests both provide evidence. A passed contract ID
 is evidence for its stated cases, not proof of the complete API or all process
 schedules. Fixed-test cases in the last column are not generated evidence.
@@ -26,7 +27,7 @@ schedules. Fixed-test cases in the last column are not generated evidence.
 | STORE-002 | Callback faults and malformed data use defined error boundaries. The application owns external resources. | Each callback fault class, improper/non-map records, malformed reads, external Agent survival after Bus restart/stop. Fixed faults and snapshots. | Public startup failures and malformed startup callback values. |
 | ERROR-001 | Error maps preserve type/retry policy, sanitize bounded details, and omit top-level stacktraces. | Six public constructors, grouped/improper errors, retry reasons, compound secret keys, long custom module names, Signal/URI/runtime/calendar values, depth/width/binary limits. Type/retry table and recursive output checks. | Unknown/grouped classes, normalization, Logger integration, more reason cases. |
 | TRACE-001 | Trace carriers validate IDs/flags/state. Children retain the trace ID. | Root/child, zero/uppercase/invalid IDs, flags, duplicate/oversized state, put/get/delete/ensure, wire preservation. Independent carrier text. | Complete state grammar and option errors. |
-| ID-001 | IDs are UUID7 values with readable timestamps and complete-value comparison. | Generated IDs, byte fixtures, version/variant/shape rejection, case forms, timestamp extremes, equality and tie order. Independent byte assembly/comparison. | Further invalid inputs and generation shape checks. |
+| ID-001 | Generated IDs are UUID7 values with readable timestamps and complete-value comparison. | Generated IDs, byte fixtures, version/variant/shape rejection, case forms, timestamp extremes, equality and tie order. Independent byte assembly/comparison. | Further invalid inputs and generation shape checks. |
 | OBS-001 | Dispatch events pair each start with a terminal event. Bus events carry scoped identity and follow transitions. | Success/error/fault events; Bus publish/attach/deliver/ack/detach/delete/death/live-owner conflict; repeated detach. Ordered owned events and multiplicity checks. | Automatic dead-target replacement and Store delivery-error events. |
 
 Case groups: envelope_wire, wire_mutations, routing_model, dispatch_sequences,

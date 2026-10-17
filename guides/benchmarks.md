@@ -125,8 +125,9 @@ are unavailable and appear as `null`.
 Reports record the commit, source state, benchmark hash, lockfile hash,
 configuration hash, runtime, machine, scheduler settings, samples, and
 measurement limits.
-The scripts use public Signal APIs. Term-size probes use BEAM inspection
-functions and are diagnostic measurements.
+Most cases use public Signal APIs. Selector microbenchmarks also use the
+internal selector compiler and Router index; those are not application APIs.
+Term-size probes use BEAM inspection functions and are diagnostic measurements.
 
 ## Compare runs
 

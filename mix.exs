@@ -84,6 +84,7 @@ defmodule Jido.Signal.MixProject do
         {"CHANGELOG.md", title: "Changelog"},
         {"LICENSE", title: "Apache 2.0 License"},
         {"guides/getting-started.md", title: "Getting Started"},
+        {"guides/concepts.md", title: "Core Concepts"},
         {"guides/signals-and-dispatch.md", title: "Signals and Dispatch"},
         {"guides/signal-extensions.md", title: "CloudEvents Context Attributes"},
         {"guides/serialization.md", title: "Serialization"},
@@ -105,6 +106,7 @@ defmodule Jido.Signal.MixProject do
         ],
         "Start Here": [
           "guides/getting-started.md",
+          "guides/concepts.md",
           "guides/signals-and-dispatch.md"
         ],
         "Signal Format": [

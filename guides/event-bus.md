@@ -5,6 +5,35 @@ The Event Bus provides ordered local publish and subscribe delivery. It uses
 `Jido.Signal.Router` for type matching and a small Store for bounded replay and
 durable subscription cursors.
 
+A publisher knows the event type. Subscribers choose the types they need.
+Use a Bus when local receivers must subscribe without each publisher knowing
+their process IDs. Use [Dispatch](signals-and-dispatch.md#dispatch-adapters)
+when the caller already knows the destination.
+
+The sections below start with normal message delivery, then add selection,
+replay, and durable acknowledgements.
+
+## Why Bus over Phoenix PubSub?
+
+Use Phoenix PubSub when you need topic broadcasts across processes or nodes.
+Use the Signal Bus when local consumers need explicit delivery and recovery
+rules: validated Signals, ordered delivery, bounded replay, and durable
+subscriptions with cursor acknowledgements.
+
+The Bus stores an accepted batch before sending it. A durable subscription
+keeps one record in flight until its target acknowledges the cursor. If that
+target exits first, a replacement can attach with the same durable ID and
+receive the unacknowledged record again. This provides at-least-once delivery;
+handlers must tolerate duplicates. Ordinary subscriptions have no acknowledgement
+or redelivery guarantee. The default memory Store loses its data when the Bus
+stops. Use a custom Store for recovery across Bus or VM restarts.
+
+Jido Signal also supports Phoenix PubSub through its optional `:pubsub`
+Dispatch adapter. That adapter uses `Phoenix.PubSub.broadcast/3` under the
+hood. The Bus itself sends directly to local processes; it does not run on
+Phoenix PubSub. Direct PubSub dispatch does not add the Bus's replay or durable
+acknowledgement rules. See [PubSub Adapter](signals-and-dispatch.md#pubsub-adapter).
+
 ## Start a Bus
 
 Start the Bus under your application supervisor:
@@ -120,8 +149,7 @@ or message contents. Those conditions belong in the consumer.
 - An invalid selector returns `{:error, {:invalid_selector, message}}` and
   adds no subscription. This includes `nil`, an empty list, repeated selector
   options, duplicate field keys, unsupported fields, functions, MFAs, and
-  invalid values. Omit `:selector`
-  for the existing subscription that selects by type path only.
+  invalid values. Omit `:selector` to select by type path only.
 
 The Bus validates and compiles the selector once when it adds a subscription.
 Router type indexing finds the candidate routes. A package-created predicate
@@ -133,8 +161,7 @@ callbacks. The default subscription keeps its existing Router path.
 
 Selected observations keep Router precedence and publication order. Unsubscribe,
 deletion, and target exit remove the compiled predicate with its route. Selection
-is trusted subscription configuration; it is not authorization. A Bus-published
-command remains an observation.
+is trusted subscription configuration; it is not authorization. Publication does not authorize or execute a command.
 
 ### Durable and Replay Limits
 
@@ -149,8 +176,9 @@ version, cursor advancement, replay, reconnect, and restart rules.
 
 ## Durable Subscriptions
 
-A durable subscription prevents an agent restart from losing an accepted
-Signal. Give it a stable string ID:
+A durable subscription retains an accepted Signal for a replacement consumer
+while its Store retains the record. The default memory Store requires the Bus
+to stay alive. Give the subscription a stable string ID:
 
 ```elixir
 {:ok, "billing-agent"} =
@@ -168,7 +196,8 @@ end
 ```
 
 The Bus stores the record before it sends this message. It sends the next
-matching record only after the target acknowledges the current cursor.
+matching record only after the active target acknowledges the current cursor.
+Only that target process can acknowledge the record.
 
 Delivery is ordered and at least once. If the target exits before an
 acknowledgement, attach the replacement process with the same ID and path:
@@ -216,7 +245,8 @@ Read retained records by cursor:
 ```
 
 The `:after` cursor is exclusive. The default is `0`. The default `:limit` is
-`:infinity`.
+`:infinity`. The Store filters by type before applying the limit. Replay returns
+only retained records; it does not recover records already removed from the log.
 
 Each `Jido.Signal.Bus.RecordedSignal` has `id`, `cursor`, `type`, `created_at`,
 and `signal` fields. Use the cursor for replay and durable acknowledgement.

@@ -4,9 +4,12 @@
 CloudEvents extension context attributes are optional transport metadata. A
 Signal does not need an extension attribute to conform to CloudEvents 1.0.
 
-Version 3 uses the context API only. Replace `put_extension/3`,
-`get_extension/2`, `delete_extension/2`, and `list_extensions/1` with
-`put_context/3`, `get_context/2`, `delete_context/2`, and `list_context/1`.
+Domain data describes what happened. Context attributes carry small values
+used to transport or process the event, such as a trace identifier. They are
+flat CloudEvents fields on the wire, separate from `data`.
+
+Use `put_context/3`, `get_context/2`, `delete_context/2`, and `list_context/1`.
+For the removed v2 extension API, see [Migrate from v2 to v3](v2-to-v3.md).
 
 Use a custom Signal module and a Zoi schema for domain data. Use context
 attributes only when routing or processing infrastructure needs small metadata
@@ -21,15 +24,15 @@ defmodule MyApp.UserCreated do
     default_source: "/accounts",
     schema:
       Zoi.object(%{
-        user_id: Zoi.string(),
-        email: Zoi.string()
+        "user_id" => Zoi.string(),
+        "email" => Zoi.string()
       })
 end
 
 {:ok, signal} =
   MyApp.UserCreated.new(%{
-    user_id: "user-123",
-    email: "user@example.com"
+    "user_id" => "user-123",
+    "email" => "user@example.com"
   })
 ```
 
@@ -45,6 +48,7 @@ and check the schema.
 {:ok, signal} = Jido.Signal.put_context(signal, "sampled", true)
 
 "tenant-123" = Jido.Signal.get_context(signal, "tenantid")
+
 ["attempt", "sampled", "tenantid"] =
   signal |> Jido.Signal.list_context() |> Enum.sort()
 
@@ -57,10 +61,10 @@ entry to the top level:
 ```elixir
 wire = Jido.Signal.to_map(signal)
 wire["tenantid"]
-#=> "tenant-123"
+# => "tenant-123"
 
 Map.has_key?(wire, "extensions")
-#=> false
+# => false
 ```
 
 `Jido.Signal.from_map/1` moves unknown valid top-level context attributes back
@@ -97,7 +101,7 @@ trace = Jido.Signal.Trace.new(trace_flags: "01")
 {:ok, traced_signal} = Jido.Signal.Trace.put(signal, trace)
 
 Jido.Signal.to_map(traced_signal)["traceparent"]
-#=> "00-...-...-01"
+# => "00-...-...-01"
 ```
 
 Create a child value when an outgoing Signal must continue the same trace:

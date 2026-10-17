@@ -1,8 +1,10 @@
 # Advanced Usage
 <!-- covers: jido_signal.guides.advanced_usage -->
 
+Use this guide for custom adapters, error handling, tests, and application-owned
+execution policy. Examples use these aliases:
+
 ```elixir
-# Common aliases used in examples
 alias Jido.Signal
 alias Jido.Signal.Bus
 alias Jido.Signal.Dispatch
@@ -10,7 +12,12 @@ alias Jido.Signal.Dispatch
 
 ## Custom Adapters
 
-Implement the `Jido.Signal.Dispatch.Adapter` behaviour to create custom signal delivery mechanisms:
+A custom adapter provides `options_schema/0` and `deliver/2`. Dispatch validates
+options before delivery. Return `:ok` or `{:error, reason}` from `deliver/2`.
+A raised, thrown, or exited callback fault propagates to the caller after
+exception telemetry is emitted.
+
+This complete adapter sends a Signal in an application-specific message:
 
 ```elixir
 defmodule MyApp.CustomAdapter do
@@ -19,307 +26,209 @@ defmodule MyApp.CustomAdapter do
   @impl true
   def options_schema do
     Zoi.keyword(
-      [
-        target: Zoi.string() |> Zoi.required(),
-        format: Zoi.atom() |> Zoi.required()
-      ],
+      [target: Zoi.pid() |> Zoi.required()],
       unrecognized_keys: :error
     )
   end
 
   @impl true
   def deliver(signal, opts) do
-    case send_to_target(signal, opts[:target], opts[:format]) do
-      :ok -> :ok
-      error -> {:error, error}
-    end
+    send(Keyword.fetch!(opts, :target), {:app_event, signal})
+    :ok
   end
+end
+
+signal = Signal.new!("user.created", %{"user_id" => "123"}, source: "/users")
+:ok = Dispatch.dispatch(signal, {MyApp.CustomAdapter, target: self()})
+
+receive do
+  {:app_event, ^signal} -> :ok
 end
 ```
 
-Register and use:
+No registration step is required. Supply the adapter module in the target tuple.
+The adapter owns its transport-specific success rules. The example confirms a
+send operation; it does not confirm consumer processing.
+
+## Error Handling
+
+A single target returns `:ok` or `{:error, reason}`. A target list collects
+returned errors in target order. Adapter faults that raise, throw, or exit stop
+the call instead of becoming list entries.
 
 ```elixir
-# Direct usage
-config = {MyApp.CustomAdapter, [target: "tcp://localhost:9092", format: :protobuf]}
-Jido.Signal.Dispatch.dispatch(signal, config)
-
-# Multiple destinations
 configs = [
-  {:logger, [level: :info]},
-  {MyApp.CustomAdapter, [target: "tcp://localhost:9092", format: :protobuf]}
+  {:logger, level: :info},
+  {MyApp.CustomAdapter, target: self()}
 ]
-Jido.Signal.Dispatch.dispatch(signal, configs)
-```
-
-## Error Handling Strategies
-
-### Normalization
-
-Dispatch errors can normalize through `Jido.Signal.Error` when you opt in:
-
-```elixir
-# config/config.exs
-config :jido_signal,
-  default_log_level: :info
-
-# Compatibility transition: normalized dispatch errors remain opt-in.
-config :jido_signal,
-  normalize_dispatch_errors: true
-```
-
-Structured callers can serialize the public contract through `Error.to_map/1`:
-
-```elixir
-{:error, error} = Dispatch.dispatch(signal, config)
-
-%{
-  type: :dispatch_error,
-  message: "Signal dispatch failed",
-  details: %{
-    "adapter" => "http",
-    "reason" => "timeout",
-    "target" => %{
-      "adapter" => "http",
-      "target" => "https://api.example.com",
-      "target_kind" => "url"
-    }
-  },
-  retryable?: true
-} = Jido.Signal.Error.to_map(error)
-```
-
-### Multiple Target Error Handling
-
-```elixir
-configs = List.duplicate({:http, [url: "http://unreachable"]}, 100)
 
 case Dispatch.dispatch(signal, configs) do
   :ok -> :all_delivered
-  {:error, errors} ->
-    failed_count = length(errors)
-    success_count = length(configs) - failed_count
-    Logger.warning("#{failed_count}/#{length(configs)} dispatches failed")
+  {:error, errors} -> {:delivery_failures, errors}
 end
 ```
 
-### Timeout Handling
+Enable structured errors in application configuration:
 
 ```elixir
-# The caller owns the asynchronous Task and timeout.
+config :jido_signal, normalize_dispatch_errors: true
+```
+
+Delivery errors use `Jido.Signal.Error.DispatchError`. Configuration errors use
+`Jido.Signal.Error.InvalidInputError`. Use `Jido.Signal.Error.to_map/1` for the
+public error map, which includes sanitized details and a `retryable?` value:
+
+```elixir
+case Dispatch.dispatch(signal, config) do
+  :ok -> :delivered
+  {:error, error} -> {:delivery_error, Jido.Signal.Error.to_map(error)}
+end
+```
+
+This example assumes one target and structured errors enabled. For a target
+list, convert each returned error separately. `retryable?` is a classification;
+Dispatch does not schedule a retry.
+
+## Caller-Owned Tasks and Timeouts
+
+The application owns asynchronous execution and its failure policy. For example,
+a Task can run Dispatch while the caller sets a wait limit:
+
+```elixir
 task = Task.async(fn -> Dispatch.dispatch(signal, config) end)
 
-case Task.yield(task, 5000) do
+case Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill) do
   {:ok, :ok} -> :success
   {:ok, {:error, reason}} -> {:dispatch_failed, reason}
-  nil -> {:timeout, Task.shutdown(task)}
+  {:exit, reason} -> {:task_failed, reason}
+  nil -> :timeout
 end
 ```
 
-### Durable Subscriptions
+`Task.async/1` links the Task to its caller. A callback fault can terminate that
+caller. Use an application-owned Task supervisor and
+`Task.Supervisor.async_nolink/2` when the caller must handle Task failures
+without a link. Stopping a Task does not undo a delivery that already occurred.
 
-Durable subscriptions provide:
+For concurrent delivery, inspect each result from `Task.async_stream/3`.
+Do not discard the stream results if delivery failures matter. Retry,
+concurrency limits, circuit breakers, and workload isolation belong to the
+application.
 
-- **Stable identity**: A replacement process attaches with the same string ID.
-- **One record in flight**: The next record waits for a cursor acknowledgement.
-- **At-least-once delivery**: An unacknowledged record is sent again.
+## Durable Consumers
 
-```elixir
-{:ok, "critical-agent"} =
-  Bus.subscribe(:my_bus, "critical.*", durable: "critical-agent")
+Use a durable Bus subscription when a replacement consumer must receive an
+unacknowledged record. Process the record before acknowledging its cursor.
+Handlers must tolerate duplicate delivery. The default memory Store survives
+consumer replacement while the Bus stays alive; it does not survive a Bus or
+VM restart.
 
-{:ok, [_published]} = Bus.publish(:my_bus, [signal])
+See [Durable Subscriptions](event-bus.md#durable-subscriptions) and
+[Store Boundary](event-bus.md#store-boundary) for setup and recovery rules.
 
-receive do
-  {:signal, "critical-agent", recorded} ->
-    :ok = handle_signal(recorded.signal)
-    :ok = Bus.ack(:my_bus, "critical-agent", recorded.cursor)
-end
-```
+## Tests
 
-See the [Event Bus guide](event-bus.md) for detach, reattach, and Store rules.
+### Supervise Test Buses
 
-Direct Dispatch does not own circuit breakers. Apply this policy in the calling
-application. The Bus also does not run retries or circuit breakers.
-
-## Testing Approaches
-
-### Scoped Buses for Tests
-
-Use a module as the `jido:` scope to prevent test interference:
+Use `start_supervised!/1` so ExUnit stops the Bus after the test. A scope is
+Registry key data; it needs no separate process. Use different names or scopes
+for Buses that can run at the same time.
 
 ```elixir
 defmodule MyApp.SignalTest do
   use ExUnit.Case, async: true
 
+  alias Jido.Signal
   alias Jido.Signal.Bus
 
-  setup do
-    {:ok, scope: __MODULE__.SignalScope}
-  end
+  test "isolated bus delivery" do
+    bus = start_supervised!({Bus, name: :test_bus, jido: __MODULE__})
+    {:ok, _subscription} = Bus.subscribe(bus, "test.*")
+    signal = Signal.new!("test.event", %{"value" => 42}, source: "/test")
 
-  test "isolated bus operations", %{scope: scope} do
-    {:ok, bus} = Bus.start_link(name: :test_bus, jido: scope)
-    {:ok, _} = Bus.subscribe(bus, "test.*")
-    
-    signal = Jido.Signal.new!("test.event", %{value: 42}, source: "/test")
-    {:ok, _} = Bus.publish(bus, [signal])
-    
-    assert_receive {:signal, received}
-    assert received.data.value == 42
+    {:ok, [_recorded]} = Bus.publish(bus, [signal])
+    assert_receive {:signal, ^signal}
   end
 end
 ```
 
-The scope is data in the Registry key. It does not need a supervisor.
+### Check Adapter Results
 
-### Mock Adapters
-
-```elixir
-defmodule MockAdapter do
-  @behaviour Jido.Signal.Dispatch.Adapter
-
-  def options_schema do
-    Zoi.keyword(
-      [test_pid: Zoi.pid() |> Zoi.required()],
-      unrecognized_keys: :error
-    )
-  end
-  
-  def deliver(signal, opts) do
-    send(opts[:test_pid], {:signal_received, signal, opts})
-    :ok
-  end
-end
-
-# In tests
-test "signal delivery" do
-  config = {MockAdapter, [test_pid: self()]}
-  :ok = Dispatch.dispatch(signal, config)
-  
-  assert_receive {:signal_received, ^signal, _opts}
-end
-```
-
-### Testing Error Conditions
+The custom adapter above can act as a test adapter. Supply `target: self()` and
+assert receipt of `{:app_event, signal}`. To test returned failures, use a
+separate adapter:
 
 ```elixir
-defmodule FailingAdapter do
+defmodule MyApp.FailingAdapter do
   @behaviour Jido.Signal.Dispatch.Adapter
 
+  @impl true
   def options_schema, do: Zoi.keyword([], unrecognized_keys: :error)
-  def deliver(_, _), do: {:error, :simulated_failure}
-end
 
-test "handles adapter failures" do
-  config = {FailingAdapter, []}
-  assert {:error, _} = Dispatch.dispatch(signal, config)
+  @impl true
+  def deliver(_signal, _opts), do: {:error, :simulated_failure}
 end
 ```
 
-### Telemetry Testing
+With error normalization disabled, dispatch to this adapter returns
+`{:error, :simulated_failure}`. With normalization enabled, it returns a
+structured Dispatch error.
+
+### Check Telemetry
+
+The telemetry test helper sends `{event, reference, measurements, metadata}`.
+Detach the handler after each test:
 
 ```elixir
-test "emits telemetry events" do
-  :telemetry_test.attach_event_handlers(self(), [
-    [:jido, :dispatch, :start],
-    [:jido, :dispatch, :stop]
-  ])
-  
-  Dispatch.dispatch(signal, {:noop, []})
-  
-  assert_receive {[:jido, :dispatch, :start], _, %{adapter: :noop}}
-  assert_receive {[:jido, :dispatch, :stop], %{latency_ms: _},
-                  %{outcome: :ok, success?: true}}
+defmodule MyApp.DispatchTelemetryTest do
+  use ExUnit.Case, async: true
+
+  test "emits start and stop events" do
+    ref =
+      :telemetry_test.attach_event_handlers(self(), [
+        [:jido, :dispatch, :start],
+        [:jido, :dispatch, :stop]
+      ])
+
+    on_exit(fn -> :telemetry.detach(ref) end)
+
+    signal = Jido.Signal.new!("test.event", nil, source: "/test")
+    :ok = Jido.Signal.Dispatch.dispatch(signal, {:noop, []})
+
+    assert_receive {[:jido, :dispatch, :start], ^ref, %{}, %{adapter: :noop}}
+
+    assert_receive {[:jido, :dispatch, :stop], ^ref, %{latency_ms: _},
+                    %{outcome: :ok, success?: true}}
+  end
 end
 ```
 
-## Performance Considerations
+Dispatch emits `:exception` instead of `:stop` when a delivery callback raises,
+throws, or exits. These events measure the adapter call, not downstream consumer
+processing. Avoid assertions about exact durations.
 
-### High-Volume Delivery
+For generated boundary and lifecycle tests, see
+[Property and Fuzz Tests](property-testing.md).
 
-Use batching for high-volume dispatch scenarios:
+## HTTP Transport Policy
 
-```elixir
-# The application owns batching and concurrency.
-configs = generate_configs(10_000)
-configs
-|> Enum.chunk_every(100)
-|> Task.async_stream(&Dispatch.dispatch(signal, &1), max_concurrency: 10)
-|> Stream.run()
-```
+The built-in HTTP adapter uses OTP `:httpc`. It has no custom pool options and
+accepts only `url`, `headers`, and `timeout`. Use JSON-safe Signal data. Use a
+custom adapter for connection pools, request signing, response processing, or
+other transport policy. See [HTTP Adapter](signals-and-dispatch.md#http-adapter)
+for target and response limits.
 
-### Memory Management
+## Payload and Workload Limits
 
-For large signal payloads, consider serialization strategies:
+Serialization has an encoded-byte limit. It does not bound the memory used to
+construct or encode a large value. Keep payloads within application limits, or
+store large data externally and carry a reference in the Signal.
 
-```elixir
-# Compress large payloads
-large_data = generate_large_dataset()
-compressed = :zlib.compress(:erlang.term_to_binary(large_data))
+Start separate Bus processes for workloads that must not block each other. One
+Bus processes publication and Store operations sequentially. A slow custom Store
+can delay other calls to that Bus.
 
-signal = Signal.new(%{
-  type: "data.compressed",
-  source: "/analytics",
-  data: compressed,
-  datacontenttype: "application/x-erlang-compressed"
-})
-```
-
-### Telemetry Monitoring
-
-Monitor dispatch performance:
-
-```elixir
-:telemetry.attach(
-  "dispatch-latency",
-  [:jido, :dispatch, :stop],
-  fn [:jido, :dispatch, :stop], measurements, metadata, _ ->
-    duration_ms = measurements.latency_ms
-    adapter = metadata.adapter
-    
-    if duration_ms > 1000 do
-      Logger.warning("Slow dispatch: #{adapter} took #{duration_ms}ms")
-    end
-  end,
-  []
-)
-```
-
-### High-volume HTTP Delivery
-
-The built-in HTTP adapter uses the OTP `:httpc` profile and has no pool options.
-Use a custom Dispatch adapter when the application needs a dedicated connection
-pool, custom transport policy, or response processing. The application owns
-that adapter and its process life cycle.
-
-The built-in adapter accepts only trusted target configuration. It permits
-private network targets and does not protect against DNS rebinding. OTP 27
-`:httpc` has no response body size limit for these requests. Use a custom
-adapter when the target is not trusted or a strict response size limit is
-required.
-
-### Bus Subscription Optimization
-
-Use specific Bus paths for high-throughput scenarios:
-
-```elixir
-# Use specific patterns instead of wildcards
-{:ok, _} = Bus.subscribe(bus, "user.profile.*")
-
-# Batch subscription management
-patterns = ["user.created", "user.updated", "user.deleted"]
-subscriptions = Enum.map(patterns, fn pattern ->
-  Bus.subscribe(bus, pattern)
-end)
-```
-
-### Workload Isolation
-
-Start separate Bus processes for workloads that must not block each other. The
-calling application owns concurrency and rate-limit policy. v3 does not start
-partition workers inside one Bus.
-
-## Next Steps
-
-You've completed the Jido Signal guides! For detailed module documentation, see the [API Reference](https://hexdocs.pm/jido_signal).
+Use specific subscription paths to reduce matching candidates. Source and
+subject selectors can narrow live delivery without inspecting domain data.
+Measure the effect with the [benchmark suite](benchmarks.md) before making a
+performance claim.

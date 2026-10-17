@@ -5,10 +5,10 @@
 lookup only. It does not execute targets or validate Dispatch configuration.
 It emits no telemetry. Instrument the caller when route timing is useful.
 
-The Router compiles exact paths into a map and wildcard paths into a private
-segment trie. The trie tracks exact, `*`, and `**` transitions. `**` traversal
-memoizes node and segment positions so the same state is not processed twice.
-The index is an implementation detail.
+Use a Router when your application must choose handlers by event type. Use
+[Dispatch](signals-and-dispatch.md#dispatch-adapters) to deliver to a known
+target, or a [Bus](event-bus.md) when receivers must subscribe to publications.
+A Router is a value, not a process. Updating it returns a new value.
 
 ## Create a Router
 
@@ -25,7 +25,7 @@ router =
   ])
 ```
 
-Use `new/2` when configuration errors must be returned:
+Use `new/1` when configuration errors must be returned:
 
 ```elixir
 {:ok, router} = Router.new([{"user.created", HandleUserCreated}])
@@ -44,10 +44,11 @@ defmodule MyApp.UserCreated do
     default_source: "/accounts"
 end
 
-router = Router.new!([
-  {MyApp.UserCreated, HandleUserCreated},
-  {"user.*", HandleUserEvent}
-])
+router =
+  Router.new!([
+    {MyApp.UserCreated, HandleUserCreated},
+    {"user.*", HandleUserEvent}
+  ])
 
 {:ok, signal} = MyApp.UserCreated.new(%{user_id: "123"})
 {:ok, [HandleUserCreated, HandleUserEvent]} = Router.route(router, signal)
@@ -70,10 +71,10 @@ must be static module data. Anonymous functions remain valid only for runtime
 defmodule MyApp.UserRouter do
   use Jido.Signal.Router
 
-  route MyApp.UserCreated, HandleUserCreated
-  route "user.*", HandleUserEvent
-  route "audit.**", AuditEvent, -50
-  route "job.completed", {MyApp.Filter, :important?, []}, :notify
+  route(MyApp.UserCreated, HandleUserCreated)
+  route("user.*", HandleUserEvent)
+  route("audit.**", AuditEvent, -50)
+  route("job.completed", {MyApp.Filter, :important?, []}, :notify)
 end
 
 {:ok, targets} = MyApp.UserRouter.route(signal)
@@ -123,7 +124,7 @@ Consecutive dots and consecutive `**` segments are invalid.
 signal = Jido.Signal.new!(type: "user.created", source: "/example")
 
 {:ok, targets} = Router.route(router, signal)
-#=> {:ok, [HandleUserCreated, HandleUserEvent]}
+# => {:ok, [HandleUserCreated, HandleUserEvent]}
 ```
 
 No match returns a structured `Jido.Signal.Error.RoutingError`. The Router does
@@ -177,7 +178,7 @@ large_payment? = fn signal -> signal.data.amount > 1_000 end
 ```
 
 Router creation checks the predicate shape but does not execute it. A predicate
-that raises or returns a value other than `true` does not match.
+that raises, throws, exits, or returns a value other than `true` does not match.
 
 ## Manage Routes
 
@@ -200,7 +201,7 @@ Remove all routes at one or more paths:
 Inspect the public state without reading Router fields:
 
 ```elixir
-2 = Router.count(router)
+route_count = Router.count(router)
 false = Router.empty?(router)
 true = Router.has_route?(router, "system.error")
 {:ok, routes} = Router.list(router)
