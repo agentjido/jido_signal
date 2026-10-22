@@ -1,22 +1,46 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
+      operation:
+        description: "Release operation: auto, prepare, or publish"
+        required: false
+        type: choice
+        default: auto
+        options:
+          - auto
+          - prepare
+          - publish
       tag_name:
-        description: "Existing v-prefixed SemVer tag to publish"
-        required: true
+        description: "Optional v-prefixed tag for publish simulation"
+        required: false
         type: string
+        default: ""
       dry_run:
-        description: "Validate the release without Hex or GitHub publication"
+        description: "Dry run (no git push, no tag, no GitHub release, no Hex publish)"
         required: false
         type: boolean
         default: false
       hex_dry_run:
-        description: "Run Hex package validation without publication"
+        description: "Hex dry run only (run all git/release steps, but skip actual Hex publish)"
         required: false
         type: boolean
         default: false
+      skip_tests:
+        description: "Skip tests before release"
+        required: false
+        type: boolean
+        default: false
+      version_override:
+        description: "Optional bare SemVer override (for example 1.2.3, not v1.2.3)"
+        required: false
+        type: string
+        default: ""
+
 permissions:
   actions: write
   contents: write
@@ -24,18 +48,16 @@ permissions:
 jobs:
   release:
     name: Release
-    uses: agentjido/github-actions/.github/workflows/jido-release.yml@c782c2d13584f0a7b43027eedd83807ed1a2b7dc
+    uses: agentjido/github-actions/.github/workflows/jido-release.yml@v5.2.6
     with:
-      operation: publish
-      tag_name: ${{ inputs.tag_name }}
-      otp_version: "29"
-      elixir_version: "1.20"
-      preflight_command: >-
-        mix quality &&
-        MIX_ENV=test mix test --cover --warnings-as-errors &&
-        mix hex.audit
-      release_notes_mode: generated
+      runner: blacksmith-2vcpu-ubuntu-2404
+      operation: ${{ inputs.operation || 'auto' }}
+      release_branch: release/v3
+      tag_name: ${{ inputs.tag_name || '' }}
       dry_run: ${{ inputs.dry_run || false }}
       hex_dry_run: ${{ inputs.hex_dry_run || false }}
+      skip_tests: ${{ inputs.skip_tests || false }}
+      version_override: ${{ inputs.version_override || '' }}
+      release_tag_scope: reachable
     secrets:
       HEX_API_KEY: ${{ secrets.HEX_API_KEY }}

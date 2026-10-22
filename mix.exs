@@ -211,6 +211,8 @@ defmodule Jido.Signal.MixProject do
       {:zoi, "~> 0.18.11"},
 
       # Development & Test Dependencies
+      {:git_ops, "~> 2.9", only: :dev, runtime: false},
+      {:git_hooks, "~> 0.8", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:doctor, "~> 0.23", only: [:dev, :test], runtime: false},
