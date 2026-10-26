@@ -202,7 +202,7 @@ defmodule Jido.Signal.MixProject do
       {:phoenix_pubsub, "~> 2.1", optional: true},
       {:telemetry, "~> 1.3"},
       {:splode, "~> 0.3.0"},
-      {:zoi, "~> 0.18.11"},
+      {:zoi, "~> 0.19.0"},
       {:fuse, "~> 2.5"},
 
       # Development & Test Dependencies
