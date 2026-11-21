@@ -1,9 +1,15 @@
 # Jido.Signal
 
-> [!IMPORTANT]
-> Jido Signal is now part of [Jido V3](https://github.com/agentjido/jido/tree/release/v3).
-> This repository and its Hex releases are kept as the history of the standalone package.
-> Use the `jido` package and the main Jido repository for current V3 development and releases.
+## Jido v2 maintenance
+
+Continue to use `jido_signal` with Jido v2. We will provide security fixes,
+critical bug fixes, and dependency updates needed for v2 compatibility
+for one year after Jido 3.0.0 is released.
+
+For Jido v3, use the [`jido` package on Hex](https://hex.pm/packages/jido).
+It includes Signals, routing, and the Signal bus.
+
+[Jido v3 source](https://github.com/agentjido/jido/tree/main) · [V2 to V3 migration guide](https://github.com/agentjido/jido/blob/main/guides/reference/v2-to-v3-migration.md)
 
 [![Hex.pm](https://img.shields.io/hexpm/v/jido_signal.svg)](https://hex.pm/packages/jido_signal)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_signal/)
