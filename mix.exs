@@ -3,7 +3,7 @@ defmodule Jido.Signal.MixProject do
 
   @version "2.3.2"
   @source_url "https://github.com/agentjido/jido_signal"
-  @description "Agent Communication Envelope and Utilities"
+  @description "Agent Communication Envelope and Utilities. Maintained for one year after Jido 3.0.0 is released. For Jido v3, use the jido package."
 
   def vsn do
     @version
