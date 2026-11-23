@@ -40,7 +40,7 @@
   "spitfire": {:hex, :spitfire, "0.4.3", "83aa224f713966769644772a814a67b26df518d25059b3855c23a2f7b531937a", [:mix], [], "hexpm", "4f771bbdf00fe6eda6e2a7e488c42ead48142fea697349510a41fabb41376632"},
   "splode": {:hex, :splode, "0.3.3", "420917ee2373c5db8462417ea6faa8cbeb8deec7b18ae5dd2fa07c67f883f25a", [:mix], [], "hexpm", "3f98c7799ec8960f816b4ccc5cc6a5d2b72a20ad3f8fff9199fb530194ad9f50"},
   "stream_data": {:hex, :stream_data, "1.4.0", "026f929db613aabea6208012ae9b8970d3fd5f88b3bdf26831bc536f98c42036", [:mix], [], "hexpm", "2b0ee3a340dcce1c8cf6302a763ee757d1e01c54d6e16d9069062509d68b1dc9"},
-  "telemetry": {:hex, :telemetry, "1.4.2", "a0cb522801dffb1c49fe6e30561badffc7b6d0e180db1300df759faa22062855", [:rebar3], [], "hexpm", "928f6495066506077862c0d1646609eed891a4326bee3126ba54b60af61febb1"},
+  "telemetry": {:hex, :telemetry, "1.4.3", "d0333fa869361e6833d6ff8e806ff4d8553fe1332fcce0af86c7381951a1dc2f", [:rebar3], [], "hexpm", "17a63581cf2e832a238287f5fe6811e8ca1f333249f1376ad653164a3c4770d4"},
   "text_diff": {:hex, :text_diff, "0.1.0", "1caf3175e11a53a9a139bc9339bd607c47b9e376b073d4571c031913317fecaa", [:mix], [], "hexpm", "d1ffaaecab338e49357b6daa82e435f877e0649041ace7755583a0ea3362dbd7"},
   "zoi": {:hex, :zoi, "0.19.0", "d10f30696eb5d6ae2d9ede5de79bae1e6733e912e22afdff68ec48040801f82a", [:mix], [{:decimal, "~> 2.2 or ~> 3.0", [hex: :decimal, repo: "hexpm", optional: false]}, {:phoenix_html, "~> 2.14.2 or ~> 3.0 or ~> 4.1", [hex: :phoenix_html, repo: "hexpm", optional: true]}], "hexpm", "5bd10583fa64cf0150ec14ed6131c5e4ec4f2cd63389137bc893e48656a5cc03"},
 }
